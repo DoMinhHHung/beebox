@@ -2,10 +2,12 @@ package httpserver
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -28,7 +30,10 @@ func TestHealthEndpoints(t *testing.T) {
 		},
 	}
 
-	handler := NewHandler()
+	handler := NewHandler(
+		func(context.Context) error { return nil },
+		time.Second,
+	)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -127,8 +132,112 @@ func TestRequireMethodRejectsUnsupportedMethodWithoutCallingHandler(
 	}
 }
 
+func TestReadinessReportsDependencyFailureWithoutLeakingDetails(t *testing.T) {
+	const secretMarker = "super-secret"
+
+	handler := NewHandler(
+		func(context.Context) error {
+			return errors.New("dial postgres://user:" + secretMarker + "@db")
+		},
+		time.Second,
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/health/ready", nil)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+
+	if res.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusServiceUnavailable)
+	}
+	if res.Body.String() != "{\"status\":\"not_ready\"}\n" {
+		t.Fatalf("body = %q, want stable not-ready response", res.Body.String())
+	}
+	if got := res.Header().Get("Content-Type"); got != "application/json; charset=utf-8" {
+		t.Fatalf("Content-Type = %q, want application/json; charset=utf-8", got)
+	}
+	if strings.Contains(res.Body.String(), secretMarker) {
+		t.Fatalf("response body leaks dependency detail: %q", res.Body.String())
+	}
+}
+
+func TestReadinessBoundsDependencyCheck(t *testing.T) {
+	handler := NewHandler(
+		func(ctx context.Context) error {
+			<-ctx.Done()
+			return ctx.Err()
+		},
+		10*time.Millisecond,
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/health/ready", nil)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+
+	if res.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusServiceUnavailable)
+	}
+	if res.Body.String() != "{\"status\":\"not_ready\"}\n" {
+		t.Fatalf("body = %q, want stable not-ready response", res.Body.String())
+	}
+}
+
+func TestReadinessHonorsRequestCancellation(t *testing.T) {
+	called := 0
+	handler := NewHandler(
+		func(ctx context.Context) error {
+			called++
+			return ctx.Err()
+		},
+		time.Second,
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodGet, "/health/ready", nil).WithContext(ctx)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+
+	if called != 1 {
+		t.Fatalf("readiness check calls = %d, want 1", called)
+	}
+	if res.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestLivenessDoesNotCallReadinessDependency(t *testing.T) {
+	called := 0
+	handler := NewHandler(
+		func(context.Context) error {
+			called++
+			return errors.New("database unavailable")
+		},
+		time.Second,
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/health/live", nil)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+
+	if called != 0 {
+		t.Fatalf("readiness check calls = %d, want 0", called)
+	}
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusOK)
+	}
+	if res.Body.String() != "{\"status\":\"ok\"}\n" {
+		t.Fatalf("body = %q, want liveness response", res.Body.String())
+	}
+}
+
 func TestNewSetsExplicitTimeouts(t *testing.T) {
-	server := New(":8080", NewHandler())
+	server := New(
+		":8080",
+		NewHandler(
+			func(context.Context) error { return nil },
+			time.Second,
+		),
+	)
 
 	if server.ReadHeaderTimeout != readHeaderTimeout {
 		t.Fatalf(
@@ -171,7 +280,10 @@ func TestRunStopsCleanlyWhenContextIsCanceled(t *testing.T) {
 
 	server := New(
 		listener.Addr().String(),
-		NewHandler(),
+		NewHandler(
+			func(context.Context) error { return nil },
+			time.Second,
+		),
 	)
 
 	ctx, cancel := context.WithCancel(context.Background())
