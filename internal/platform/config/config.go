@@ -13,6 +13,7 @@ const (
 	defaultShutdownTimeout          = 10 * time.Second
 	defaultDatabaseStartupTimeout   = 5 * time.Second
 	defaultDatabaseReadinessTimeout = time.Second
+	defaultDatabaseMigrationTimeout = 30 * time.Second
 )
 
 type Config struct {
@@ -21,6 +22,14 @@ type Config struct {
 	DatabaseURL              string
 	DatabaseStartupTimeout   time.Duration
 	DatabaseReadinessTimeout time.Duration
+}
+
+// MigrationConfig contains only the settings used by the explicit migration
+// process mode. Serve-only settings are intentionally not loaded here.
+type MigrationConfig struct {
+	DatabaseURL              string
+	DatabaseStartupTimeout   time.Duration
+	DatabaseMigrationTimeout time.Duration
 }
 
 type LookupEnv func(string) (string, bool)
@@ -44,16 +53,12 @@ func Load(lookup LookupEnv) (Config, error) {
 		return Config{}, fmt.Errorf("invalid BEEBOX_HTTP_ADDR: %w", err)
 	}
 
-	value, ok := lookup("BEEBOX_DATABASE_URL")
-	if !ok || value == "" {
-		return Config{}, fmt.Errorf("BEEBOX_DATABASE_URL is required and must not be empty")
-	}
-	if err := validateDatabaseURL(value); err != nil {
+	databaseURL, err := loadDatabaseURL(lookup)
+	if err != nil {
 		return Config{}, err
 	}
-	cfg.DatabaseURL = value
+	cfg.DatabaseURL = databaseURL
 
-	var err error
 	cfg.ShutdownTimeout, err = loadPositiveDuration(
 		lookup,
 		"BEEBOX_SHUTDOWN_TIMEOUT",
@@ -82,6 +87,51 @@ func Load(lookup LookupEnv) (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// LoadMigration loads only the shared PostgreSQL connection settings and the
+// bounded deadline used by `beebox migrate`.
+func LoadMigration(lookup LookupEnv) (MigrationConfig, error) {
+	databaseURL, err := loadDatabaseURL(lookup)
+	if err != nil {
+		return MigrationConfig{}, err
+	}
+
+	startupTimeout, err := loadPositiveDuration(
+		lookup,
+		"BEEBOX_DATABASE_STARTUP_TIMEOUT",
+		defaultDatabaseStartupTimeout,
+	)
+	if err != nil {
+		return MigrationConfig{}, err
+	}
+
+	migrationTimeout, err := loadPositiveDuration(
+		lookup,
+		"BEEBOX_DATABASE_MIGRATION_TIMEOUT",
+		defaultDatabaseMigrationTimeout,
+	)
+	if err != nil {
+		return MigrationConfig{}, err
+	}
+
+	return MigrationConfig{
+		DatabaseURL:              databaseURL,
+		DatabaseStartupTimeout:   startupTimeout,
+		DatabaseMigrationTimeout: migrationTimeout,
+	}, nil
+}
+
+func loadDatabaseURL(lookup LookupEnv) (string, error) {
+	value, ok := lookup("BEEBOX_DATABASE_URL")
+	if !ok || value == "" {
+		return "", fmt.Errorf("BEEBOX_DATABASE_URL is required and must not be empty")
+	}
+	if err := validateDatabaseURL(value); err != nil {
+		return "", err
+	}
+
+	return value, nil
 }
 
 func loadPositiveDuration(

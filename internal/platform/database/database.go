@@ -2,9 +2,11 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
 var (
@@ -41,6 +43,13 @@ func (p *Pool) Ping(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// OpenSQLDB returns a database/sql adapter backed by this pool. Closing the
+// adapter does not close the underlying pgx pool; callers own the adapter and
+// must close it exactly once.
+func (p *Pool) OpenSQLDB() *sql.DB {
+	return stdlib.OpenDBFromPool(p.pool)
 }
 
 // Close releases every connection and background resource owned by the pool.

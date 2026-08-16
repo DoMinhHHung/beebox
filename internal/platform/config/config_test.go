@@ -68,6 +68,145 @@ func TestLoadOverrides(t *testing.T) {
 	}
 }
 
+func TestLoadMigrationDefaultsAndOverrides(t *testing.T) {
+	tests := []struct {
+		name            string
+		values          map[string]string
+		wantStartup     time.Duration
+		wantMigration   time.Duration
+		wantDatabaseURL string
+	}{
+		{
+			name: "defaults",
+			values: map[string]string{
+				"BEEBOX_DATABASE_URL": testDatabaseURL,
+			},
+			wantStartup:     5 * time.Second,
+			wantMigration:   30 * time.Second,
+			wantDatabaseURL: testDatabaseURL,
+		},
+		{
+			name: "overrides",
+			values: map[string]string{
+				"BEEBOX_DATABASE_URL":               "postgresql://localhost/beebox",
+				"BEEBOX_DATABASE_STARTUP_TIMEOUT":   "4s",
+				"BEEBOX_DATABASE_MIGRATION_TIMEOUT": "45s",
+			},
+			wantStartup:     4 * time.Second,
+			wantMigration:   45 * time.Second,
+			wantDatabaseURL: "postgresql://localhost/beebox",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := LoadMigration(mapLookup(tt.values))
+			if err != nil {
+				t.Fatalf("LoadMigration() error = %v", err)
+			}
+			if cfg.DatabaseURL != tt.wantDatabaseURL {
+				t.Fatal("DatabaseURL does not match the configured value")
+			}
+			if cfg.DatabaseStartupTimeout != tt.wantStartup {
+				t.Fatalf("DatabaseStartupTimeout = %s, want %s", cfg.DatabaseStartupTimeout, tt.wantStartup)
+			}
+			if cfg.DatabaseMigrationTimeout != tt.wantMigration {
+				t.Fatalf("DatabaseMigrationTimeout = %s, want %s", cfg.DatabaseMigrationTimeout, tt.wantMigration)
+			}
+		})
+	}
+}
+
+func TestLoadMigrationRejectsInvalidConfigurationWithoutLeakingSecrets(t *testing.T) {
+	tests := []struct {
+		name   string
+		values map[string]string
+		want   string
+	}{
+		{
+			name:   "missing database URL",
+			values: nil,
+			want:   "BEEBOX_DATABASE_URL is required",
+		},
+		{
+			name: "invalid database URL",
+			values: map[string]string{
+				"BEEBOX_DATABASE_URL": "postgres://user:super-secret@%zz/db",
+			},
+			want: "must be a valid PostgreSQL URI",
+		},
+		{
+			name: "empty startup timeout",
+			values: map[string]string{
+				"BEEBOX_DATABASE_URL":             testDatabaseURL,
+				"BEEBOX_DATABASE_STARTUP_TIMEOUT": "",
+			},
+			want: "BEEBOX_DATABASE_STARTUP_TIMEOUT must not be empty",
+		},
+		{
+			name: "invalid migration timeout",
+			values: map[string]string{
+				"BEEBOX_DATABASE_URL":               testDatabaseURL,
+				"BEEBOX_DATABASE_MIGRATION_TIMEOUT": "later",
+			},
+			want: "invalid BEEBOX_DATABASE_MIGRATION_TIMEOUT duration",
+		},
+		{
+			name: "empty migration timeout",
+			values: map[string]string{
+				"BEEBOX_DATABASE_URL":               testDatabaseURL,
+				"BEEBOX_DATABASE_MIGRATION_TIMEOUT": "",
+			},
+			want: "BEEBOX_DATABASE_MIGRATION_TIMEOUT must not be empty",
+		},
+		{
+			name: "non-positive migration timeout",
+			values: map[string]string{
+				"BEEBOX_DATABASE_URL":               testDatabaseURL,
+				"BEEBOX_DATABASE_MIGRATION_TIMEOUT": "0s",
+			},
+			want: "BEEBOX_DATABASE_MIGRATION_TIMEOUT must be greater than zero",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := LoadMigration(mapLookup(tt.values))
+			if err == nil {
+				t.Fatal("LoadMigration() error = nil, want error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("LoadMigration() error = %q, want substring %q", err, tt.want)
+			}
+			if strings.Contains(err.Error(), "super-secret") {
+				t.Fatalf("LoadMigration() error leaks credential marker: %q", err)
+			}
+		})
+	}
+}
+
+func TestLoadIgnoresMigrationOnlyConfiguration(t *testing.T) {
+	_, err := Load(mapLookup(map[string]string{
+		"BEEBOX_DATABASE_URL":               testDatabaseURL,
+		"BEEBOX_DATABASE_MIGRATION_TIMEOUT": "not-a-duration",
+	}))
+	if err != nil {
+		t.Fatalf("Load() error = %v, want migration-only setting ignored", err)
+	}
+}
+
+func TestLoadMigrationIgnoresServeOnlyConfiguration(t *testing.T) {
+	_, err := LoadMigration(mapLookup(map[string]string{
+		"BEEBOX_DATABASE_URL":               testDatabaseURL,
+		"BEEBOX_HTTP_ADDR":                  "invalid",
+		"BEEBOX_SHUTDOWN_TIMEOUT":           "invalid",
+		"BEEBOX_DATABASE_READINESS_TIMEOUT": "invalid",
+	}))
+	if err != nil {
+		t.Fatalf("LoadMigration() error = %v, want serve-only settings ignored", err)
+	}
+}
+
 func TestLoadRejectsInvalidConfiguration(t *testing.T) {
 	tests := []struct {
 		name   string
