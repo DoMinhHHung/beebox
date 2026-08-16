@@ -25,7 +25,12 @@ type errorResponse struct {
 	Error string `json:"error"`
 }
 
-func NewHandler() http.Handler {
+type ReadinessCheck func(context.Context) error
+
+func NewHandler(
+	checkReadiness ReadinessCheck,
+	readinessTimeout time.Duration,
+) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.Handle(
@@ -35,7 +40,10 @@ func NewHandler() http.Handler {
 
 	mux.Handle(
 		"/health/ready",
-		requireMethod(http.MethodGet, healthHandler("ready")),
+		requireMethod(
+			http.MethodGet,
+			readinessHandler(checkReadiness, readinessTimeout),
+		),
 	)
 
 	return mux
@@ -124,6 +132,32 @@ func healthHandler(status string) http.Handler {
 			w,
 			http.StatusOK,
 			statusResponse{Status: status},
+		)
+	})
+}
+
+func readinessHandler(
+	check ReadinessCheck,
+	timeout time.Duration,
+) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), timeout)
+		defer cancel()
+
+		if err := check(ctx); err != nil {
+			writeJSON(
+				w,
+				http.StatusServiceUnavailable,
+				statusResponse{Status: "not_ready"},
+			)
+
+			return
+		}
+
+		writeJSON(
+			w,
+			http.StatusOK,
+			statusResponse{Status: "ready"},
 		)
 	})
 }

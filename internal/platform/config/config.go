@@ -3,26 +3,34 @@ package config
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"strconv"
 	"time"
 )
 
 const (
-	defaultHTTPAddr        = ":8080"
-	defaultShutdownTimeout = 10 * time.Second
+	defaultHTTPAddr                 = ":8080"
+	defaultShutdownTimeout          = 10 * time.Second
+	defaultDatabaseStartupTimeout   = 5 * time.Second
+	defaultDatabaseReadinessTimeout = time.Second
 )
 
 type Config struct {
-	HTTPAddr        string
-	ShutdownTimeout time.Duration
+	HTTPAddr                 string
+	ShutdownTimeout          time.Duration
+	DatabaseURL              string
+	DatabaseStartupTimeout   time.Duration
+	DatabaseReadinessTimeout time.Duration
 }
 
 type LookupEnv func(string) (string, bool)
 
 func Load(lookup LookupEnv) (Config, error) {
 	cfg := Config{
-		HTTPAddr:        defaultHTTPAddr,
-		ShutdownTimeout: defaultShutdownTimeout,
+		HTTPAddr:                 defaultHTTPAddr,
+		ShutdownTimeout:          defaultShutdownTimeout,
+		DatabaseStartupTimeout:   defaultDatabaseStartupTimeout,
+		DatabaseReadinessTimeout: defaultDatabaseReadinessTimeout,
 	}
 
 	if value, ok := lookup("BEEBOX_HTTP_ADDR"); ok {
@@ -36,23 +44,87 @@ func Load(lookup LookupEnv) (Config, error) {
 		return Config{}, fmt.Errorf("invalid BEEBOX_HTTP_ADDR: %w", err)
 	}
 
-	if value, ok := lookup("BEEBOX_SHUTDOWN_TIMEOUT"); ok {
-		if value == "" {
-			return Config{}, fmt.Errorf("BEEBOX_SHUTDOWN_TIMEOUT must not be empty")
-		}
+	value, ok := lookup("BEEBOX_DATABASE_URL")
+	if !ok || value == "" {
+		return Config{}, fmt.Errorf("BEEBOX_DATABASE_URL is required and must not be empty")
+	}
+	if err := validateDatabaseURL(value); err != nil {
+		return Config{}, err
+	}
+	cfg.DatabaseURL = value
 
-		timeout, err := time.ParseDuration(value)
-		if err != nil {
-			return Config{}, fmt.Errorf("invalid BEEBOX_SHUTDOWN_TIMEOUT: %w", err)
-		}
-		if timeout <= 0 {
-			return Config{}, fmt.Errorf("BEEBOX_SHUTDOWN_TIMEOUT must be greater than zero")
-		}
+	var err error
+	cfg.ShutdownTimeout, err = loadPositiveDuration(
+		lookup,
+		"BEEBOX_SHUTDOWN_TIMEOUT",
+		cfg.ShutdownTimeout,
+	)
+	if err != nil {
+		return Config{}, err
+	}
 
-		cfg.ShutdownTimeout = timeout
+	cfg.DatabaseStartupTimeout, err = loadPositiveDuration(
+		lookup,
+		"BEEBOX_DATABASE_STARTUP_TIMEOUT",
+		cfg.DatabaseStartupTimeout,
+	)
+	if err != nil {
+		return Config{}, err
+	}
+
+	cfg.DatabaseReadinessTimeout, err = loadPositiveDuration(
+		lookup,
+		"BEEBOX_DATABASE_READINESS_TIMEOUT",
+		cfg.DatabaseReadinessTimeout,
+	)
+	if err != nil {
+		return Config{}, err
 	}
 
 	return cfg, nil
+}
+
+func loadPositiveDuration(
+	lookup LookupEnv,
+	name string,
+	defaultValue time.Duration,
+) (time.Duration, error) {
+	value, ok := lookup(name)
+	if !ok {
+		return defaultValue, nil
+	}
+	if value == "" {
+		return 0, fmt.Errorf("%s must not be empty", name)
+	}
+
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s duration", name)
+	}
+	if duration <= 0 {
+		return 0, fmt.Errorf("%s must be greater than zero", name)
+	}
+
+	return duration, nil
+}
+
+func validateDatabaseURL(value string) error {
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return fmt.Errorf("BEEBOX_DATABASE_URL must be a valid PostgreSQL URI")
+	}
+
+	if parsed.Scheme != "postgres" && parsed.Scheme != "postgresql" {
+		return fmt.Errorf("BEEBOX_DATABASE_URL must use the postgres or postgresql scheme")
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("BEEBOX_DATABASE_URL must include a host")
+	}
+	if parsed.Fragment != "" {
+		return fmt.Errorf("BEEBOX_DATABASE_URL must not include a fragment")
+	}
+
+	return nil
 }
 
 func validateHTTPAddr(addr string) error {
