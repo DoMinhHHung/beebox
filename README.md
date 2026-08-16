@@ -4,6 +4,10 @@ BeeBox is an open-source identity and access platform implemented primarily in G
 
 This repository currently contains the initial runtime, PostgreSQL connection, and explicit migration-runner foundation only. Product capabilities such as users, authentication, sessions, organizations, product schemas, and persistence queries are not implemented yet.
 
+## Security documentation
+
+- [Initial threat model](docs/threat-model/initial.md) — current assets, actors, trust boundaries, implemented controls, deferred security requirements, residual risks, and review triggers.
+
 ## Prerequisites
 
 - Go 1.26.x
