@@ -2,7 +2,7 @@
 
 BeeBox is an open-source identity and access platform implemented primarily in Go.
 
-This repository currently contains the initial runtime and PostgreSQL connection foundation only. Product capabilities such as users, authentication, sessions, organizations, schemas, migrations, and persistence queries are not implemented yet.
+This repository currently contains the initial runtime, PostgreSQL connection, and explicit migration-runner foundation only. Product capabilities such as users, authentication, sessions, organizations, product schemas, and persistence queries are not implemented yet.
 
 ## Prerequisites
 
@@ -19,6 +19,12 @@ Start BeeBox with a PostgreSQL connection URI:
     BEEBOX_DATABASE_URL='postgres://beebox:local-password@127.0.0.1:5432/beebox?sslmode=disable' go run ./cmd/beebox
 
 BeeBox verifies PostgreSQL connectivity before opening the HTTP listener. The HTTP server listens on `:8080` by default after that check succeeds.
+
+Apply pending embedded migrations explicitly before starting a new runtime version:
+
+    BEEBOX_DATABASE_URL='postgres://beebox_migrator:local-password@127.0.0.1:5432/beebox?sslmode=disable' go run ./cmd/beebox migrate
+
+`beebox migrate` applies forward migrations and exits. The no-argument serve mode never runs migrations or mutates database schema automatically. Unknown commands and extra arguments fail with `usage: beebox [migrate]` before configuration, database, or listener acquisition.
 
 ## Configuration
 
@@ -80,6 +86,31 @@ Default:
 
 The value uses Go duration syntax and must be greater than zero.
 
+### BEEBOX_DATABASE_MIGRATION_TIMEOUT
+
+Maximum total time allowed for migration lock acquisition and forward migration execution.
+
+Default:
+
+    30s
+
+The value uses Go duration syntax and must be greater than zero. It is loaded only by `beebox migrate`; an invalid or irrelevant migration value does not change serve-mode validation.
+
+## Migration policy
+
+SQL migrations are compiled into the BeeBox binary and cannot be selected from a runtime filesystem, URL, argument, or environment value. The runner uses the maintained goose Provider API, applies only `Up`, executes each default SQL migration transactionally, and serializes concurrent runners with a PostgreSQL same-session advisory lock. Lock acquisition and cleanup are bounded.
+
+Applied migration files are immutable. New database changes use a new ordered version and rolling-safe expand/contract sequencing. Production operations do not expose `Down`, reset, redo, force, manual version overrides, or arbitrary SQL.
+
+Version `00001_runtime_baseline.sql` intentionally contains only a harmless statement. It anchors forward migration history and creates no product schema, table, or data. On first execution, the only created table is goose migration metadata (`goose_db_version`).
+
+Use separate credentials where possible:
+
+- migration mode receives a short-lived credential allowed to perform the reviewed DDL required by the target release;
+- serve mode receives a least-privilege runtime credential and never needs migration privileges merely to start.
+
+Migration failures, connectivity failures, lock timeouts, and cancellation exit nonzero, close acquired resources, do not open an HTTP listener, and report stable errors without SQL, provider, topology, or credential details.
+
 ## Health endpoints
 
 ### Liveness
@@ -126,7 +157,7 @@ Race detector:
 
 PostgreSQL integration test (requires a real test database and never skips when selected):
 
-    BEEBOX_TEST_DATABASE_URL='postgres://beebox:test-password@127.0.0.1:5432/beebox_test?sslmode=disable' go test -tags=integration ./internal/platform/database
+    BEEBOX_TEST_DATABASE_URL='postgres://beebox:test-password@127.0.0.1:5432/beebox_test?sslmode=disable' go test -tags=integration ./internal/platform/database ./internal/platform/migration
 
 Regular and race tests do not require a local PostgreSQL instance. GitHub Actions provisions an isolated PostgreSQL service and runs the integration command explicitly.
 
@@ -144,13 +175,18 @@ This bootstrap contains:
 - bounded PostgreSQL connectivity verification before HTTP startup;
 - process-only liveness and PostgreSQL-aware readiness endpoints;
 - a real PostgreSQL integration test in CI;
+- an explicit, embedded, forward-only PostgreSQL migration mode;
+- transactional migrations serialized by a bounded advisory lock;
+- a version-1 runtime baseline and migration metadata only;
 - focused automated tests;
 - minimal GitHub Actions CI.
 
-There are no migrations, schemas, product tables, queries, repositories, Redis, or identity behaviors in this slice. Those capabilities are intentionally deferred to later vertical slices.
+There are no product schemas, product tables, product data, queries, repositories, Redis, or identity behaviors in this slice. Those capabilities are intentionally deferred to later vertical slices.
 
 ## Rollout and rollback
 
-This foundation intentionally makes PostgreSQL an unconditional runtime dependency. Every environment must provide a valid `BEEBOX_DATABASE_URL` and a reachable database before BeeBox can serve HTTP traffic. Configure the two positive database timeout values only when their defaults do not fit the environment.
+This foundation intentionally makes PostgreSQL an unconditional runtime dependency. Every environment must provide a valid `BEEBOX_DATABASE_URL` and a reachable database before BeeBox can serve HTTP traffic.
 
-Reverting this change restores the previous HTTP-only runtime and static readiness behavior. No data rollback is required because this foundation creates no schema and runs no migration.
+Before rollout, verify the environment's backup and restore policy. Run the exact binary or immutable image being promoted with `migrate` and a migration-capable credential, observe a zero exit, then start or promote no-argument serve mode with its least-privilege runtime credential. Do not run a different migration artifact from the runtime artifact it prepares.
+
+Code rollback does not automatically downgrade database state. The version-1 baseline changes no product schema or data, so its metadata may remain harmlessly after a code rollback. Future failed or incompatible schema changes are corrected by reviewed roll-forward migrations and expand/contract sequencing, never an automatic production `Down`.

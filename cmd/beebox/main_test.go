@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"io"
 	"log/slog"
@@ -24,6 +25,10 @@ type fakeDatabasePool struct {
 
 func (p *fakeDatabasePool) Ping(ctx context.Context) error {
 	return p.ping(ctx)
+}
+
+func (*fakeDatabasePool) OpenSQLDB() *sql.DB {
+	return nil
 }
 
 func (p *fakeDatabasePool) Close() {
@@ -106,6 +111,7 @@ func TestRunVerifiesDatabaseBeforeListeningAndCleansUp(t *testing.T) {
 				return nil
 			},
 		},
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("runWithDependencies() error = %v", err)
@@ -145,6 +151,7 @@ func TestRunDoesNotListenWhenDatabasePingFailsAndCleansUp(t *testing.T) {
 				return nil, errors.New("unexpected listen")
 			},
 		},
+		nil,
 	)
 
 	if err == nil || err.Error() != "verify PostgreSQL connectivity" {
@@ -178,6 +185,7 @@ func TestRunClosesDatabasePoolWhenListenFails(t *testing.T) {
 				return nil, errors.New("address unavailable")
 			},
 		},
+		nil,
 	)
 
 	if err == nil || !strings.Contains(err.Error(), "listen on") {
@@ -206,6 +214,7 @@ func TestRunValidatesConfigurationBeforeOpeningResources(t *testing.T) {
 				return nil, errors.New("unexpected listen")
 			},
 		},
+		nil,
 	)
 
 	if err == nil || !strings.Contains(err.Error(), "BEEBOX_DATABASE_URL is required") {
@@ -213,6 +222,246 @@ func TestRunValidatesConfigurationBeforeOpeningResources(t *testing.T) {
 	}
 	if opened || listened {
 		t.Fatalf("resource calls after invalid config: open=%t listen=%t", opened, listened)
+	}
+}
+
+func TestParseModeAcceptsOnlyServeAndMigrate(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     []string
+		wantMode processMode
+		wantErr  bool
+	}{
+		{name: "no arguments serves", args: nil, wantMode: serveMode},
+		{name: "migrate", args: []string{"migrate"}, wantMode: migrateMode},
+		{name: "unknown", args: []string{"status"}, wantErr: true},
+		{name: "extra", args: []string{"migrate", "extra"}, wantErr: true},
+		{name: "empty", args: []string{""}, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mode, err := parseMode(tt.args)
+			if tt.wantErr {
+				if !errors.Is(err, errUsage) || err.Error() != usageText {
+					t.Fatalf("parseMode() error = %v, want stable usage error", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseMode() error = %v", err)
+			}
+			if mode != tt.wantMode {
+				t.Fatalf("parseMode() mode = %v, want %v", mode, tt.wantMode)
+			}
+		})
+	}
+}
+
+func TestRunRejectsInvalidCommandBeforeConfigurationOrResources(t *testing.T) {
+	lookupCalled := false
+	opened := false
+	listened := false
+	migrated := false
+
+	err := runWithDependencies(
+		context.Background(),
+		testLogger(),
+		func(string) (string, bool) {
+			lookupCalled = true
+			return "", false
+		},
+		runtimeDependencies{
+			openDatabase: func(context.Context, string) (databasePool, error) {
+				opened = true
+				return nil, errors.New("unexpected open")
+			},
+			listen: func(string, string) (net.Listener, error) {
+				listened = true
+				return nil, errors.New("unexpected listen")
+			},
+			migrate: func(context.Context, databasePool) error {
+				migrated = true
+				return errors.New("unexpected migrate")
+			},
+		},
+		[]string{"migrate", "extra"},
+	)
+
+	if !errors.Is(err, errUsage) || err.Error() != usageText {
+		t.Fatalf("runWithDependencies() error = %v, want usage error", err)
+	}
+	if lookupCalled || opened || listened || migrated {
+		t.Fatalf(
+			"work occurred after invalid command: lookup=%t open=%t listen=%t migrate=%t",
+			lookupCalled,
+			opened,
+			listened,
+			migrated,
+		)
+	}
+}
+
+func TestRunMigrationPingsBeforeApplyingAndCleansUpWithoutListening(t *testing.T) {
+	var events []string
+	pool := &fakeDatabasePool{
+		ping: func(ctx context.Context) error {
+			events = append(events, "ping")
+			if _, ok := ctx.Deadline(); !ok {
+				t.Fatal("startup ping context has no deadline")
+			}
+			return nil
+		},
+	}
+
+	err := runWithDependencies(
+		context.Background(),
+		testLogger(),
+		testLookup(map[string]string{
+			"BEEBOX_DATABASE_STARTUP_TIMEOUT":   "100ms",
+			"BEEBOX_DATABASE_MIGRATION_TIMEOUT": "200ms",
+		}),
+		runtimeDependencies{
+			openDatabase: func(ctx context.Context, databaseURL string) (databasePool, error) {
+				events = append(events, "open")
+				if databaseURL != lifecycleTestDatabaseURL {
+					t.Fatal("openDatabase received unexpected URL")
+				}
+				if _, ok := ctx.Deadline(); !ok {
+					t.Fatal("openDatabase context has no deadline")
+				}
+				return pool, nil
+			},
+			listen: func(string, string) (net.Listener, error) {
+				t.Fatal("migration mode called net.Listen")
+				return nil, errors.New("unexpected listen")
+			},
+			serveHTTP: func(context.Context, *http.Server, net.Listener, time.Duration) error {
+				t.Fatal("migration mode started HTTP serving")
+				return errors.New("unexpected serve")
+			},
+			migrate: func(ctx context.Context, gotPool databasePool) error {
+				events = append(events, "migrate")
+				if gotPool != pool {
+					t.Fatal("migrate received unexpected pool")
+				}
+				deadline, ok := ctx.Deadline()
+				if !ok {
+					t.Fatal("migration context has no deadline")
+				}
+				if remaining := time.Until(deadline); remaining <= 0 || remaining > time.Second {
+					t.Fatalf("migration deadline remaining = %s", remaining)
+				}
+				return nil
+			},
+		},
+		[]string{"migrate"},
+	)
+	if err != nil {
+		t.Fatalf("runWithDependencies() error = %v", err)
+	}
+
+	events = append(events, "assert")
+	if want := []string{"open", "ping", "migrate", "assert"}; !reflect.DeepEqual(events, want) {
+		t.Fatalf("events = %v, want %v", events, want)
+	}
+	if pool.closed != 1 {
+		t.Fatalf("pool Close() calls = %d, want 1", pool.closed)
+	}
+}
+
+func TestRunMigrationFailuresAreSafeAndCloseResources(t *testing.T) {
+	const secretMarker = "super-secret"
+	tests := []struct {
+		name       string
+		openErr    error
+		pingErr    error
+		migrateErr error
+		want       string
+		wantClose  int
+	}{
+		{
+			name:      "open",
+			openErr:   errors.New("provider " + secretMarker),
+			want:      "initialize PostgreSQL pool",
+			wantClose: 0,
+		},
+		{
+			name:      "ping",
+			pingErr:   errors.New("provider " + secretMarker),
+			want:      "verify PostgreSQL connectivity",
+			wantClose: 1,
+		},
+		{
+			name:       "migration",
+			migrateErr: errors.New("SQL and DSN " + secretMarker),
+			want:       "apply PostgreSQL migrations",
+			wantClose:  1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pool := &fakeDatabasePool{
+				ping: func(context.Context) error { return tt.pingErr },
+			}
+			err := runWithDependencies(
+				context.Background(),
+				testLogger(),
+				testLookup(nil),
+				runtimeDependencies{
+					openDatabase: func(context.Context, string) (databasePool, error) {
+						if tt.openErr != nil {
+							return nil, tt.openErr
+						}
+						return pool, nil
+					},
+					migrate: func(context.Context, databasePool) error {
+						return tt.migrateErr
+					},
+				},
+				[]string{"migrate"},
+			)
+			if err == nil || err.Error() != tt.want {
+				t.Fatalf("runWithDependencies() error = %v, want %q", err, tt.want)
+			}
+			if strings.Contains(err.Error(), secretMarker) {
+				t.Fatalf("migration lifecycle error leaks secret marker: %q", err)
+			}
+			if pool.closed != tt.wantClose {
+				t.Fatalf("pool Close() calls = %d, want %d", pool.closed, tt.wantClose)
+			}
+		})
+	}
+}
+
+func TestRunMigrationCancellationIsBoundedAndCleansUp(t *testing.T) {
+	pool := &fakeDatabasePool{
+		ping: func(context.Context) error { return nil },
+	}
+
+	err := runWithDependencies(
+		context.Background(),
+		testLogger(),
+		testLookup(map[string]string{
+			"BEEBOX_DATABASE_MIGRATION_TIMEOUT": "10ms",
+		}),
+		runtimeDependencies{
+			openDatabase: func(context.Context, string) (databasePool, error) {
+				return pool, nil
+			},
+			migrate: func(ctx context.Context, _ databasePool) error {
+				<-ctx.Done()
+				return errors.New("provider detail")
+			},
+		},
+		[]string{"migrate"},
+	)
+	if err == nil || err.Error() != "apply PostgreSQL migrations" {
+		t.Fatalf("runWithDependencies() error = %v, want stable migration error", err)
+	}
+	if pool.closed != 1 {
+		t.Fatalf("pool Close() calls = %d, want 1", pool.closed)
 	}
 }
 
