@@ -73,7 +73,9 @@ func NewClient(baseURL, publishableKey string, options ...Option) (*Client, erro
 	return c, nil
 }
 
-type StatusResponse struct { Status string `json:"status"` }
+type StatusResponse struct {
+	Status string `json:"status"`
+}
 
 type TokenResponse struct {
 	AccessToken  string `json:"access_token"`
@@ -125,6 +127,12 @@ func (c *Client) Refresh(ctx context.Context, refreshToken string) (TokenRespons
 	return out, err
 }
 
+func (c *Client) CurrentSession(ctx context.Context, accessToken string) (Session, error) {
+	var out Session
+	err := c.doJSON(ctx, http.MethodGet, "/v1/sessions/current", nil, &out, map[string]string{"Authorization": "Bearer " + accessToken}, false)
+	return out, err
+}
+
 func (c *Client) SignOut(ctx context.Context, accessToken string) error {
 	return c.doJSON(ctx, http.MethodPost, "/v1/sessions/sign-out", nil, nil, map[string]string{"Authorization": "Bearer " + accessToken}, false)
 }
@@ -158,29 +166,50 @@ func (c *Client) doJSON(ctx context.Context, method, path string, input, output 
 	var body io.Reader
 	if input != nil {
 		encoded, err := json.Marshal(input)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		body = bytes.NewReader(encoded)
 	}
 	u := *c.baseURL
 	u.Path = strings.TrimSuffix(u.Path, "/") + path
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)
-	if err != nil { return err }
-	if input != nil { req.Header.Set("Content-Type", "application/json") }
+	if err != nil {
+		return err
+	}
+	if input != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	if backend {
-		if c.secretKey == "" { return ErrInvalidClient }
+		if c.secretKey == "" {
+			return ErrInvalidClient
+		}
 		req.Header.Set("Authorization", "Bearer "+c.secretKey)
 	} else {
 		req.Header.Set("X-BeeBox-Publishable-Key", c.publishableKey)
 	}
-	for key, value := range headers { req.Header.Set(key, value) }
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
 	res, err := c.httpClient.Do(req)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		var envelope struct { Error struct { Code string `json:"code"`; Message string `json:"message"`; RequestID string `json:"request_id"` } `json:"error"` }
+		var envelope struct {
+			Error struct {
+				Code      string `json:"code"`
+				Message   string `json:"message"`
+				RequestID string `json:"request_id"`
+			} `json:"error"`
+		}
 		_ = json.NewDecoder(io.LimitReader(res.Body, 64<<10)).Decode(&envelope)
 		return &Error{StatusCode: res.StatusCode, Code: envelope.Error.Code, Message: envelope.Error.Message, RequestID: envelope.Error.RequestID}
 	}
-	if output == nil { io.Copy(io.Discard, io.LimitReader(res.Body, 64<<10)); return nil }
+	if output == nil {
+		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 64<<10))
+		return nil
+	}
 	return json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(output)
 }
