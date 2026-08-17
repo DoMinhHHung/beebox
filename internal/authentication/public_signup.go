@@ -59,13 +59,7 @@ func NewPublicSignupService(persistence PublicSignupPersistence, delivery EmailV
 	return &PublicSignupService{persistence: persistence, delivery: delivery}
 }
 
-func (s *PublicSignupService) SignUp(
-	ctx context.Context,
-	applicationInstanceID applicationinstance.InternalID,
-	rawEmail string,
-	rawPassword string,
-	idempotencyKey string,
-) error {
+func (s *PublicSignupService) SignUp(ctx context.Context, applicationInstanceID applicationinstance.InternalID, rawEmail, rawPassword, idempotencyKey string) error {
 	correlationID, err := audit.NewCorrelationID()
 	if err != nil {
 		return ErrPublicSignupPersistence
@@ -73,28 +67,22 @@ func (s *PublicSignupService) SignUp(
 	return s.SignUpWithCorrelation(ctx, applicationInstanceID, rawEmail, rawPassword, idempotencyKey, correlationID)
 }
 
-func (s *PublicSignupService) SignUpWithCorrelation(
-	ctx context.Context,
-	applicationInstanceID applicationinstance.InternalID,
-	rawEmail string,
-	rawPassword string,
-	idempotencyKey string,
-	correlationID audit.CorrelationID,
-) error {
+func (s *PublicSignupService) SignUpWithCorrelation(ctx context.Context, applicationInstanceID applicationinstance.InternalID, rawEmail, rawPassword, idempotencyKey string, correlationID audit.CorrelationID) error {
 	if !applicationInstanceID.Valid() {
 		return ErrInvalidApplicationInstanceScope
 	}
 	if len(idempotencyKey) == 0 || len(idempotencyKey) > 200 {
 		return ErrPublicIdempotencyKey
 	}
-	if correlationID == (audit.CorrelationID{}) {
-		return ErrPublicSignupPersistence
-	}
-	if s == nil || s.persistence == nil {
+	if correlationID == (audit.CorrelationID{}) || s == nil || s.persistence == nil {
 		return ErrPublicSignupPersistence
 	}
 	if s.delivery == nil {
 		return ErrEmailVerificationDelivery
+	}
+	admission, ok := s.persistence.(PublicSignupAdmission)
+	if !ok {
+		return ErrPublicSignupPersistence
 	}
 
 	email, err := identity.NormalizeEmail(rawEmail)
@@ -120,7 +108,18 @@ func (s *PublicSignupService) SignUpWithCorrelation(
 	requestInput = append(requestInput, preparedPassword...)
 	requestFingerprint := sha256.Sum256(requestInput)
 
-	passwordHash, err := HashPassword(preparedPassword)
+	replay, err := admission.AdmitPublicSignup(ctx, applicationInstanceID, keyHash, requestFingerprint, identifierFingerprint)
+	if err != nil {
+		return err
+	}
+	if replay {
+		return nil
+	}
+
+	passwordHash, err := HashPasswordContext(ctx, preparedPassword)
+	if errors.Is(err, ErrKDFAdmissionLimited) {
+		return ErrPublicRateLimited
+	}
 	if err != nil {
 		return err
 	}
@@ -128,7 +127,10 @@ func (s *PublicSignupService) SignUpWithCorrelation(
 	if err != nil {
 		return err
 	}
-	codeHash, err := HashVerificationCode(code)
+	codeHash, err := HashVerificationCodeContext(ctx, code)
+	if errors.Is(err, ErrKDFAdmissionLimited) {
+		return ErrPublicRateLimited
+	}
 	if err != nil {
 		return err
 	}
