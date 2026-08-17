@@ -10,6 +10,7 @@ type LookupEnv func(string) (string, bool)
 
 type Sender interface {
 	DeliverVerificationCode(context.Context, string, string, time.Time) error
+	DeliverPasswordResetCode(context.Context, string, string, time.Time) error
 }
 
 type unavailable struct{}
@@ -18,10 +19,14 @@ func (unavailable) DeliverVerificationCode(context.Context, string, string, time
 	return ErrDelivery
 }
 
+func (unavailable) DeliverPasswordResetCode(context.Context, string, string, time.Time) error {
+	return ErrDelivery
+}
+
 // FromLookup returns an unavailable sender when SMTP is intentionally not
 // configured. This keeps process startup independent of provider availability;
-// reachable signup still reports a stable delivery-unavailable result after
-// committing its registration/challenge correctness boundary.
+// reachable authentication lifecycles still receive stable delivery-unavailable
+// behavior after committing their security-state correctness boundary.
 func FromLookup(lookup LookupEnv) (Sender, error) {
 	address, hasAddress := lookup("BEEBOX_SMTP_ADDR")
 	if !hasAddress || address == "" {
