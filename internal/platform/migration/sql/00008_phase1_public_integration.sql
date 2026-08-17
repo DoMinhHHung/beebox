@@ -1,12 +1,14 @@
 -- +goose Up
 ALTER TABLE application_instances ADD COLUMN public_id TEXT;
 UPDATE application_instances SET public_id = 'app_' || gen_random_uuid()::text WHERE public_id IS NULL;
+ALTER TABLE application_instances ALTER COLUMN public_id SET DEFAULT ('app_' || gen_random_uuid()::text);
 ALTER TABLE application_instances ALTER COLUMN public_id SET NOT NULL;
 ALTER TABLE application_instances ADD CONSTRAINT application_instances_public_id_key UNIQUE (public_id);
 ALTER TABLE application_instances ADD CONSTRAINT application_instances_public_id_check CHECK (public_id ~ '^app_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$');
 
 ALTER TABLE users ADD COLUMN public_id TEXT;
 UPDATE users SET public_id = 'usr_' || gen_random_uuid()::text WHERE public_id IS NULL;
+ALTER TABLE users ALTER COLUMN public_id SET DEFAULT ('usr_' || gen_random_uuid()::text);
 ALTER TABLE users ALTER COLUMN public_id SET NOT NULL;
 ALTER TABLE users ADD CONSTRAINT users_public_id_key UNIQUE (public_id);
 ALTER TABLE users ADD CONSTRAINT users_public_id_check CHECK (public_id ~ '^usr_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$');
