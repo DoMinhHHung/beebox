@@ -99,7 +99,9 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 		verificationCore,
 	)
 	signup := authentication.NewPublicSignupService(authStore, sender)
+	reset := authentication.NewPasswordResetService(authStore, sender)
 	base := httpapi.New(health, integrationService, integrationStore, signup, verification)
+	base = httpapi.WithPasswordReset(base, integrationService, integrationStore, reset)
 
 	ring, err := session.KeyRingFromLookup(session.LookupEnv(lookup))
 	if errors.Is(err, session.ErrTokenDisabled) {

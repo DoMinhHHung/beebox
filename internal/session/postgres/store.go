@@ -34,36 +34,17 @@ func (s *Store) AllowSignInAttempt(ctx context.Context, appID applicationinstanc
 		return classify(ctx, err)
 	}
 	defer func() { _ = tx.Rollback() }()
-
 	var now time.Time
 	if err := tx.QueryRowContext(ctx, `SELECT CURRENT_TIMESTAMP`).Scan(&now); err != nil {
 		return classify(ctx, err)
 	}
 	now = now.UTC()
 	globalHash := [32]byte{1}
-	globalLimited, err := incrementSignInRate(
-		ctx,
-		tx,
-		appID,
-		"signin_global",
-		globalHash,
-		session.SignInGlobalLimit,
-		session.SignInGlobalWindow,
-		now,
-	)
+	globalLimited, err := incrementSignInRate(ctx, tx, appID, "signin_global", globalHash, session.SignInGlobalLimit, session.SignInGlobalWindow, now)
 	if err != nil {
 		return err
 	}
-	identifierLimited, err := incrementSignInRate(
-		ctx,
-		tx,
-		appID,
-		"signin_identifier",
-		identifierHash,
-		session.SignInIdentifierLimit,
-		session.SignInIdentifierWindow,
-		now,
-	)
+	identifierLimited, err := incrementSignInRate(ctx, tx, appID, "signin_identifier", identifierHash, session.SignInIdentifierLimit, session.SignInIdentifierWindow, now)
 	if err != nil {
 		return err
 	}
@@ -76,37 +57,16 @@ func (s *Store) AllowSignInAttempt(ctx context.Context, appID applicationinstanc
 	return nil
 }
 
-func incrementSignInRate(
-	ctx context.Context,
-	tx *sql.Tx,
-	appID applicationinstance.InternalID,
-	operation string,
-	subjectHash [32]byte,
-	limit int,
-	window time.Duration,
-	now time.Time,
-) (bool, error) {
+func incrementSignInRate(ctx context.Context, tx *sql.Tx, appID applicationinstance.InternalID, operation string, subjectHash [32]byte, limit int, window time.Duration, now time.Time) (bool, error) {
 	var count int
 	if err := tx.QueryRowContext(ctx, `
-		INSERT INTO public_auth_rate_limits (
-			application_instance_id, operation, subject_hash, window_started_at, request_count, expires_at
-		) VALUES ($1,$2,$3,$4,1,$5)
+		INSERT INTO public_auth_rate_limits (application_instance_id, operation, subject_hash, window_started_at, request_count, expires_at)
+		VALUES ($1,$2,$3,$4,1,$5)
 		ON CONFLICT (application_instance_id, operation, subject_hash) DO UPDATE SET
-			window_started_at = CASE
-				WHEN public_auth_rate_limits.expires_at <= EXCLUDED.window_started_at THEN EXCLUDED.window_started_at
-				ELSE public_auth_rate_limits.window_started_at
-			END,
-			request_count = CASE
-				WHEN public_auth_rate_limits.expires_at <= EXCLUDED.window_started_at THEN 1
-				ELSE public_auth_rate_limits.request_count + 1
-			END,
-			expires_at = CASE
-				WHEN public_auth_rate_limits.expires_at <= EXCLUDED.window_started_at THEN EXCLUDED.expires_at
-				ELSE public_auth_rate_limits.expires_at
-			END
-		RETURNING request_count`,
-		int64(appID), operation, subjectHash[:], now, now.Add(window),
-	).Scan(&count); err != nil {
+			window_started_at = CASE WHEN public_auth_rate_limits.expires_at <= EXCLUDED.window_started_at THEN EXCLUDED.window_started_at ELSE public_auth_rate_limits.window_started_at END,
+			request_count = CASE WHEN public_auth_rate_limits.expires_at <= EXCLUDED.window_started_at THEN 1 ELSE public_auth_rate_limits.request_count + 1 END,
+			expires_at = CASE WHEN public_auth_rate_limits.expires_at <= EXCLUDED.window_started_at THEN EXCLUDED.expires_at ELSE public_auth_rate_limits.expires_at END
+		RETURNING request_count`, int64(appID), operation, subjectHash[:], now, now.Add(window)).Scan(&count); err != nil {
 		return false, classify(ctx, err)
 	}
 	return count > limit, nil
@@ -122,14 +82,14 @@ func (s *Store) LookupPasswordCredential(ctx context.Context, appID applicationi
 	var userID int64
 	var encoded string
 	err := db.QueryRowContext(ctx, `
-		SELECT u.id, u.public_id, a.public_id, p.password_hash
+		SELECT u.id, u.public_id, a.public_id, p.generation, p.password_hash
 		FROM email_identifiers e
 		JOIN users u ON u.application_instance_id = e.application_instance_id AND u.id = e.user_id
 		JOIN password_credentials p ON p.application_instance_id = u.application_instance_id AND p.user_id = u.id
 		JOIN application_instances a ON a.id = u.application_instance_id
 		WHERE e.application_instance_id = $1 AND e.normalized_email = $2 AND e.verified_at IS NOT NULL`,
 		int64(appID), normalizedEmail,
-	).Scan(&userID, &record.UserPublicID, &record.ApplicationPublicID, &encoded)
+	).Scan(&userID, &record.UserPublicID, &record.ApplicationPublicID, &record.CredentialGeneration, &encoded)
 	if errors.Is(err, sql.ErrNoRows) {
 		return session.CredentialRecord{}, session.ErrInvalidCredentials
 	}
@@ -145,8 +105,8 @@ func (s *Store) LookupPasswordCredential(ctx context.Context, appID applicationi
 	return record, nil
 }
 
-func (s *Store) CreateSession(ctx context.Context, appID applicationinstance.InternalID, userID identity.InternalID, publicID string, refreshHash [32]byte, idleExpiresAt, expiresAt time.Time, correlationID audit.CorrelationID) error {
-	if s == nil || s.pool == nil || !appID.Valid() || !userID.Valid() || !session.ValidPublicID(publicID) || correlationID == (audit.CorrelationID{}) {
+func (s *Store) CreateSession(ctx context.Context, appID applicationinstance.InternalID, userID identity.InternalID, credentialGeneration int64, publicID string, refreshHash [32]byte, idleExpiresAt, expiresAt time.Time, correlationID audit.CorrelationID) error {
+	if s == nil || s.pool == nil || !appID.Valid() || !userID.Valid() || credentialGeneration <= 0 || !session.ValidPublicID(publicID) || correlationID == (audit.CorrelationID{}) {
 		return session.ErrSessionUnavailable
 	}
 	db := s.pool.OpenSQLDB()
@@ -156,6 +116,20 @@ func (s *Store) CreateSession(ctx context.Context, appID applicationinstance.Int
 		return classify(ctx, err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	var currentGeneration int64
+	err = tx.QueryRowContext(ctx, `
+		SELECT p.generation
+		FROM password_credentials p
+		JOIN email_identifiers e ON e.application_instance_id = p.application_instance_id AND e.user_id = p.user_id
+		WHERE p.application_instance_id = $1 AND p.user_id = $2 AND p.generation = $3 AND e.verified_at IS NOT NULL
+		LIMIT 1
+		FOR SHARE OF p`, int64(appID), int64(userID), credentialGeneration).Scan(&currentGeneration)
+	if errors.Is(err, sql.ErrNoRows) {
+		return session.ErrInvalidCredentials
+	}
+	if err != nil {
+		return classify(ctx, err)
+	}
 	var sessionID int64
 	if err := tx.QueryRowContext(ctx, `
 		INSERT INTO sessions (public_id, application_instance_id, user_id, idle_expires_at, expires_at)
@@ -185,7 +159,6 @@ func (s *Store) RotateRefresh(ctx context.Context, appID applicationinstance.Int
 		return session.CredentialRecord{}, "", classify(ctx, err)
 	}
 	defer func() { _ = tx.Rollback() }()
-
 	var credentialID, sessionInternalID, userID int64
 	var consumedAt, revokedAt sql.NullTime
 	var expiresAt, idleExpiresAt time.Time
@@ -242,11 +215,7 @@ func (s *Store) RotateRefresh(ctx context.Context, appID applicationinstance.Int
 	if err := tx.Commit(); err != nil {
 		return session.CredentialRecord{}, "", classify(ctx, err)
 	}
-	return session.CredentialRecord{
-		UserInternalID:      uid,
-		UserPublicID:        userPublicID,
-		ApplicationPublicID: appPublicID,
-	}, sessionPublicID, nil
+	return session.CredentialRecord{UserInternalID: uid, UserPublicID: userPublicID, ApplicationPublicID: appPublicID}, sessionPublicID, nil
 }
 
 func insertAudit(ctx context.Context, tx *sql.Tx, appID applicationinstance.InternalID, userID identity.InternalID, action string, correlationID audit.CorrelationID) error {
