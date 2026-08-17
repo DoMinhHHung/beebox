@@ -170,7 +170,7 @@ paths:
               $ref: '#/components/schemas/SignInRequest'
       responses:
         '200':
-          description: Session created. Browser requests with an allowed Origin receive the rotating refresh credential only in a Secure HttpOnly SameSite=Strict __Host- cookie; non-browser requests receive it in the response body.
+          description: Session created. Browser requests with an allowed Origin receive the rotating refresh credential only in a Secure HttpOnly SameSite=Strict application-specific __Host- cookie; non-browser requests receive it in the response body.
           headers:
             Cache-Control:
               schema:
@@ -182,7 +182,7 @@ paths:
             Set-Cookie:
               schema:
                 type: string
-              description: Present for browser mode; refresh credential is not duplicated in JSON in that mode.
+              description: Present for browser mode as __Host-beebox-refresh-<application_public_id>; refresh credential is not duplicated in JSON in that mode.
           content:
             application/json:
               schema:
@@ -193,18 +193,20 @@ paths:
           $ref: '#/components/responses/InvalidCredentials'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
         '503':
           $ref: '#/components/responses/Unavailable'
   /v1/sessions/refresh:
     post:
       operationId: refreshSession
       summary: Rotate a refresh credential and issue a new access token
-      description: A previously consumed refresh credential is treated as replay and revokes the owning session. Cookie mode requires a non-empty exact stored Origin for the resolved application.
+      description: A previously consumed refresh credential is treated as replay and revokes the owning session. Cookie mode uses the resolved application's __Host-beebox-refresh-<application_public_id> cookie and requires a non-empty exact stored Origin for that application.
       security:
         - publishableKey: []
       requestBody:
         required: false
-        description: Required for non-browser bearer mode. Cookie mode reads the __Host-beebox-refresh cookie instead.
+        description: Required for non-browser bearer mode. Cookie mode reads the application-specific __Host- refresh cookie instead.
         content:
           application/json:
             schema:
@@ -223,7 +225,7 @@ paths:
             Set-Cookie:
               schema:
                 type: string
-              description: Updated refresh cookie in browser mode.
+              description: Updated application-specific refresh cookie in browser mode.
           content:
             application/json:
               schema:
@@ -334,7 +336,7 @@ components:
           pattern: '^ses_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
         refresh_token:
           type: string
-          description: Present only for non-browser mode. Browser mode uses the __Host-beebox-refresh cookie.
+          description: Present only for non-browser mode. Browser mode uses an application-specific __Host-beebox-refresh-<application_public_id> cookie.
     EmailVerificationRequest:
       type: object
       additionalProperties: false
