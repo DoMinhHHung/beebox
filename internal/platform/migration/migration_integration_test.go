@@ -182,7 +182,7 @@ func isolatedDatabaseURL(t *testing.T, schema string) string {
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cleanupCancel()
-		_, _ = adminDB.ExecContext(cleanupCtx, "DROP SCHEMA IF EXISTS "+quotedSchema+" CASCADE)
+		_, _ = adminDB.ExecContext(cleanupCtx, "DROP SCHEMA IF EXISTS "+quotedSchema+" CASCADE")
 		_ = adminDB.Close()
 	})
 	parsed, err := url.Parse(databaseURL)
