@@ -16,6 +16,7 @@ type integrationStub struct {
 	origin      string
 	correlation CorrelationID
 	finalized   bool
+	rotated     bool
 }
 
 func (s *integrationStub) CreateCredential(_ context.Context, _ InternalID, kind CredentialKind, material CredentialMaterial, correlation CorrelationID) (Credential, error) {
@@ -25,7 +26,14 @@ func (s *integrationStub) CreateCredential(_ context.Context, _ InternalID, kind
 	return Credential{PublicID: material.PublicID, Kind: kind, ApplicationInstanceID: 1}, nil
 }
 
-func (s *integrationStub) RevokeCredential(_ context.Context, _ CredentialPublicID, correlation CorrelationID) error {
+func (s *integrationStub) RotateCredential(_ context.Context, appID InternalID, _ CredentialPublicID, kind CredentialKind, material CredentialMaterial, _, _ CorrelationID) (Credential, error) {
+	s.rotated = true
+	s.kind = kind
+	s.material = material
+	return Credential{PublicID: material.PublicID, Kind: kind, ApplicationInstanceID: appID}, nil
+}
+
+func (s *integrationStub) RevokeCredential(_ context.Context, _ InternalID, _ CredentialPublicID, correlation CorrelationID) error {
 	s.correlation = correlation
 	return nil
 }
@@ -52,7 +60,7 @@ func (s *integrationStub) AddAllowedOrigin(_ context.Context, _ InternalID, orig
 	return AllowedOrigin{CanonicalOrigin: origin}, nil
 }
 
-func TestCredentialFormatsAndSecretVerification(t *testing.T) {
+func TestCredentialFormatsSecretVerificationAndRotation(t *testing.T) {
 	stub := &integrationStub{}
 	service := NewIntegrationService(stub)
 
@@ -95,6 +103,14 @@ func TestCredentialFormatsAndSecretVerification(t *testing.T) {
 	}
 	if stub.finalized {
 		t.Fatal("wrong secret reached state finalization")
+	}
+
+	rotated, rotatedRaw, err := service.RotateCredential(context.Background(), 1, secretCred.PublicID, CredentialKindSecret)
+	if err != nil {
+		t.Fatalf("RotateCredential() = %v", err)
+	}
+	if !stub.rotated || rotated.PublicID == secretCred.PublicID || rotatedRaw == "" {
+		t.Fatal("credential rotation did not create distinct secret material")
 	}
 }
 
