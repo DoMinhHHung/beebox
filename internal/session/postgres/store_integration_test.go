@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"database/sql"
 	"errors"
 	"net/url"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	applicationpostgres "github.com/DoMinhHHung/beebox/internal/applicationinstance/postgres"
+	"github.com/DoMinhHHung/beebox/internal/audit"
 	"github.com/DoMinhHHung/beebox/internal/authentication"
 	identitypostgres "github.com/DoMinhHHung/beebox/internal/identity/postgres"
 	"github.com/DoMinhHHung/beebox/internal/platform/database"
@@ -103,7 +105,7 @@ func TestSignInRefreshRotationAndReplayRevokesSession(t *testing.T) {
 	db = pool.OpenSQLDB()
 	defer db.Close()
 	var sessionCount, refreshCount, consumedCount int
-	var revokedAt *time.Time
+	var revokedAt sql.NullTime
 	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM sessions WHERE application_instance_id=$1`, int64(app.InternalID)).Scan(&sessionCount); err != nil {
 		t.Fatal(err)
 	}
@@ -116,15 +118,15 @@ func TestSignInRefreshRotationAndReplayRevokesSession(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT revoked_at FROM sessions WHERE public_id=$1`, pair.SessionID).Scan(&revokedAt); err != nil {
 		t.Fatal(err)
 	}
-	if sessionCount != 1 || refreshCount != 2 || consumedCount != 1 || revokedAt == nil {
-		t.Fatalf("session/refresh/consumed/revoked = %d/%d/%d/%v", sessionCount, refreshCount, consumedCount, revokedAt)
+	if sessionCount != 1 || refreshCount != 2 || consumedCount != 1 || !revokedAt.Valid {
+		t.Fatalf("session/refresh/consumed/revoked = %d/%d/%d/%v", sessionCount, refreshCount, consumedCount, revokedAt.Valid)
 	}
 }
 
-func mustCorrelation(t *testing.T) [16]byte {
+func mustCorrelation(t *testing.T) audit.CorrelationID {
 	t.Helper()
-	var value [16]byte
-	if _, err := rand.Read(value[:]); err != nil {
+	value, err := audit.NewCorrelationID()
+	if err != nil {
 		t.Fatal(err)
 	}
 	return value
