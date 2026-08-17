@@ -276,6 +276,9 @@ func insertResetAudit(ctx context.Context, tx *sql.Tx, appID applicationinstance
 }
 
 func resetClassify(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return ctxErr
 	}
