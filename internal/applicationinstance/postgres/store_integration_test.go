@@ -96,9 +96,16 @@ func TestStoreDatabaseFailureUsesStableSafeError(t *testing.T) {
 		t.Fatalf("migration.Up() error = %v", err)
 	}
 
-	store := New(pool)
-	pool.Close()
+	db := pool.OpenSQLDB()
+	if _, err := db.ExecContext(ctx, "DROP TABLE application_instances"); err != nil {
+		db.Close()
+		t.Fatalf("drop application_instances error = %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close test adapter error = %v", err)
+	}
 
+	store := New(pool)
 	if _, err := store.Create(ctx); !errors.Is(err, applicationinstance.ErrPersistence) || err.Error() != "application instance persistence failure" {
 		t.Fatalf("Create() error = %v, want stable ErrPersistence", err)
 	}
