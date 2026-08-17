@@ -75,15 +75,18 @@ func TestEmailIdentifiersAreScopedUniqueUnverifiedAndNeverAutoLink(t *testing.T)
 	if err != nil {
 		t.Fatalf("ResolveEmailIdentifierByAddress(A) error = %v", err)
 	}
-	if resolvedA.InternalID != identifierA.InternalID || resolvedA.UserID != userA.InternalID {
-		t.Fatalf("ResolveEmailIdentifierByAddress(A) = %+v, want identifier A owned by user A", resolvedA)
+	assertEmailIdentifier(t, resolvedA, appA.InternalID, userA.InternalID, "Alice@Example.TEST", "alice@example.test")
+	if resolvedA.InternalID != identifierA.InternalID {
+		t.Fatalf("ResolveEmailIdentifierByAddress(A) internal ID = %d, want %d", resolvedA.InternalID, identifierA.InternalID)
 	}
+
 	resolvedB, err := store.ResolveEmailIdentifierByAddress(ctx, appB.InternalID, "Alice@Example.TEST")
 	if err != nil {
 		t.Fatalf("ResolveEmailIdentifierByAddress(B) error = %v", err)
 	}
-	if resolvedB.InternalID != identifierB.InternalID || resolvedB.UserID != userB.InternalID {
-		t.Fatalf("ResolveEmailIdentifierByAddress(B) = %+v, want identifier B owned by user B", resolvedB)
+	assertEmailIdentifier(t, resolvedB, appB.InternalID, userB.InternalID, "alice@example.test", "alice@example.test")
+	if resolvedB.InternalID != identifierB.InternalID {
+		t.Fatalf("ResolveEmailIdentifierByAddress(B) internal ID = %d, want %d", resolvedB.InternalID, identifierB.InternalID)
 	}
 
 	if _, err := store.ResolveEmailIdentifierByAddress(ctx, appA.InternalID, "missing@example.test"); !errors.Is(err, identity.ErrEmailIdentifierNotFound) {
@@ -280,7 +283,7 @@ func assertEmailIdentifier(
 		t.Fatalf("email identifier address/key = %q/%q, want %q/%q", identifier.EmailAddress, identifier.NormalizedEmail, wantAddress, wantNormalized)
 	}
 	if identifier.VerifiedAt != nil {
-		t.Fatalf("new email identifier VerifiedAt = %v, want nil", identifier.VerifiedAt)
+		t.Fatalf("email identifier VerifiedAt = %v, want nil", identifier.VerifiedAt)
 	}
 	if identifier.CreatedAt.Location() != time.UTC {
 		t.Fatalf("email identifier CreatedAt location = %v, want UTC", identifier.CreatedAt.Location())
