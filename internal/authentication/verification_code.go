@@ -1,6 +1,7 @@
 package authentication
 
 import (
+	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -17,70 +18,44 @@ var (
 	ErrVerificationCodeMismatch    = errors.New("verification code mismatch")
 )
 
-// VerificationCodeHash is dedicated sensitive verifier material for an email
-// verification code. Its encoding is internal and is not a public contract.
-type VerificationCodeHash struct {
-	encoded string
-}
+type VerificationCodeHash struct { encoded string }
 
 func GenerateVerificationCode() (string, error) {
 	n, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
-	if err != nil {
-		return "", ErrVerificationCodeGeneration
-	}
+	if err != nil { return "", ErrVerificationCodeGeneration }
 	return fmt.Sprintf("%06d", n.Int64()), nil
 }
 
 func validVerificationCode(raw string) bool {
-	if len(raw) != verificationCodeDigits {
-		return false
-	}
-	for i := 0; i < len(raw); i++ {
-		if raw[i] < '0' || raw[i] > '9' {
-			return false
-		}
-	}
+	if len(raw) != verificationCodeDigits { return false }
+	for i := 0; i < len(raw); i++ { if raw[i] < '0' || raw[i] > '9' { return false } }
 	return true
 }
 
-func HashVerificationCode(raw string) (VerificationCodeHash, error) {
-	if !validVerificationCode(raw) {
-		return VerificationCodeHash{}, ErrInvalidVerificationCode
-	}
-	passwordHash, err := HashPassword([]byte(raw))
-	if err != nil {
-		return VerificationCodeHash{}, ErrVerificationCodeHashing
-	}
+func HashVerificationCode(raw string) (VerificationCodeHash, error) { return HashVerificationCodeContext(context.Background(), raw) }
+
+func HashVerificationCodeContext(ctx context.Context, raw string) (VerificationCodeHash, error) {
+	if !validVerificationCode(raw) { return VerificationCodeHash{}, ErrInvalidVerificationCode }
+	passwordHash, err := HashPasswordContext(ctx, []byte(raw))
+	if err != nil { return VerificationCodeHash{}, ErrVerificationCodeHashing }
 	return VerificationCodeHash{encoded: passwordHash.encoded}, nil
 }
 
 func ParseVerificationCodeHash(encoded string) (VerificationCodeHash, error) {
 	passwordHash, err := ParsePasswordHash(encoded)
-	if err != nil {
-		return VerificationCodeHash{}, ErrInvalidVerificationCodeHash
-	}
+	if err != nil { return VerificationCodeHash{}, ErrInvalidVerificationCodeHash }
 	return VerificationCodeHash{encoded: passwordHash.encoded}, nil
 }
 
-func (h VerificationCodeHash) Valid() bool {
-	_, err := ParseVerificationCodeHash(h.encoded)
-	return err == nil
-}
+func (h VerificationCodeHash) Valid() bool { _, err := ParseVerificationCodeHash(h.encoded); return err == nil }
+func (h VerificationCodeHash) StorageEncoding() string { return h.encoded }
 
-// StorageEncoding exposes only the internal persistence representation. It is
-// sensitive verifier material and must not be logged or returned publicly.
-func (h VerificationCodeHash) StorageEncoding() string {
-	return h.encoded
-}
+func VerifyVerificationCode(stored VerificationCodeHash, candidate string) error { return VerifyVerificationCodeContext(context.Background(), stored, candidate) }
 
-func VerifyVerificationCode(stored VerificationCodeHash, candidate string) error {
-	if !validVerificationCode(candidate) {
-		return ErrInvalidVerificationCode
-	}
-	if !stored.Valid() {
-		return ErrInvalidVerificationCodeHash
-	}
-	err := VerifyPassword(PasswordHash{encoded: stored.encoded}, []byte(candidate))
+func VerifyVerificationCodeContext(ctx context.Context, stored VerificationCodeHash, candidate string) error {
+	if !validVerificationCode(candidate) { return ErrInvalidVerificationCode }
+	if !stored.Valid() { return ErrInvalidVerificationCodeHash }
+	err := VerifyPasswordContext(ctx, PasswordHash{encoded: stored.encoded}, []byte(candidate))
 	switch {
 	case err == nil:
 		return nil
@@ -88,6 +63,8 @@ func VerifyVerificationCode(stored VerificationCodeHash, candidate string) error
 		return ErrVerificationCodeMismatch
 	case errors.Is(err, ErrInvalidPasswordHash):
 		return ErrInvalidVerificationCodeHash
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded), errors.Is(err, ErrKDFAdmissionLimited):
+		return err
 	default:
 		return ErrVerificationCodeHashing
 	}
