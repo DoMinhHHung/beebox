@@ -1,16 +1,16 @@
 # ADR 0003 — Phase 1 public authentication contract
 
-Status: **proposed**
+Status: **accepted**
 
 Date: 2026-08-17
 
 Decision owner: Human maintainer
 
-Acceptance rule: **Human squash-merge of the Checkpoint 1 pull request containing this ADR constitutes acceptance of this decision.** No public product authentication route may rely on these semantics before that merge is present on `main`.
+Acceptance record: Human squash-merged Checkpoint 1 as PR #13 on 2026-08-17. Public product authentication routes introduced after that merge may rely on this decision.
 
 ## Context
 
-BeeBox has an application-scoped identity persistence foundation, transactional email/password registration, and an internal email-ownership verification lifecycle. It still exposes no public product authentication API. Phase 1 needs a stable trust and wire-contract baseline before reachable signup, signin, sessions, tokens, password reset, SDKs, or browser credential transport are introduced.
+BeeBox has an application-scoped identity persistence foundation, transactional email/password registration, and an internal email-ownership verification lifecycle. Phase 1 needs a stable trust and wire-contract baseline for reachable signup, signin, sessions, tokens, password reset, SDKs, and browser credential transport.
 
 This decision preserves ADR 0001 (`application_instance` is the root isolation resource) and ADR 0002 (email equality never auto-links or merges accounts). BeeBox remains a Go modular monolith with PostgreSQL as the correctness source of truth. This ADR defines BeeBox-owned contracts; Clerk remains a public capability benchmark only.
 
@@ -49,7 +49,7 @@ Future credentialed browser CORS and cookie-authenticated unsafe requests must v
 
 ### Public password policy
 
-Every public Phase 1 password establishment/change/reset path will use one shared policy component:
+Every public Phase 1 password establishment/change/reset path uses one shared policy component:
 
 - minimum 15 Unicode code points;
 - maximum 128 Unicode code points;
@@ -64,7 +64,7 @@ The built-in list is not represented as a comprehensive breach corpus. The exist
 
 ### Access-token trust
 
-Phase 1 access tokens will be JWT/JWS signed with Ed25519 using JOSE `EdDSA` only. Validation uses an exact algorithm allowlist. `kid` is mandatory.
+Phase 1 access tokens use JWT/JWS signed with Ed25519 using JOSE `EdDSA` only. Validation uses an exact algorithm allowlist. `kid` is mandatory.
 
 Required claims:
 
@@ -106,7 +106,7 @@ Only refresh-token verifier material is persisted. A refresh credential rotates 
 
 ### Cookie and bearer transport
 
-Browser refresh-cookie mode will use an application-specific `__Host-` cookie with:
+Browser refresh-cookie mode uses an application-specific `__Host-` cookie with:
 
 - `Secure`;
 - `HttpOnly`;
@@ -126,8 +126,8 @@ Audit, stable errors, logs, metrics, traces, and provider errors must never cont
 
 ## Consequences
 
-Checkpoint 1 may add public IDs, application credentials, exact allowed origins, operator bootstrap/rotation/revocation commands, local Ed25519 key generation, schema constraints, and internal persistence/audit behavior. It must expose no public authentication route.
+Checkpoint 1 added public IDs, application credentials, exact allowed origins, operator bootstrap/rotation/revocation commands, local Ed25519 key generation, schema constraints, and internal persistence/audit behavior without exposing public authentication routes.
 
-After Human acceptance, later Phase 1 checkpoints may build versioned `/v1` APIs, SMTP delivery, public password policy, signup/verification, signin/session/JWT/JWKS/refresh, password reset, OpenAPI, SDK, metrics, and local end-to-end setup according to this contract.
+Later Phase 1 checkpoints may build versioned `/v1` APIs, SMTP delivery, public password policy, signup/verification, signin/session/JWT/JWKS/refresh, password reset, OpenAPI, SDK, metrics, and local end-to-end setup according to this contract.
 
 Any later incompatible public-contract change requires an explicit version/migration path and, where it changes a trust boundary, new Human authority.
