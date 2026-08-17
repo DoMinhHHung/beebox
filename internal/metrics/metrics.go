@@ -12,8 +12,8 @@ import (
 // Callers must only pass fixed vocabulary values; resource identifiers, email,
 // tokens, credential IDs, and raw errors are intentionally excluded.
 type Recorder struct {
-	mu      sync.RWMutex
-	counts  map[string]uint64
+	mu     sync.RWMutex
+	counts map[string]uint64
 }
 
 func New() *Recorder {
@@ -53,12 +53,12 @@ func (r *Recorder) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = fmt.Fprintln(w, "# HELP beebox_auth_operations_total BeeBox Phase 1 authentication operation outcomes.")
 	_, _ = fmt.Fprintln(w, "# TYPE beebox_auth_operations_total counter")
-	keys := make([]string, 0, len(r.Snapshot()))
-	for key := range r.Snapshot() {
+	snapshot := r.Snapshot()
+	keys := make([]string, 0, len(snapshot))
+	for key := range snapshot {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	snapshot := r.Snapshot()
 	for _, key := range keys {
 		parts := strings.SplitN(key, "\x00", 2)
 		_, _ = fmt.Fprintf(w, "beebox_auth_operations_total{operation=%q,outcome=%q} %d\n", parts[0], parts[1], snapshot[key])
