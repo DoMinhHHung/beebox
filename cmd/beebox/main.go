@@ -24,6 +24,8 @@ import (
 	"github.com/DoMinhHHung/beebox/internal/platform/database"
 	"github.com/DoMinhHHung/beebox/internal/platform/httpserver"
 	"github.com/DoMinhHHung/beebox/internal/platform/migration"
+	"github.com/DoMinhHHung/beebox/internal/session"
+	sessionpostgres "github.com/DoMinhHHung/beebox/internal/session/postgres"
 )
 
 const usageText = "usage: beebox [migrate]"
@@ -97,7 +99,18 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 		verificationCore,
 	)
 	signup := authentication.NewPublicSignupService(authStore, sender)
-	return httpapi.New(health, integrationService, integrationStore, signup, verification), nil
+	base := httpapi.New(health, integrationService, integrationStore, signup, verification)
+
+	ring, err := session.KeyRingFromLookup(session.LookupEnv(lookup))
+	if errors.Is(err, session.ErrTokenDisabled) {
+		return base, nil
+	}
+	if err != nil {
+		return nil, errors.New("load access token signing configuration")
+	}
+	sessionStore := sessionpostgres.New(concretePool)
+	sessionService := session.NewService(sessionStore, sessionStore, ring)
+	return httpapi.WithSessions(base, integrationService, integrationStore, sessionService, ring), nil
 }
 
 func runWithDependencies(ctx context.Context, logger *slog.Logger, lookup config.LookupEnv, dependencies runtimeDependencies, args []string) error {
