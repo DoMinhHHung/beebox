@@ -35,12 +35,12 @@ func TestMigrationFirstApplyAndRerunAreIdempotent(t *testing.T) {
 		t.Fatalf("first adapter remained open after Up: %v", err)
 	}
 
-	assertMigrationState(t, ctx, pool, 5)
+	assertMigrationState(t, ctx, pool, 6)
 
 	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
 		t.Fatalf("second Up() error = %v", err)
 	}
-	assertMigrationState(t, ctx, pool, 5)
+	assertMigrationState(t, ctx, pool, 6)
 	assertSchemaTables(t, ctx, pool)
 }
 
@@ -76,7 +76,7 @@ func TestConcurrentMigrationRunnersSerializeAndConverge(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	assertMigrationState(t, ctx, firstPool, 5)
+	assertMigrationState(t, ctx, firstPool, 6)
 	assertSchemaTables(t, ctx, firstPool)
 }
 
@@ -144,7 +144,8 @@ func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 		"00003_users.sql":                 {Data: []byte(validMigration)},
 		"00004_email_identifiers.sql":     {Data: []byte(validMigration)},
 		"00005_password_credentials.sql":  {Data: []byte(validMigration)},
-		"00006_failure_probe.sql": {Data: []byte(
+		"00006_audit_events.sql":          {Data: []byte(validMigration)},
+		"00007_failure_probe.sql": {Data: []byte(
 			"-- +goose Up\n" +
 				"-- " + secretMarker + "\n" +
 				"CREATE TABLE migration_failure_probe (id bigint PRIMARY KEY);\n" +
@@ -173,15 +174,15 @@ func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 		t.Fatalf("failing migration left probe table %q", probeTable.String)
 	}
 
-	var versionSixCount int
+	var versionSevenCount int
 	if err := db.QueryRowContext(
 		ctx,
-		"SELECT count(*) FROM goose_db_version WHERE version_id = 6 AND is_applied",
-	).Scan(&versionSixCount); err != nil {
-		t.Fatalf("query version 6 error = %v", err)
+		"SELECT count(*) FROM goose_db_version WHERE version_id = 7 AND is_applied",
+	).Scan(&versionSevenCount); err != nil {
+		t.Fatalf("query version 7 error = %v", err)
 	}
-	if versionSixCount != 0 {
-		t.Fatalf("applied version 6 rows = %d, want 0", versionSixCount)
+	if versionSevenCount != 0 {
+		t.Fatalf("applied version 7 rows = %d, want 0", versionSevenCount)
 	}
 }
 
@@ -241,12 +242,7 @@ func openPool(t *testing.T, databaseURL string) *database.Pool {
 	return pool
 }
 
-func assertMigrationState(
-	t *testing.T,
-	ctx context.Context,
-	pool *database.Pool,
-	wantApplied int,
-) {
+func assertMigrationState(t *testing.T, ctx context.Context, pool *database.Pool, wantApplied int) {
 	t.Helper()
 	db := pool.OpenSQLDB()
 	defer db.Close()
@@ -263,11 +259,7 @@ func assertMigrationState(
 	}
 }
 
-func assertSchemaTables(
-	t *testing.T,
-	ctx context.Context,
-	pool *database.Pool,
-) {
+func assertSchemaTables(t *testing.T, ctx context.Context, pool *database.Pool) {
 	t.Helper()
 	db := pool.OpenSQLDB()
 	defer db.Close()
@@ -295,7 +287,7 @@ func assertSchemaTables(
 	if err := rows.Err(); err != nil {
 		t.Fatalf("iterate schema tables error = %v", err)
 	}
-	if want := []string{"application_instances", "email_identifiers", "goose_db_version", "password_credentials", "users"}; !reflect.DeepEqual(tables, want) {
+	if want := []string{"application_instances", "audit_events", "email_identifiers", "goose_db_version", "password_credentials", "users"}; !reflect.DeepEqual(tables, want) {
 		t.Fatalf("schema tables = %v, want %v", tables, want)
 	}
 }
