@@ -63,8 +63,8 @@ func (f *fakeSignup) SignUpWithCorrelation(
 type fakeVerification struct {
 	requestCorrelation audit.CorrelationID
 	confirmCorrelation audit.CorrelationID
-	requestErr          error
-	confirmErr          error
+	requestErr         error
+	confirmErr         error
 }
 
 func (f *fakeVerification) RequestWithCorrelation(
