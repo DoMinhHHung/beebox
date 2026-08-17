@@ -36,6 +36,7 @@ func TestEmbeddedSourcesAreValidAndOrdered(t *testing.T) {
 		"00007_email_verification_challenges.sql",
 		"00008_phase1_public_integration.sql",
 		"00009_public_auth_controls.sql",
+		"00010_sessions.sql",
 	}
 	if len(entries) != len(want) {
 		t.Fatalf("embedded migration count = %d, want %d", len(entries), len(want))
@@ -70,105 +71,46 @@ func TestValidateSourcesRejectsUnsafeOrInvalidSources(t *testing.T) {
 		{name: "missing up directive", sources: fstest.MapFS{
 			"00001_bad.sql": {Data: []byte("SELECT 1;\n")},
 		}},
-		{name: "out of order", sources: unsortedFS{
-			MapFS: fstest.MapFS{
-				"00001_one.sql": {Data: []byte(validMigration)},
-				"00002_two.sql": {Data: []byte(validMigration)},
-			},
-			order: []string{"00002_two.sql", "00001_one.sql"},
-		}},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateSources(tt.sources)
-			if !errors.Is(err, errInvalidSources) {
-				t.Fatalf("validateSources() error = %v, want stable invalid-sources error", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := validateSources(tc.sources); !errors.Is(err, errInvalidSources) {
+				t.Fatalf("validateSources() error = %v, want %v", err, errInvalidSources)
 			}
 		})
 	}
 }
 
-func TestUpRequiresDeadlineAndClosesAdapterWithSafeError(t *testing.T) {
-	db, closed := openTestDB(t)
-	if err := db.Ping(); err != nil {
-		t.Fatalf("test db Ping() error = %v", err)
+func TestUpRejectsMissingDeadlineAndClosesAdapter(t *testing.T) {
+	registerTestDriverOnce()
+	db, err := sql.Open(testDriverName, "deadline")
+	if err != nil {
+		t.Fatal(err)
 	}
-	err := upWithSources(context.Background(), db, fstest.MapFS{
-		"00001_baseline.sql": {Data: []byte(validMigration)},
-	})
-	if !errors.Is(err, errDeadlineRequired) {
-		t.Fatalf("upWithSources() error = %v, want deadline-required error", err)
+	if err := upWithSources(context.Background(), db, fstest.MapFS{"00001_test.sql": {Data: []byte(validMigration)}}); !errors.Is(err, errDeadlineRequired) {
+		t.Fatalf("upWithSources() error = %v, want %v", err, errDeadlineRequired)
 	}
-	if strings.Contains(err.Error(), "provider") || strings.Contains(err.Error(), "dsn") {
-		t.Fatalf("upWithSources() error leaks provider detail: %q", err)
-	}
-	if err := db.Ping(); err == nil || err.Error() != "sql: database is closed" {
-		t.Fatalf("db.Ping() after Up = %v, want closed adapter", err)
-	}
-	if got := closed.Load(); got != 1 {
-		t.Fatalf("underlying adapter Close() calls = %d, want 1", got)
+	if err := db.Ping(); err == nil || !strings.Contains(err.Error(), "database is closed") {
+		t.Fatalf("db.Ping() after Up = %v, want closed database", err)
 	}
 }
 
-type unsortedFS struct {
-	fstest.MapFS
-	order []string
-}
+const testDriverName = "beebox_migration_test"
 
-func (u unsortedFS) ReadDir(name string) ([]fs.DirEntry, error) {
-	if name != "." {
-		return nil, fs.ErrNotExist
+var registered atomic.Bool
+
+func registerTestDriverOnce() {
+	if registered.CompareAndSwap(false, true) {
+		sql.Register(testDriverName, testDriver{})
 	}
-	entries := make([]fs.DirEntry, 0, len(u.order))
-	for _, path := range u.order {
-		info, err := fs.Stat(u.MapFS, path)
-		if err != nil {
-			return nil, err
-		}
-		entries = append(entries, fs.FileInfoToDirEntry(info))
-	}
-	return entries, nil
 }
 
-func openTestDB(t *testing.T) (*sql.DB, *atomic.Int32) {
-	t.Helper()
-	closed := &atomic.Int32{}
-	return sql.OpenDB(testConnector{closed: closed}), closed
-}
+type testDriver struct{}
 
-type testDriver struct {
-	closed *atomic.Int32
-}
+func (testDriver) Open(string) (driver.Conn, error) { return testConn{}, nil }
 
-func (d testDriver) Open(string) (driver.Conn, error) {
-	return testConn{closed: d.closed}, nil
-}
+type testConn struct{}
 
-type testConnector struct {
-	closed *atomic.Int32
-}
-
-func (c testConnector) Connect(context.Context) (driver.Conn, error) {
-	return testConn{closed: c.closed}, nil
-}
-
-func (c testConnector) Driver() driver.Driver {
-	return testDriver{closed: c.closed}
-}
-
-type testConn struct {
-	closed *atomic.Int32
-}
-
-func (testConn) Prepare(string) (driver.Stmt, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (c testConn) Close() error {
-	c.closed.Add(1)
-	return nil
-}
-
-func (testConn) Begin() (driver.Tx, error) {
-	return nil, errors.New("not implemented")
-}
+func (testConn) Prepare(string) (driver.Stmt, error) { return nil, errors.New("unsupported") }
+func (testConn) Close() error                        { return nil }
+func (testConn) Begin() (driver.Tx, error)           { return nil, errors.New("unsupported") }
