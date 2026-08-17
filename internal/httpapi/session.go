@@ -12,7 +12,7 @@ import (
 	"github.com/DoMinhHHung/beebox/internal/session"
 )
 
-const refreshCookieName = "__Host-beebox-refresh"
+const refreshCookiePrefix = "__Host-beebox-refresh-"
 
 type SessionService interface {
 	SignIn(context.Context, applicationinstance.InternalID, string, string, audit.CorrelationID) (session.TokenPair, error)
@@ -53,8 +53,16 @@ func (h *sessionHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/.well-known/jwks.json":
 		h.handleJWKS(w, r)
 	case "/v1/sign-ins":
+		if r.Method == http.MethodOptions {
+			h.withSecurityContext(w, r, h.handleSessionPreflight)
+			return
+		}
 		h.withSecurityContext(w, r, h.handleSignIn)
 	case "/v1/sessions/refresh":
+		if r.Method == http.MethodOptions {
+			h.withSecurityContext(w, r, h.handleSessionPreflight)
+			return
+		}
 		h.withSecurityContext(w, r, h.handleRefresh)
 	default:
 		h.base.ServeHTTP(w, r)
@@ -81,8 +89,8 @@ func (h *sessionHTTP) handleSignIn(w http.ResponseWriter, r *http.Request, reque
 		methodNotAllowed(w, requestID)
 		return
 	}
-	app, ok := h.authorizeApplication(w, r, requestID, false)
-	if !ok {
+	app, ok := h.resolveApplication(w, r, requestID)
+	if !ok || !h.validateOrigin(w, r, requestID, app.InternalID, false) {
 		return
 	}
 	var input signInRequest
@@ -107,7 +115,7 @@ func (h *sessionHTTP) handleSignIn(w http.ResponseWriter, r *http.Request, reque
 		}
 		return
 	}
-	h.writeTokenPair(w, r, pair)
+	h.writeTokenPair(w, r, pair, app.PublicID)
 }
 
 func (h *sessionHTTP) handleRefresh(w http.ResponseWriter, r *http.Request, requestID string, correlationID audit.CorrelationID) {
@@ -115,12 +123,17 @@ func (h *sessionHTTP) handleRefresh(w http.ResponseWriter, r *http.Request, requ
 		methodNotAllowed(w, requestID)
 		return
 	}
-	cookie, cookieErr := r.Cookie(refreshCookieName)
-	cookieMode := cookieErr == nil && cookie.Value != ""
-	app, ok := h.authorizeApplication(w, r, requestID, cookieMode)
+	app, ok := h.resolveApplication(w, r, requestID)
 	if !ok {
 		return
 	}
+	cookieName := refreshCookieName(app.PublicID)
+	cookie, cookieErr := r.Cookie(cookieName)
+	cookieMode := cookieErr == nil && cookie.Value != ""
+	if !h.validateOrigin(w, r, requestID, app.InternalID, cookieMode) {
+		return
+	}
+
 	var refresh string
 	if cookieMode {
 		refresh = cookie.Value
@@ -139,17 +152,17 @@ func (h *sessionHTTP) handleRefresh(w http.ResponseWriter, r *http.Request, requ
 	pair, err := h.sessions.Refresh(r.Context(), app.InternalID, refresh, correlationID)
 	if err != nil {
 		if errors.Is(err, session.ErrRefreshInvalid) || errors.Is(err, session.ErrRefreshReused) {
-			clearRefreshCookie(w)
+			clearRefreshCookie(w, cookieName)
 			writeError(w, http.StatusUnauthorized, "invalid_refresh", "The refresh credential is invalid.", requestID)
 			return
 		}
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Authentication is temporarily unavailable.", requestID)
 		return
 	}
-	h.writeTokenPair(w, r, pair)
+	h.writeTokenPair(w, r, pair, app.PublicID)
 }
 
-func (h *sessionHTTP) authorizeApplication(w http.ResponseWriter, r *http.Request, requestID string, requireOrigin bool) (applicationinstance.Instance, bool) {
+func (h *sessionHTTP) resolveApplication(w http.ResponseWriter, r *http.Request, requestID string) (applicationinstance.Instance, bool) {
 	if h.applications == nil || h.origins == nil {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Authentication is temporarily unavailable.", requestID)
 		return applicationinstance.Instance{}, false
@@ -160,27 +173,54 @@ func (h *sessionHTTP) authorizeApplication(w http.ResponseWriter, r *http.Reques
 		return applicationinstance.Instance{}, false
 	}
 	app, err := h.applications.ResolvePublishable(r.Context(), values[0])
-	if err != nil {
+	if err != nil || !app.InternalID.Valid() || !app.PublicID.Valid() {
 		writeError(w, http.StatusUnauthorized, "invalid_application", "The application credential is invalid.", requestID)
 		return applicationinstance.Instance{}, false
-	}
-	origin := r.Header.Get("Origin")
-	if requireOrigin && origin == "" {
-		writeError(w, http.StatusForbidden, "origin_not_allowed", "The request origin is not allowed.", requestID)
-		return applicationinstance.Instance{}, false
-	}
-	if origin != "" {
-		allowed, err := h.origins.IsAllowedOrigin(r.Context(), app.InternalID, origin)
-		if err != nil || !allowed {
-			writeError(w, http.StatusForbidden, "origin_not_allowed", "The request origin is not allowed.", requestID)
-			return applicationinstance.Instance{}, false
-		}
-		setCORSHeaders(w, origin)
 	}
 	return app, true
 }
 
-func (h *sessionHTTP) writeTokenPair(w http.ResponseWriter, r *http.Request, pair session.TokenPair) {
+func (h *sessionHTTP) validateOrigin(w http.ResponseWriter, r *http.Request, requestID string, appID applicationinstance.InternalID, requireOrigin bool) bool {
+	origin := r.Header.Get("Origin")
+	if requireOrigin && origin == "" {
+		writeError(w, http.StatusForbidden, "origin_not_allowed", "The request origin is not allowed.", requestID)
+		return false
+	}
+	if origin == "" {
+		return true
+	}
+	allowed, err := h.origins.IsAllowedOrigin(r.Context(), appID, origin)
+	if err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "origin_not_allowed", "The request origin is not allowed.", requestID)
+		return false
+	}
+	setCORSHeaders(w, origin)
+	return true
+}
+
+func (h *sessionHTTP) handleSessionPreflight(w http.ResponseWriter, r *http.Request, requestID string, _ audit.CorrelationID) {
+	origin := r.Header.Get("Origin")
+	if h.origins == nil || origin == "" {
+		writeError(w, http.StatusForbidden, "origin_not_allowed", "The request origin is not allowed.", requestID)
+		return
+	}
+	allowed, err := h.origins.AnyAllowedOrigin(r.Context(), origin)
+	if err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "origin_not_allowed", "The request origin is not allowed.", requestID)
+		return
+	}
+	if r.Header.Get("Access-Control-Request-Method") != http.MethodPost {
+		methodNotAllowed(w, requestID)
+		return
+	}
+	setCORSHeaders(w, origin)
+	w.Header().Set("Access-Control-Allow-Methods", http.MethodPost)
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-BeeBox-Publishable-Key")
+	w.Header().Set("Access-Control-Max-Age", "300")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *sessionHTTP) writeTokenPair(w http.ResponseWriter, r *http.Request, pair session.TokenPair, appPublicID applicationinstance.PublicID) {
 	origin := r.Header.Get("Origin")
 	response := tokenResponse{
 		AccessToken: pair.AccessToken,
@@ -190,7 +230,7 @@ func (h *sessionHTTP) writeTokenPair(w http.ResponseWriter, r *http.Request, pai
 	}
 	if origin != "" {
 		http.SetCookie(w, &http.Cookie{
-			Name:     refreshCookieName,
+			Name:     refreshCookieName(appPublicID),
 			Value:    pair.RefreshToken,
 			Path:     "/",
 			Secure:   true,
@@ -218,9 +258,13 @@ func (h *sessionHTTP) handleJWKS(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h.ring.JWKS())
 }
 
-func clearRefreshCookie(w http.ResponseWriter) {
+func refreshCookieName(appPublicID applicationinstance.PublicID) string {
+	return refreshCookiePrefix + string(appPublicID)
+}
+
+func clearRefreshCookie(w http.ResponseWriter, name string) {
 	http.SetCookie(w, &http.Cookie{
-		Name:     refreshCookieName,
+		Name:     name,
 		Value:    "",
 		Path:     "/",
 		Secure:   true,
