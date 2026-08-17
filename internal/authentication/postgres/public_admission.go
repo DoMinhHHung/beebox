@@ -51,10 +51,10 @@ func (s *Store) AdmitPublicSignup(ctx context.Context, appID applicationinstance
 		return false, classifyPublicSignupError(ctx, err)
 	}
 
-	if err := enforcePublicRateLimit(ctx, tx, appID, "signup_global", [32]byte{1}, authentication.PublicSignupGlobalLimit, authentication.PublicSignupGlobalWindow, now); err != nil {
+	if err := enforcePublicRateLimit(ctx, tx, appID, "signup_pre_kdf_global", [32]byte{11}, authentication.PublicSignupGlobalLimit, authentication.PublicSignupGlobalWindow, now); err != nil {
 		return false, err
 	}
-	if err := enforcePublicRateLimit(ctx, tx, appID, "signup_identifier", identifierFingerprint, authentication.PublicSignupIdentifierLimit, authentication.PublicSignupIdentifierWindow, now); err != nil {
+	if err := enforcePublicRateLimit(ctx, tx, appID, "signup_pre_kdf_identifier", identifierFingerprint, authentication.PublicSignupIdentifierLimit, authentication.PublicSignupIdentifierWindow, now); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -64,15 +64,15 @@ func (s *Store) AdmitPublicSignup(ctx context.Context, appID applicationinstance
 }
 
 func (s *Store) AllowPublicVerificationConfirm(ctx context.Context, appID applicationinstance.InternalID, fingerprint [32]byte) error {
-	return s.allowPublicPair(ctx, appID, "verification_confirm_global", [32]byte{3}, authentication.PublicVerificationGlobalLimit, authentication.PublicVerificationGlobalWindow, "verification_confirm_identifier", fingerprint, authentication.PublicVerificationIdentifierLimit, authentication.PublicVerificationIdentifierWindow, authentication.ErrEmailVerificationPersistence)
+	return s.allowPublicPair(ctx, appID, "verification_confirm_global", [32]byte{12}, authentication.PublicVerificationGlobalLimit, authentication.PublicVerificationGlobalWindow, "verification_confirm_identifier", fingerprint, authentication.PublicVerificationIdentifierLimit, authentication.PublicVerificationIdentifierWindow, authentication.ErrEmailVerificationPersistence)
 }
 
 func (s *Store) AllowPasswordResetIssue(ctx context.Context, appID applicationinstance.InternalID, fingerprint [32]byte) error {
-	return s.allowPublicPair(ctx, appID, "password_reset_global", [32]byte{4}, 100, time.Minute, "password_reset_identifier", fingerprint, 5, 15*time.Minute, authentication.ErrPasswordResetPersistence)
+	return s.allowPublicPair(ctx, appID, "password_reset_issue_pre_kdf_global", [32]byte{13}, 100, time.Minute, "password_reset_issue_pre_kdf_identifier", fingerprint, 5, 15*time.Minute, authentication.ErrPasswordResetPersistence)
 }
 
 func (s *Store) AllowPasswordResetConfirm(ctx context.Context, appID applicationinstance.InternalID, fingerprint [32]byte) error {
-	return s.allowPublicPair(ctx, appID, "password_reset_confirm_global", [32]byte{5}, 100, time.Minute, "password_reset_confirm_identifier", fingerprint, 5, 15*time.Minute, authentication.ErrPasswordResetPersistence)
+	return s.allowPublicPair(ctx, appID, "password_reset_confirm_global", [32]byte{14}, 100, time.Minute, "password_reset_confirm_identifier", fingerprint, 5, 15*time.Minute, authentication.ErrPasswordResetPersistence)
 }
 
 func (s *Store) allowPublicPair(ctx context.Context, appID applicationinstance.InternalID, globalOp string, globalHash [32]byte, globalLimit int, globalWindow time.Duration, identifierOp string, identifierHash [32]byte, identifierLimit int, identifierWindow time.Duration, persistenceErr error) error {
