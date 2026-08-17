@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
+	"github.com/DoMinhHHung/beebox/internal/audit"
 	"github.com/DoMinhHHung/beebox/internal/authentication"
 	"github.com/DoMinhHHung/beebox/internal/identity"
 )
@@ -25,6 +25,8 @@ const (
 	requestTimeout       = 10 * time.Second
 )
 
+type correlationContextKey struct{}
+
 type ApplicationResolver interface {
 	ResolvePublishable(context.Context, string) (applicationinstance.Instance, error)
 }
@@ -35,12 +37,12 @@ type OriginPolicy interface {
 }
 
 type SignupService interface {
-	SignUp(context.Context, applicationinstance.InternalID, string, string, string) error
+	SignUpWithCorrelation(context.Context, applicationinstance.InternalID, string, string, string, audit.CorrelationID) error
 }
 
 type VerificationService interface {
-	Request(context.Context, applicationinstance.InternalID, string) error
-	Confirm(context.Context, applicationinstance.InternalID, string, string) error
+	RequestWithCorrelation(context.Context, applicationinstance.InternalID, string, audit.CorrelationID) error
+	ConfirmWithCorrelation(context.Context, applicationinstance.InternalID, string, string, audit.CorrelationID) error
 }
 
 type Handler struct {
@@ -111,10 +113,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	requestID := newRequestID()
+	correlationID, err := audit.NewCorrelationID()
+	if err != nil {
+		w.Header().Set(RequestIDHeader, "request_unavailable")
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Authentication is temporarily unavailable.", "request_unavailable")
+		return
+	}
+	requestID := hex.EncodeToString(correlationID[:])
 	w.Header().Set(RequestIDHeader, requestID)
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
+	ctx = context.WithValue(ctx, correlationContextKey{}, correlationID)
 	r = r.WithContext(ctx)
 	if r.Method == http.MethodOptions {
 		h.handlePreflight(w, r, requestID)
@@ -147,7 +156,12 @@ func (h *Handler) handleSignUp(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Authentication is temporarily unavailable.", requestID)
 		return
 	}
-	if err := h.signup.SignUp(r.Context(), app.InternalID, input.Email, input.Password, idempotencyValues[0]); err != nil {
+	correlationID, ok := correlationFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Authentication is temporarily unavailable.", requestID)
+		return
+	}
+	if err := h.signup.SignUpWithCorrelation(r.Context(), app.InternalID, input.Email, input.Password, idempotencyValues[0], correlationID); err != nil {
 		h.writeSignupError(w, err, requestID)
 		return
 	}
@@ -173,7 +187,12 @@ func (h *Handler) handleVerificationRequest(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Authentication is temporarily unavailable.", requestID)
 		return
 	}
-	if err := h.verification.Request(r.Context(), app.InternalID, input.Email); err != nil {
+	correlationID, ok := correlationFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Authentication is temporarily unavailable.", requestID)
+		return
+	}
+	if err := h.verification.RequestWithCorrelation(r.Context(), app.InternalID, input.Email, correlationID); err != nil {
 		if errors.Is(err, identity.ErrInvalidEmail) {
 			writeError(w, http.StatusUnprocessableEntity, "invalid_input", "The supplied input is invalid.", requestID)
 			return
@@ -203,7 +222,12 @@ func (h *Handler) handleVerificationConfirm(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Authentication is temporarily unavailable.", requestID)
 		return
 	}
-	if err := h.verification.Confirm(r.Context(), app.InternalID, input.Email, input.Code); err != nil {
+	correlationID, ok := correlationFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Authentication is temporarily unavailable.", requestID)
+		return
+	}
+	if err := h.verification.ConfirmWithCorrelation(r.Context(), app.InternalID, input.Email, input.Code, correlationID); err != nil {
 		switch {
 		case errors.Is(err, identity.ErrInvalidEmail), errors.Is(err, authentication.ErrInvalidVerificationCode):
 			writeError(w, http.StatusUnprocessableEntity, "invalid_input", "The supplied input is invalid.", requestID)
@@ -328,10 +352,7 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 
-func newRequestID() string {
-	var raw [16]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "request_unavailable"
-	}
-	return hex.EncodeToString(raw[:])
+func correlationFromContext(ctx context.Context) (audit.CorrelationID, bool) {
+	correlationID, ok := ctx.Value(correlationContextKey{}).(audit.CorrelationID)
+	return correlationID, ok && correlationID != (audit.CorrelationID{})
 }
