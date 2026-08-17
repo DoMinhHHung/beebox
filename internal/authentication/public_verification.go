@@ -12,10 +12,10 @@ import (
 )
 
 const (
-	PublicVerificationGlobalLimit       = 200
-	PublicVerificationGlobalWindow      = time.Minute
-	PublicVerificationIdentifierLimit   = 5
-	PublicVerificationIdentifierWindow  = 15 * time.Minute
+	PublicVerificationGlobalLimit      = 200
+	PublicVerificationGlobalWindow     = time.Minute
+	PublicVerificationIdentifierLimit  = 5
+	PublicVerificationIdentifierWindow = 15 * time.Minute
 )
 
 type PublicEmailIdentifierResolver interface {
