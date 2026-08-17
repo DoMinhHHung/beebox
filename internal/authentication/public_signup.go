@@ -35,6 +35,8 @@ type PublicSignupWrite struct {
 	RequestFingerprint    [32]byte
 	IdentifierFingerprint [32]byte
 	CorrelationID         audit.CorrelationID
+	RegistrationAuditID   audit.CorrelationID
+	VerificationAuditID   audit.CorrelationID
 }
 
 type PublicSignupPersistenceResult struct {
@@ -143,6 +145,8 @@ func (s *PublicSignupService) SignUpWithCorrelation(
 		RequestFingerprint:    requestFingerprint,
 		IdentifierFingerprint: identifierFingerprint,
 		CorrelationID:         correlationID,
+		RegistrationAuditID:   correlationID,
+		VerificationAuditID:   correlationID,
 	})
 	if err != nil {
 		return err
