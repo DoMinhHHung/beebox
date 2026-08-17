@@ -18,8 +18,8 @@ const defaultTimeout = 5 * time.Second
 type TLSMode string
 
 const (
-	TLSModeImplicit TLSMode = "tls"
-	TLSModeSTARTTLS TLSMode = "starttls"
+	TLSModeImplicit          TLSMode = "tls"
+	TLSModeSTARTTLS          TLSMode = "starttls"
 	TLSModeInsecureLocalhost TLSMode = "insecure_localhost"
 )
 
