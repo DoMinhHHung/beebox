@@ -19,7 +19,7 @@ const (
 )
 
 var (
-	ErrInvalidEmailIdentifierInternalID = errors.New("invalid email identifier internal identifier")
+	ErrInvalidEmailIdentifierInternalID   = errors.New("invalid email identifier internal identifier")
 	ErrEmailVerificationChallengeNotFound = errors.New("email verification challenge not found")
 	ErrEmailVerificationAlreadyCompleted  = errors.New("email verification already completed")
 	ErrEmailVerificationExpired           = errors.New("email verification expired")
