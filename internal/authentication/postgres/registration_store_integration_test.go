@@ -148,10 +148,10 @@ func TestRegistrationConcurrentDuplicateCommitsOneBundle(t *testing.T) {
 
 func TestRegistrationRollsBackPasswordAndAuditFailures(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		table      string
-		function   string
-		trigger    string
+		name     string
+		table    string
+		function string
+		trigger  string
 	}{
 		{name: "password", table: "password_credentials", function: "fail_registration_password", trigger: "fail_registration_password"},
 		{name: "audit", table: "audit_events", function: "fail_registration_audit", trigger: "fail_registration_audit"},
@@ -271,9 +271,9 @@ func registrationWrite(t *testing.T, appID applicationinstance.InternalID, rawEm
 	}
 	return authentication.RegistrationWrite{
 		ApplicationInstanceID: appID,
-		Email:                  email,
-		PasswordHash:           hash,
-		CorrelationID:          correlationID,
+		Email:                 email,
+		PasswordHash:          hash,
+		CorrelationID:         correlationID,
 	}
 }
 
