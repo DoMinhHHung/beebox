@@ -1,4 +1,17 @@
 -- +goose Up
+ALTER TABLE public_auth_rate_limits
+    DROP CONSTRAINT public_auth_rate_limits_operation_check;
+ALTER TABLE public_auth_rate_limits
+    ADD CONSTRAINT public_auth_rate_limits_operation_check
+    CHECK (operation IN (
+        'signup_global',
+        'signup_identifier',
+        'verification_issue_global',
+        'verification_issue_identifier',
+        'signin_global',
+        'signin_identifier'
+    ));
+
 CREATE TABLE sessions (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     public_id TEXT NOT NULL UNIQUE,
