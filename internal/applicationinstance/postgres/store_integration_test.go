@@ -151,7 +151,7 @@ func TestStoreDatabaseFailureUsesStableSafeError(t *testing.T) {
 	}
 
 	db := pool.OpenSQLDB()
-	if _, err := db.ExecContext(ctx, "DROP TABLE application_instances"); err != nil {
+	if _, err := db.ExecContext(ctx, "DROP TABLE application_instances CASCADE"); err != nil {
 		db.Close()
 		t.Fatalf("drop application_instances error = %v", err)
 	}

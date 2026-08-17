@@ -2,7 +2,7 @@
 
 > Status: repository-owned threat model for the architecture represented by this PR.
 > Current governance baseline: `Instruction.md`, `docs/contracts/conventions.md`, and `docs/adr/0001-application-instance-root.md`.
-> Scope: current Go runtime, PostgreSQL lifecycle, explicit migration mode, first `application_instance` root persistence boundary, repository configuration, and CI.
+> Scope: current Go runtime, PostgreSQL lifecycle, explicit migration mode, `application_instance` root persistence, first application-scoped `users` child persistence, repository configuration, and CI.
 
 ## 1. Purpose and scope
 
@@ -14,7 +14,7 @@ It distinguishes three states:
 2. **Required invariant** — required by `Instruction.md`, contract conventions, or ADR 0001 and must be implemented by the slice that introduces the corresponding behavior.
 3. **Deferred capability control** — not meaningful until the corresponding capability exists, but not permission to defer a correctness requirement after that capability is introduced.
 
-ADR 0001 ratifies one `application_instance` resource as the BeeBox v1 root product isolation boundary. It does **not** ratify a permanent public application-instance ID encoding, a universal organization tenant model, account-linking semantics, token/JWT trust boundaries, Clerk compatibility, or future service data ownership.
+ADR 0001 ratifies one `application_instance` resource as the BeeBox v1 root product isolation boundary. It does **not** ratify permanent public application/user ID encoding, a universal organization tenant model, account-linking semantics, token/JWT trust boundaries, Clerk compatibility, or future service data ownership.
 
 ## 2. Current architecture and security posture
 
@@ -28,19 +28,22 @@ The HTTP surface still contains only:
 - `GET /health/live`, process-only and independent of PostgreSQL;
 - `GET /health/ready`, which performs a current PostgreSQL ping under a request deadline.
 
-PostgreSQL is an unconditional runtime dependency and the initial source of truth. The embedded migrations now contain:
+PostgreSQL is the initial source of truth. Embedded migrations now contain:
 
 - version 1 runtime baseline;
-- version 2 additive creation of `application_instances` with a database-generated internal identity and `timestamptz` creation timestamp.
+- version 2 additive `application_instances` root table;
+- version 3 additive `users` child table with mandatory `application_instance_id` foreign-key scope.
 
-The repository also contains a minimal BeeBox-owned application-instance model and a concrete PostgreSQL store with only two persistence primitives:
+The repository contains two internal persistence areas:
 
-- create one application-instance root row;
-- resolve exactly one root row by a trusted internal scope identity.
+- application-instance persistence creates and resolves root records by trusted internal root identity;
+- user persistence creates a user inside a trusted application-instance scope and resolves a user only when both trusted scope and internal user identity match.
 
-Integration tests create two distinct root records and prove exact resolution, missing-scope behavior, invalid-scope behavior, and stable persistence errors.
+The `users` table contains only generated internal identity, application-instance foreign-key scope, and creation time. It contains no email, phone, username, profile, credential, authentication/session state, organization scope, metadata, or public identifier.
 
-There is **no reachable application/admin creation endpoint or use case**. There are still no application credentials, users, identifiers, authentication, authorization, sessions/tokens, organizations, child product resources, public application-instance IDs, public product APIs, SDKs, Redis, queues, providers, product PII, or product audit subsystem.
+Integration tests create multiple application roots and users and prove cross-application user lookup returns not found, invalid/missing scope cannot fall through, the foreign key prevents orphan users, and concurrent user creation produces distinct database-generated identities.
+
+There is **no reachable application/user/admin creation endpoint or product use case**. There are still no application credentials, verified identifiers, product PII profile fields, authentication, authorization, sessions/tokens, organizations, public application/user IDs, public product APIs, SDKs, Redis, queues, providers, or product audit subsystem.
 
 ## 3. Assets
 
@@ -51,119 +54,139 @@ There is **no reachable application/admin creation endpoint or use case**. There
 | Runtime availability | Reject invalid startup state, bound I/O, clean up deterministically, and expose truthful health. |
 | PostgreSQL connectivity/state | Do not report ready while PostgreSQL is unavailable; do not leak provider/topology details. |
 | Migration integrity/history | Run only reviewed embedded forward migrations; serialize concurrent runners; do not record failed transactional migrations as applied. |
-| `application_instances` root rows | Preserve distinct internal identities and creation time; exact resolution must not fall through to another root. |
-| Internal application-instance identity | Storage-only scope key used by trusted server code; it must not be treated as a public authorization token or permanent public resource-ID contract. |
+| `application_instances` root rows | Preserve distinct internal identities and creation time; exact resolution must not fall through. |
+| `users` child rows | Every row belongs to exactly one existing application instance; scoped resolution must never return a user from another root. |
+| Internal application/user identities | Storage-only keys for trusted server persistence; never authorization tokens or permanent public resource-ID contracts. |
+| Application-instance/user relationship | FK-backed referential integrity must prevent orphan user rows and survive backup/restore consistently. |
 | Runtime/migration configuration | Fail invalid values safely; database URLs may contain credentials and are secret-bearing inputs. |
 | Database credentials | Runtime and migration privileges have different blast radii; credential values must not leak. |
-| Logs/errors | Operationally useful without secrets, SQL/provider internals, topology, or future unnecessary PII. |
+| Logs/errors | Operationally useful without secrets, SQL/provider internals, topology, or unnecessary PII. |
 | Repository/CI integrity | Source, migrations, dependencies, workflows, and test evidence are part of the trusted build/release base. |
 
 ### Future high-value assets
 
-Application credentials, identity data, verified identifiers, authentication factors, sessions, organization membership, authorization state, audit records, and child resources do not exist yet. Once introduced, confidentiality, integrity, application-instance isolation, applicable organization isolation, deletion/retention, and auditability are merge-blocking properties.
+Application credentials, verified identifiers, profile PII, authentication factors, sessions, organization membership, authorization state, audit records, and additional child resources do not exist yet. Once introduced, confidentiality, integrity, application-instance isolation, applicable organization isolation, deletion/retention, and auditability are merge-blocking properties.
 
 ## 4. Actors
 
 | Actor | Capability / trust assumption |
 | --- | --- |
-| Unauthenticated network client | Can reach the HTTP listener if deployment networking exposes it. Today it can call only health endpoints. Untrusted. |
+| Unauthenticated network client | Can reach health endpoints if deployment networking exposes them. No product route exists. Untrusted. |
 | Malicious external actor | May attempt malformed requests, connection exhaustion, probing, credential theft, dependency exploitation, or future cross-scope access. Untrusted. |
-| Operator | Supplies environment configuration, chooses database endpoint/credential, starts serve or migration mode, and controls deployment networking. Mistakes/credential compromise are in scope. |
-| Runtime process | Reads serve configuration, owns PostgreSQL pool, performs readiness, serves HTTP. It currently has no reachable product handler using application-instance persistence. |
-| Trusted internal persistence caller | Future server-side code may supply an internal application-instance scope to the concrete store. The current repository has no public/client path that selects this scope. |
-| Migration operator/process | Intentionally performs schema mutation with a migration-capable credential. Compromise has higher integrity impact than runtime compromise. |
-| PostgreSQL | Source of truth/external dependency. Server configuration, authorization and network path are outside the Go process boundary. |
-| CI/test environment | Builds/tests code and starts disposable PostgreSQL with test-only credentials. Workflow and third-party Actions are supply-chain inputs. |
+| Operator | Supplies environment configuration and controls serve/migration process execution. Mistakes/credential compromise are in scope. |
+| Runtime process | Owns the PostgreSQL pool and HTTP health surface; no product handler currently calls user persistence. |
+| Trusted internal persistence caller | May supply internal application scope and user identity to concrete stores. No public/client path currently establishes this trust. |
+| Migration operator/process | Performs reviewed DDL with a migration-capable credential; compromise has a larger integrity blast radius. |
+| PostgreSQL | Source of truth/external dependency. Server authorization/network configuration is outside the Go process boundary. |
+| CI/test environment | Builds/tests code and starts disposable PostgreSQL with test-only credentials. Third-party Actions are supply-chain inputs. |
 
 ## 5. Trust boundaries and entry points
 
 ### A. Network client -> HTTP runtime
 
-Current entry points are TCP connections plus `GET /health/live` and `GET /health/ready`. Current handlers consume no product body, application-instance identity, token, organization identifier, cookie, or bearer credential.
+Current handlers accept no product body, user identity, application-instance identity, token, organization identifier, cookie, or bearer credential.
 
 ### B. Runtime/persistence -> PostgreSQL
 
-Current database interactions include startup/readiness `Ping`, migration SQL/goose metadata operations, and the application-instance store's atomic `INSERT ... RETURNING` plus exact `SELECT ... WHERE id = $1` resolution. PostgreSQL/provider errors are untrusted for direct client/log exposure.
+Current interactions include startup/readiness checks, migration SQL/goose metadata, application-instance insert/exact resolve, and user insert/exact application-scoped resolve. PostgreSQL/provider errors are untrusted for direct exposure.
 
 ### C. Trusted server scope -> application-instance store
 
-The store accepts an internal application-instance identity only as a server-selected persistence scope. Invalid internal identities fail deterministically and missing identities return a stable BeeBox-owned not-found category. There is no unscoped list/first-row fallback.
+The application-instance store accepts storage-internal root identity only as trusted server-selected persistence scope. Invalid identity fails deterministically and missing identity returns stable not-found. This is persistence behavior, not authorization.
 
-**Limit:** this is a persistence boundary, not authorization. No authentication or reachable product use case exists yet, so the repository cannot claim that client input has been authorized into a trusted scope.
+### D. Trusted server scope -> user store
 
-### D. Operator/environment -> runtime configuration
+The user store requires:
 
-Current input includes `BEEBOX_DATABASE_URL`, `BEEBOX_HTTP_ADDR`, shutdown/startup/readiness/migration timeout variables, and process arguments selecting serve versus `migrate`.
+- a positive trusted `application_instance` internal scope for create;
+- both positive trusted application-instance scope and positive internal user identity for resolve.
 
-### E. Migration operator/process -> PostgreSQL
+Resolve uses an exact predicate equivalent to:
 
-`beebox migrate` intentionally crosses a schema-mutation boundary and requires the DDL privilege needed by reviewed migrations. A compromised migration credential has a larger database-integrity blast radius than a normal runtime credential.
+`WHERE application_instance_id = <trusted scope> AND id = <user id>`
 
-### F. CI -> disposable test PostgreSQL
+A real user ID from another application returns the same stable not-found category as a missing user in the selected scope. There is no lookup by user ID alone and no first-row/unscoped fallback.
 
-GitHub Actions starts PostgreSQL 17 with repository-defined test credentials and runs formatting, vet, normal tests, migration/database/application-instance integration tests, and race checks. CI data/credentials are disposable test inputs, never authority for production access.
+**Limit:** the repository still has no authentication/authorization path that proves how a caller obtained trusted scope. Persistence-level scoping is implemented; tenant authorization is not.
+
+### E. Operator/environment -> runtime configuration
+
+Current configuration includes the database URL, HTTP address, lifecycle timeouts, and process-mode arguments.
+
+### F. Migration operator/process -> PostgreSQL
+
+`beebox migrate` intentionally crosses a schema-mutation boundary. Serve mode does not automatically migrate.
+
+### G. CI -> disposable test PostgreSQL
+
+CI runs format, vet, unit, database/migration/application-instance/user PostgreSQL integration, and race checks against disposable PostgreSQL.
 
 ## 6. Existing controls verified now
 
 ### Configuration and credential-safe errors
 
-- Serve/migration configuration requires a PostgreSQL URL with `postgres`/`postgresql` scheme, host, and no fragment.
-- Relevant duration values must parse and be positive.
-- Serve/migration modes load lifecycle-specific settings separately.
-- Validation tests use secret markers and require errors not to echo credential-bearing values.
-- Database pool/open/ping and migration failures are collapsed to stable process-level errors.
-- Readiness returns fixed `{"status":"not_ready"}` instead of provider diagnostics.
+- database/configuration validation returns stable safe categories;
+- database URLs/provider diagnostics are not emitted in current stable error paths;
+- readiness returns fixed safe status responses;
+- migration and persistence failures map to BeeBox-owned categories rather than raw SQL/provider text.
 
-**Limit:** code does not enforce separate database principals, credential rotation, secret-manager use, or production TLS configuration.
+**Limit:** separate production database principals, secret rotation/manager integration, and production TLS configuration are not repository-enforced.
 
 ### Bounded runtime and persistence I/O
 
-- Startup PostgreSQL work is bounded by `BEEBOX_DATABASE_STARTUP_TIMEOUT`; listener creation waits for successful connectivity proof.
-- Readiness PostgreSQL work uses request-scoped `BEEBOX_DATABASE_READINESS_TIMEOUT` and honors cancellation.
-- HTTP server has explicit read-header, read, write, and idle timeouts.
-- Graceful shutdown is bounded.
-- The process owns one pgx PostgreSQL pool.
-- Application-instance operations accept `context.Context`, preserve cancellation/deadline errors, and use short-lived `database/sql` adapters backed by the existing pool rather than creating a second pool.
-- Liveness is process-only; readiness separately represents current database reachability.
+- startup/readiness/migration operations are deadline-bound;
+- HTTP server and graceful shutdown have explicit bounds;
+- one process-owned pgx PostgreSQL pool is reused;
+- application-instance and user stores accept `context.Context`, preserve cancellation/deadline failure, and use temporary `database/sql` adapters backed by the existing pool;
+- temporary adapters are closed without closing the underlying pool.
 
 ### Application-instance root persistence
 
 Implemented now:
 
-- `application_instances` has a PostgreSQL-generated `BIGINT` identity primary key and `TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP` creation time;
-- the database key is documented as internal storage identity only;
-- `Create` is one atomic insert and relies on PostgreSQL identity uniqueness rather than an application pre-check;
-- `Resolve` validates positive internal identity and issues one exact keyed lookup with no unscoped fallback;
-- not-found and persistence failures map to BeeBox-owned stable errors rather than exposing SQL/provider diagnostics;
-- integration tests create two roots, require distinct internal identities, resolve A only as A and B only as B, reject invalid identities, and require a nonexistent scope to remain not found;
-- returned timestamps are normalized to UTC semantics in the BeeBox-owned model.
+- generated internal `BIGINT` primary key;
+- `TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP`;
+- atomic create;
+- exact root resolve;
+- stable invalid/not-found/persistence errors;
+- multi-root integration evidence;
+- internal identity explicitly not public authority.
+
+### Application-scoped user persistence
+
+Implemented now:
+
+- `users.id` is PostgreSQL-generated internal identity and primary key;
+- `users.application_instance_id` is `NOT NULL` and references `application_instances(id)`;
+- `users.created_at` is `TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP`;
+- `Create` validates trusted root scope and performs one atomic insert;
+- PostgreSQL FK enforcement prevents a user under a nonexistent positive root; no application-only existence pre-check is relied on;
+- `Resolve` validates scope/user identity and queries by both values;
+- valid foreign user IDs cannot resolve in another application scope;
+- invalid and missing identities fail deterministically without fallback;
+- database failures are mapped to stable `user persistence failure` rather than raw provider/constraint diagnostics;
+- returned time is normalized to UTC in the BeeBox-owned user model;
+- concurrent creates rely on database identity generation and are tested for distinct identities.
 
 **Important limits:**
 
-- the internal database key is not a public resource identifier or authorization credential;
-- no public/application/admin creation API exists;
-- no authentication/authorization validates how a caller obtained a trusted internal scope;
-- no child resource exists yet, so this PR proves root-record distinction rather than full child-resource tenant isolation;
-- no deletion lifecycle exists;
+- these stores are internal persistence primitives and are not reachable product/admin actions;
+- application/user database IDs are not public identifiers or authorization credentials;
+- authentication and authorization do not exist;
+- no email/identifier/account-linking semantics exist;
+- no PII-bearing user profile exists;
+- no deletion/anonymization/retention lifecycle exists;
 - no audit event is produced because no reachable security/admin mutation is introduced.
-
-### Reduced current HTTP surface
-
-- Current health routes accept only `GET`; unsupported methods receive stable `405` errors.
-- Health responses contain fixed status values rather than dependency diagnostics.
-- There is no current product mutation endpoint.
 
 ### Migration integrity/failure containment
 
-- Migration is explicit process mode; serve mode does not auto-migrate.
-- Unknown/extra commands fail before configuration/resource acquisition.
-- Migration SQL is embedded and cannot be selected from runtime filesystem, URL, environment, or arbitrary SQL argument.
-- Migration sources must follow ordered five-digit version filenames and exactly one `Up` directive; `Down`, `NO TRANSACTION`, and `ENVSUB` are rejected.
-- Version 1 remains unchanged; version 2 is additive and transactional under default goose behavior.
-- Goose global registry is disabled and its logger is a no-op.
-- Migration execution requires a deadline.
-- PostgreSQL same-session advisory locking serializes concurrent runners; lock wait/cancel/unlock are bounded.
-- Integration tests require exactly two applied positive migration versions after normal migration, rerun idempotency, concurrent convergence, and exact expected tables; a synthetic version-3 failure verifies transactional rollback and non-recording.
+- migrations are embedded, forward-only, ordered five-digit files;
+- exactly one `Up` is allowed and `Down`, `NO TRANSACTION`, and `ENVSUB` are rejected;
+- versions 1 and 2 remain immutable; version 3 is additive;
+- migration execution is deadline-bound and serialized with advisory locking;
+- normal migration integration evidence requires exactly applied positive versions 1/2/3 and exactly `application_instances`, `users`, and `goose_db_version` tables;
+- rerun idempotency and concurrent convergence remain tested;
+- a synthetic version-4 failure proves transactional rollback and failed-version non-recording.
 
 ### CI/test baseline
 
@@ -172,106 +195,105 @@ Current CI runs:
 - `gofmt -l .` verification;
 - `go vet ./...`;
 - `go test ./...`;
-- PostgreSQL integration tests for database, migration, and application-instance persistence packages;
+- PostgreSQL integration tests for platform database, migration, application-instance persistence, and identity/user persistence;
 - `go test -race ./...`.
 
-Go dependencies are versioned/checksummed in `go.mod`/`go.sum`.
-
-**Limit:** current Actions use moving major tags; dedicated dependency-vulnerability scanning, SBOM, artifact signing, and provenance policy are not currently evidenced.
+Go dependencies remain versioned/checksummed in `go.mod`/`go.sum`.
 
 ## 7. Threat analysis
 
 | Threat | Current mitigation | Residual/required control |
 | --- | --- | --- |
-| Cross-root lookup/fallback | Exact keyed `Resolve`; positive-ID validation; two-root integration tests; missing ID returns not found. | First child resource must enforce application-instance scope in schema, query predicates, constraints, and adversarial cross-scope tests. |
-| Client-selected tenant authority | No public product route currently selects application-instance scope; internal DB identity is documented as non-authoritative/public. | First reachable product/admin path must authenticate and separately authorize server-selected scope; client-provided IDs remain input, never authority. |
-| Internal DB key becoming public contract | ADR/model/docs state that generated DB identity is storage-internal; no JSON/public API model exists. | First public resource contract must explicitly ratify a BeeBox-owned opaque public ID encoding/compatibility policy. |
-| Database credential disclosure | Stable/redacted configuration, database, readiness, migration and application-instance persistence errors. | Secret distribution, process environment, deployment logging, rotation and production credential handling remain operational risks. |
-| SQL/provider/topology leakage | Database/readiness/migration errors are normalized; application-instance store returns stable BeeBox-owned categories. | Future repositories/providers/telemetry need their own safe error mapping/redaction tests. |
-| Unauthorized schema mutation | Explicit migration mode; no serve-time migration; no arbitrary runtime migration source. | Production must separate runtime/migration database privileges; code does not enforce database roles. |
-| Migration tampering | Embedded validated sources and CI migration tests. | Repository/build/dependency compromise can still alter SQL; review/provenance hardening remains future work. |
-| Unsafe rollback/divergent schema | Forward-only policy; additive version 2; transactional migrations; roll-forward recovery policy. | Backup/restore must preserve root identities; later child references make destructive rollback unsafe. |
-| Database outage/partition | Startup fails before listening; bounded readiness returns 503; persistence accepts caller context and returns stable failure. | Future reachable product operations need explicit user-facing outage/retry/idempotency semantics. |
-| Slow client/resource exhaustion | HTTP and DB checks are deadline-bounded. | No public product payload exists; later APIs require body/rate/pagination/tenant-fairness bounds. |
-| Future child-resource IDOR | Root table/store exists but no child resource exists. | **Required:** each child row references/enforces application-instance scope and repositories use server-selected scope; cross-scope tests are mandatory. |
-| Future PII/secret telemetry exposure | Current product root contains no PII/secret fields and errors are stable. | **Required:** minimize/redact future identity PII and never log secrets. |
-| Authentication confused with authorization | No authn/authz exists today. | **Required:** authentication establishes identity; separate default-deny server-side authorization decides access/scope. |
-| Missing security audit fact | Internal persistence creation is not externally reachable and is not an admin/product action. | **Required:** the first reachable security/admin application lifecycle must record the complete audit fact required by `docs/contracts/conventions.md`; later async failure cannot erase it. |
-| Dependency/CI supply-chain compromise | Go versions/checksums committed; CI runs on PR/main. | Actions are not SHA-pinned and no dedicated provenance/SBOM/signing control exists. |
-| Insecure transport | No repository control proves production HTTP/PostgreSQL TLS; local examples use `sslmode=disable`. | Define/enforce transport ownership before production/public exposure. |
+| Cross-application user IDOR at persistence layer | User resolve predicates on both trusted application scope and user ID; adversarial A/B tests require foreign-scope lookup to return not found. | First reachable caller must authenticate and separately authorize server-selected scope; future child repositories need equivalent scoped predicates/constraints. |
+| Orphan user rows | `NOT NULL` FK to `application_instances`; real PostgreSQL test attempts create under nonexistent positive scope and verifies no row is created. | Future schema changes must preserve referential meaning and backup/restore consistency. |
+| Client-selected tenant authority | No public product route currently selects scope; internal IDs are documented non-authoritative. | First reachable product/admin path must derive trusted scope from authenticated/authorized server context. |
+| Internal DB key becoming public contract | Models/docs define IDs as storage-internal; no JSON/API contract exists. | First public application/user resource contract must independently ratify opaque public ID encoding/compatibility. |
+| SQL/provider/topology leakage | Migration/application/user/database failures map to stable BeeBox-owned errors. | Future repositories/providers/telemetry require the same mapping/redaction evidence. |
+| Database outage/partition | Bounded readiness and context-aware persistence; safe persistence failure categories. | Reachable operations must later define retry/idempotency/user-facing outage semantics. |
+| Unauthorized schema mutation | Explicit migration mode; no serve-time migration; no arbitrary runtime migration source. | Production DB privileges remain an operational trust boundary. |
+| Unsafe rollback/divergent schema | Additive versions 2/3, forward-only policy, transactional migrations. | Once data/references exist, destructive rollback is unsafe; use reviewed roll-forward changes. |
+| PII exposure | Current user rows contain no PII/profile/identifier data. | First PII/identifier slice must define minimization, redaction, normalization, uniqueness and safe telemetry. |
+| Account takeover/linking ambiguity | No identifier/social/provider account exists. | First identifier/account-linking slice must explicitly ratify semantics and anti-enumeration/takeover controls. |
+| Authentication confused with authorization | Neither exists today, so no false claim is made. | Authentication establishes identity; separate default-deny authorization must select scope for reachable operations. |
+| Missing security audit fact | Persistence primitives are unreachable internal operations, not security/admin actions. | First reachable user/admin lifecycle must record complete audit facts per contract conventions and preserve them across later async failure. |
+| Missing user deletion lifecycle | No delete/soft-delete API or column exists. | First real user lifecycle requiring deletion must define deletion/anonymization, retention, downstream cleanup, backup/restore and referential behavior. |
+| Dependency/CI supply-chain compromise | Versioned Go deps and current-head CI. | Actions remain moving major tags; no dedicated SBOM/provenance/signing control exists. |
+| Insecure transport | No repository proof of production HTTP/PostgreSQL TLS. | Transport ownership must be defined before production/public exposure. |
 
 ## 8. Ratified root isolation decision
 
-ADR 0001 establishes `application_instance` as the single BeeBox v1 root product isolation resource.
+ADR 0001 remains unchanged:
 
-Consequences for security review:
-
-- future product rows belong to exactly one application instance unless a later reviewed design adds another applicable scope;
-- organization scope is additional only where organization ownership is real and organization does not replace the root;
-- a workspace/application/environment hierarchy is not required in v1 but can be added later with product evidence and review;
+- `application_instance` is the BeeBox v1 root product isolation resource;
+- every child row belongs to exactly one root unless a later reviewed design adds another applicable scope;
+- organization is additional only where organization ownership actually applies and is not the root tenant;
+- workspace/application/environment hierarchy is not required in v1 but may be introduced additively with evidence;
 - database primary keys remain internal implementation details;
-- a permanent public application-instance ID encoding remains an explicit future compatibility decision.
+- public application/user ID encodings remain future explicit compatibility decisions.
+
+The `users` table is the first child implementation of that decision through an explicit FK and application-scoped repository lookup.
 
 ## 9. Future controls required with corresponding capabilities
 
-### First child product persistence
+### First verified identifier / authentication flow
 
-The introducing PR must:
+The introducing slice must define:
 
-- carry explicit application-instance scope on every child row;
-- add organization scope only where applicable;
-- enforce scoped uniqueness/foreign keys/domain constraints in PostgreSQL;
-- use server-selected scope in repository operations;
-- include adversarial cross-application tests using otherwise valid foreign IDs;
-- define deletion/retention/backup/restore/migration implications for the child relationship.
+- identifier normalization and database uniqueness semantics;
+- verified/unverified state and anti-enumeration behavior;
+- account-linking/takeover prevention with explicit approval for semantics;
+- reviewed password/crypto primitives where applicable;
+- replay/attempt/recovery behavior;
+- PII minimization/redaction;
+- audit evidence for security-sensitive mutations.
 
-### First reachable application/admin lifecycle
+### First reachable user/admin lifecycle
 
-The current `Create` store method is only an internal persistence primitive. A reachable lifecycle must separately add:
+The current user `Create` is only an internal persistence primitive. A reachable lifecycle must separately define:
 
-- authentication and authorization;
-- server-selected scope/ownership semantics;
-- idempotency, retry, replay, concurrency and transaction behavior;
+- authentication;
+- default-deny authorization and server-selected application scope;
+- idempotency/retry/replay/concurrency/transaction behavior;
 - complete security/admin audit evidence per `docs/contracts/conventions.md`;
-- stable public errors and the separately ratified public application-instance ID contract;
-- abuse, observability and operational failure behavior.
-
-### First authentication or identifier flow
-
-The introducing PR must use reviewed crypto/password libraries, normalize verified identifiers with database constraints, define anti-enumeration/replay/attempt/recovery semantics, and avoid account-linking decisions without explicit approval. Any security-sensitive mutation must create required audit evidence in the same complete product slice.
-
-### First session/token/key capability
-
-The introducing PR must explicitly decide relevant algorithm/issuer/audience/authorized-party/lifetime/rotation/revocation semantics, use cryptographic generation and hashed storage where lifecycle allows, and preserve one-time secret display where applicable.
+- stable public errors and separately ratified public resource IDs;
+- abuse/rate/resource controls and operational failure behavior.
 
 ### First state-changing public API
 
-The introducing PR must define authentication plus separate authorization intent, bounded request/pagination inputs, deterministic validation/safe error codes, idempotency/retry/replay/concurrency/transaction behavior, applicable CSRF/origin/CORS defenses, and required audit/observability/redaction behavior.
+The introducing slice must define versioned BeeBox-owned contracts, authentication plus separate authorization, bounded inputs, deterministic validation/safe errors, idempotency/retry/replay/concurrency, applicable browser-origin/CSRF protections, audit, observability and redaction.
 
-### First product telemetry/event/provider surface
+### First session/token/key capability
 
-The introducing PR must define bounded-cardinality telemetry, secret/PII minimization, timeouts/cancellation, safe/idempotent retry classification, BeeBox-owned contract types, and incident evidence that remains useful without leaking protected data.
+The introducing slice must explicitly decide algorithm/issuer/audience/authorized-party/lifetime/rotation/revocation semantics and use cryptographic generation/hashed storage where lifecycle permits.
+
+### First PII-bearing profile surface
+
+The introducing slice must define field purpose, visibility, size bounds, redaction/logging policy, retention/export/deletion behavior and applicable authorization.
+
+### First user deletion lifecycle
+
+Before deletion is claimed complete, define deletion/anonymization, retention, referential behavior, downstream cleanup, backup/restore implications, retry/partial failure, authorization and audit.
 
 ## 10. Data lifecycle, assumptions and residual risks
 
-1. Application-instance rows are durable roots in this slice; no delete or soft-delete lifecycle exists.
-2. Backup/restore must preserve internal root identity and future referential meaning. No repository automation currently verifies production backup/restore.
-3. Deletion/retention semantics must be designed with the first real lifecycle requiring deletion; no speculative delete column is present.
-4. Deployment networking, host hardening, PostgreSQL server configuration and secret distribution are outside current repository enforcement.
-5. Separate runtime/migration principals are recommended but not enforced by current code.
-6. PostgreSQL availability is required for serving; no failover/read-replica/degraded product mode exists.
-7. Go dependencies and GitHub Actions remain trusted build inputs; dedicated supply-chain controls are incomplete.
-8. No identity/product PII exists yet.
-9. Root persistence tests do not prove authorization or child-resource tenant isolation because those surfaces do not exist.
+1. Application-instance rows remain durable roots; no root delete lifecycle exists.
+2. User rows are durable application-scoped identity records in this persistence slice; no delete/anonymize lifecycle exists.
+3. Backup/restore must preserve root/user internal identities and their foreign-key relationship. No repository automation currently verifies production backup/restore.
+4. Separate runtime/migration DB principals are recommended but not code-enforced.
+5. PostgreSQL remains required for serving; no failover/degraded product mode exists.
+6. No identifiers or profile PII exist yet.
+7. Persistence-level scoping tests do not prove HTTP/user authorization because no reachable product caller exists.
+8. Go dependencies and GitHub Actions remain trusted build inputs; dedicated supply-chain controls are incomplete.
 
 ## 11. Review/update triggers
 
 Update/review this model when a PR introduces or changes:
 
-- a child product schema/table/repository or organization-scoped resource;
-- a reachable application/admin lifecycle or public product API;
-- public application-instance identifier encoding/compatibility;
-- application credentials, authentication, identifiers, account linking, MFA, recovery, sessions, tokens, cookies, API keys, OAuth, or impersonation;
+- another child product schema/table/repository or organization-scoped resource;
+- email/phone/username identifiers or user profile PII;
+- a reachable user/application/admin lifecycle or public product API;
+- public application/user identifier encoding/compatibility;
+- authentication, account linking, MFA, recovery, sessions, tokens, cookies, API keys, OAuth, or impersonation;
 - product logging/tracing/metrics/audit/events/webhooks/queues/Redis/workers/providers;
 - deletion/retention/backup/restore behavior;
 - migration behavior, database privilege assumptions, or schema rollout strategy;
@@ -282,14 +304,16 @@ Update/review this model when a PR introduces or changes:
 
 ## 12. Evidence map
 
-- `Instruction.md` — architecture, security, tenant/data, testing, audit, and change-control invariants.
-- `docs/adr/0001-application-instance-root.md` — Human-ratified v1 root isolation decision and consequences.
+- `Instruction.md` — architecture, security, tenant/data, testing, audit and change-control invariants.
+- `docs/adr/0001-application-instance-root.md` — Human-ratified v1 root isolation decision.
 - `docs/contracts/conventions.md` — ID/error/idempotency/time/versioning/audit/tenancy semantics.
-- `internal/platform/migration/sql/00002_application_instances.sql` — first product table and database invariants.
-- `internal/platform/migration/*` — embedded forward migration validation, transactional behavior, advisory locking, stable failures and exact migration-state tests.
-- `internal/applicationinstance/instance.go` — BeeBox-owned internal model and stable errors; no public wire representation.
-- `internal/applicationinstance/postgres/store.go` — concrete context-aware create/exact-resolve persistence using the process-owned pool.
-- `internal/applicationinstance/postgres/store_integration_test.go` — two-root distinction, missing/invalid-scope, cancellation and safe-failure evidence.
-- `internal/platform/database/*` — process-owned pgx pool and `database/sql` adapter behavior.
-- `.github/workflows/ci.yml` — formatting, vet, unit, database/migration/application-instance integration and race checks.
+- `internal/platform/migration/sql/00002_application_instances.sql` — root table.
+- `internal/platform/migration/sql/00003_users.sql` — first child table, explicit root FK and timestamp invariant.
+- `internal/platform/migration/*` — forward migration validation, advisory locking, transactional failure behavior and exact migration-state tests.
+- `internal/applicationinstance/*` — internal root model and concrete persistence.
+- `internal/identity/user.go` — BeeBox-owned scoped user model and stable errors; no public wire representation.
+- `internal/identity/postgres/store.go` — context-aware atomic create and exact application-scoped resolve using the process-owned pool.
+- `internal/identity/postgres/store_integration_test.go` — A/B cross-scope denial, invalid/missing IDs, FK orphan prevention, concurrency, cancellation and safe-error evidence.
+- `internal/platform/database/*` — process-owned pgx pool and temporary `database/sql` adapter behavior.
+- `.github/workflows/ci.yml` — formatting, vet, unit, database/migration/application-instance/user integration and race checks.
 - `README.md` / `CONTRIBUTING.md` — current scope, migration behavior and repository-native verification commands.
