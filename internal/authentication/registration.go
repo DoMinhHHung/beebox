@@ -25,9 +25,9 @@ type RegistrationResult struct {
 // transactional persistence boundary.
 type RegistrationWrite struct {
 	ApplicationInstanceID applicationinstance.InternalID
-	Email                  identity.NormalizedEmail
-	PasswordHash           PasswordHash
-	CorrelationID          audit.CorrelationID
+	Email                 identity.NormalizedEmail
+	PasswordHash          PasswordHash
+	CorrelationID         audit.CorrelationID
 }
 
 // RegistrationPersistence exists because registration has one real transaction
@@ -77,8 +77,8 @@ func (r *Registrar) RegisterEmailPassword(
 
 	return r.persistence.PersistRegistration(ctx, RegistrationWrite{
 		ApplicationInstanceID: applicationInstanceID,
-		Email:                  email,
-		PasswordHash:           passwordHash,
-		CorrelationID:          correlationID,
+		Email:                 email,
+		PasswordHash:          passwordHash,
+		CorrelationID:         correlationID,
 	})
 }
