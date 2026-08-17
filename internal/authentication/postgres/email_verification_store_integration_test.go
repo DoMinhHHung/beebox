@@ -456,7 +456,8 @@ func advanceResendCooldown(t *testing.T, ctx context.Context, db *sql.DB, appID 
 	if _, err := db.ExecContext(
 		ctx,
 		`UPDATE email_verification_challenges
-		 SET last_issued_at = CURRENT_TIMESTAMP - INTERVAL '61 seconds'
+		 SET issue_window_started_at = LEAST(issue_window_started_at, CURRENT_TIMESTAMP - INTERVAL '61 seconds'),
+		     last_issued_at = CURRENT_TIMESTAMP - INTERVAL '61 seconds'
 		 WHERE application_instance_id = $1 AND email_identifier_id = $2`,
 		int64(appID), int64(emailID),
 	); err != nil {
