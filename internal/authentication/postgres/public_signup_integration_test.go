@@ -4,6 +4,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"sync"
 	"testing"
@@ -62,7 +63,7 @@ func TestPublicSignupIdempotencyDuplicateAndVerificationLifecycle(t *testing.T) 
 		t.Fatalf("first SignUp() error = %v", err)
 	}
 	calls, destination, code := delivery.snapshot()
-	if calls != 1 || destination != email || len(code) != authentication.VerificationCodeDigits {
+	if calls != 1 || destination != email || len(code) != 6 {
 		t.Fatalf("delivery calls/destination/code = %d/%q/%q", calls, destination, code)
 	}
 	assertPublicSignupCounts(t, ctx, pool, app.InternalID, 1, 1, 1, 1)
@@ -172,7 +173,7 @@ func TestPublicSignupProviderFailureDoesNotEraseCommittedState(t *testing.T) {
 	var audits int
 	if err := db.QueryRowContext(ctx,
 		`SELECT count(*) FROM audit_events WHERE application_instance_id = $1
-		 AND action IN ('authentication.email_password.registered','authentication.email_verification.challenge_issued')`,
+		 AND action IN ('authentication.email_password.register','authentication.email_verification.challenge_issued')`,
 		int64(app.InternalID),
 	).Scan(&audits); err != nil {
 		t.Fatal(err)
@@ -213,7 +214,16 @@ func TestPublicSignupSameEmailIsApplicationScoped(t *testing.T) {
 	}
 }
 
-func assertPublicSignupCounts(t *testing.T, ctx context.Context, pool interface{ OpenSQLDB() *sql.DB }, appID applicationinstance.InternalID, users, emails, passwords, challenges int) {
+func assertPublicSignupCounts(
+	t *testing.T,
+	ctx context.Context,
+	pool interface{ OpenSQLDB() *sql.DB },
+	appID applicationinstance.InternalID,
+	users int,
+	emails int,
+	passwords int,
+	challenges int,
+) {
 	t.Helper()
 	db := pool.OpenSQLDB()
 	defer db.Close()
