@@ -1,4 +1,10 @@
 -- +goose Up
+ALTER TABLE audit_events
+    DROP CONSTRAINT audit_events_correlation_id_key;
+
+CREATE INDEX audit_events_correlation_id_idx
+    ON audit_events (correlation_id);
+
 CREATE TABLE public_auth_idempotency (
     application_instance_id BIGINT NOT NULL REFERENCES application_instances(id),
     operation TEXT NOT NULL,
