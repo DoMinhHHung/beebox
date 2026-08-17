@@ -92,6 +92,15 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 		return nil, errors.New("load SMTP delivery configuration")
 	}
 	recorder := metrics.New()
+	recorder.SetDatabaseStatsProvider(func() metrics.DatabaseStats {
+		stats := concretePool.Stats()
+		return metrics.DatabaseStats{
+			AcquiredConns: stats.AcquiredConns,
+			IdleConns:     stats.IdleConns,
+			TotalConns:    stats.TotalConns,
+			MaxConns:      stats.MaxConns,
+		}
+	})
 	delivery := metricsdelivery.New(sender, recorder)
 	integrationStore := applicationpostgres.NewIntegrationStore(concretePool)
 	integrationService := applicationinstance.NewIntegrationService(integrationStore)
@@ -143,7 +152,7 @@ func parseMode(args []string) (processMode, error) {
 	}
 }
 
-func runServeMode(ctx context.Context, logger *slog.Logger, lookup config.LookupEnv, dependencies runtimeDependencies) error {
+func runServeMode(ctx context.Context, logger *slog.Logger, lookup config.LookupEnv, dependencies runtimeDependencies, args []string) error {
 	cfg, err := config.Load(lookup)
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
