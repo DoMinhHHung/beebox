@@ -96,11 +96,15 @@ func (h *sessionHTTP) handleSignIn(w http.ResponseWriter, r *http.Request, reque
 	}
 	pair, err := h.sessions.SignIn(r.Context(), app.InternalID, input.Email, input.Password, correlationID)
 	if err != nil {
-		if errors.Is(err, session.ErrInvalidCredentials) {
+		switch {
+		case errors.Is(err, session.ErrInvalidCredentials):
 			writeError(w, http.StatusUnauthorized, "invalid_credentials", "The supplied credentials are invalid.", requestID)
-			return
+		case errors.Is(err, session.ErrSignInRateLimited):
+			w.Header().Set("Retry-After", "60")
+			writeError(w, http.StatusTooManyRequests, "rate_limited", "Too many requests were received.", requestID)
+		default:
+			writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Authentication is temporarily unavailable.", requestID)
 		}
-		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Authentication is temporarily unavailable.", requestID)
 		return
 	}
 	h.writeTokenPair(w, r, pair)
