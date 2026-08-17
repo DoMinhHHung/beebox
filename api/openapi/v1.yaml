@@ -2,51 +2,40 @@ openapi: 3.1.0
 info:
   title: BeeBox Public API
   version: 1.0.0
-  description: BeeBox-owned Phase 1 public authentication contract. BeeBox Phase 1 is not an OAuth or OpenID Connect authorization server.
+  description: >-
+    BeeBox-owned Phase 1 B2C authentication contract. BeeBox Phase 1 is not an
+    OAuth or OpenID Connect authorization server. Public resource identifiers
+    are opaque locators and never establish authorization by themselves.
 servers:
   - url: /
 paths:
   /.well-known/jwks.json:
     get:
       operationId: getJWKS
-      summary: Read active and retiring access-token verification keys
+      summary: Read Ed25519 access-token verification keys
       security: []
       responses:
         '200':
-          description: Public Ed25519 verification keys only. Private signing material is never published.
+          description: Active and retiring public verification keys only.
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/JWKS'
-        '404':
-          description: Access-token capability is not configured.
+              schema: {$ref: '#/components/schemas/JWKS'}
+        '404': {description: Access-token capability is not configured.}
+
   /v1/sign-ups:
     post:
       operationId: signUp
-      summary: Start email/password signup
-      security:
-        - publishableKey: []
+      summary: Start application-scoped email/password signup
+      security: [{publishableKey: []}]
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/SignUpRequest'
+            schema: {$ref: '#/components/schemas/SignUpRequest'}
       responses:
-        '202':
-          description: Signup request accepted without revealing prior identifier existence.
-          headers:
-            Cache-Control:
-              schema: {type: string, const: no-store}
-            X-Request-ID:
-              schema: {type: string}
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/StatusResponse'}
-              examples:
-                pending: {value: {status: verification_pending}}
+        '202': {$ref: '#/components/responses/Accepted'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
@@ -54,70 +43,55 @@ paths:
         '422': {$ref: '#/components/responses/InvalidInput'}
         '429': {$ref: '#/components/responses/RateLimited'}
         '503': {$ref: '#/components/responses/Unavailable'}
+
   /v1/email-verifications:
     post:
       operationId: requestEmailVerification
-      summary: Request or resend email verification
-      security:
-        - publishableKey: []
+      summary: Request or resend email ownership verification
+      description: Response remains generic when the identifier does not exist, is already verified, or issuance is suppressed.
+      security: [{publishableKey: []}]
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/EmailVerificationRequest'}
+            schema: {$ref: '#/components/schemas/EmailRequest'}
       responses:
-        '202':
-          description: Accepted generically whether the identifier exists, is verified, or issuance is suppressed.
-          headers:
-            Cache-Control:
-              schema: {type: string, const: no-store}
-            X-Request-ID:
-              schema: {type: string}
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/StatusResponse'}
-              examples:
-                accepted: {value: {status: accepted}}
+        '202': {$ref: '#/components/responses/Accepted'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '422': {$ref: '#/components/responses/InvalidInput'}
         '503': {$ref: '#/components/responses/Unavailable'}
+
   /v1/email-verifications/confirm:
     post:
       operationId: confirmEmailVerification
-      summary: Confirm email ownership with the active verification code
-      security:
-        - publishableKey: []
+      summary: Confirm email ownership
+      description: A successful confirmation proves control of the address only and does not authenticate the user or create a session.
+      security: [{publishableKey: []}]
       requestBody:
         required: true
         content:
           application/json:
             schema: {$ref: '#/components/schemas/EmailVerificationConfirmRequest'}
       responses:
-        '200':
-          description: Email verified. This proves control of the address only and does not create a session.
-          headers:
-            Cache-Control:
-              schema: {type: string, const: no-store}
-            X-Request-ID:
-              schema: {type: string}
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/StatusResponse'}
-              examples:
-                verified: {value: {status: verified}}
-        '400': {$ref: '#/components/responses/BadRequest'}
+        '200': {$ref: '#/components/responses/OKStatus'}
+        '400': {$ref: '#/components/responses/VerificationFailed'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '422': {$ref: '#/components/responses/InvalidInput'}
         '503': {$ref: '#/components/responses/Unavailable'}
+
   /v1/sign-ins:
     post:
       operationId: signIn
-      summary: Create a session with verified email and password credentials
-      security:
-        - publishableKey: []
+      summary: Create a session from verified email/password credentials
+      description: >-
+        Invalid credentials are anti-enumerating. Browser requests with an allowed
+        Origin receive the refresh credential only in an application-specific
+        Secure HttpOnly SameSite=Strict __Host- cookie. Non-browser callers receive
+        the refresh credential in JSON.
+      security: [{publishableKey: []}]
       requestBody:
         required: true
         content:
@@ -125,14 +99,11 @@ paths:
             schema: {$ref: '#/components/schemas/SignInRequest'}
       responses:
         '200':
-          description: Session created. Browser requests with an allowed Origin receive the rotating refresh credential only in an application-specific Secure HttpOnly SameSite=Strict __Host- cookie; non-browser requests receive it in JSON.
+          description: Session and fresh access credential.
           headers:
-            Cache-Control:
-              schema: {type: string, const: no-store}
-            X-Request-ID:
-              schema: {type: string}
-            Set-Cookie:
-              schema: {type: string}
+            Cache-Control: {$ref: '#/components/headers/NoStore'}
+            X-Request-ID: {$ref: '#/components/headers/RequestID'}
+            Set-Cookie: {schema: {type: string}}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/TokenResponse'}
@@ -141,13 +112,16 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '429': {$ref: '#/components/responses/RateLimited'}
         '503': {$ref: '#/components/responses/Unavailable'}
+
   /v1/sessions/refresh:
     post:
       operationId: refreshSession
-      summary: Rotate a refresh credential and issue a new access token
-      description: A consumed refresh credential is treated as replay and revokes the owning session. Cookie mode requires a non-empty exact stored Origin.
-      security:
-        - publishableKey: []
+      summary: Rotate a one-time refresh credential
+      description: >-
+        Successful refresh consumes the old credential and creates a replacement.
+        Reuse of an already consumed refresh credential revokes the session. Clients
+        must not blindly retry an ambiguous refresh operation.
+      security: [{publishableKey: []}]
       requestBody:
         required: false
         content:
@@ -155,14 +129,11 @@ paths:
             schema: {$ref: '#/components/schemas/RefreshRequest'}
       responses:
         '200':
-          description: Refresh credential rotated and a new five-minute access token issued.
+          description: Rotated refresh state and fresh five-minute access token.
           headers:
-            Cache-Control:
-              schema: {type: string, const: no-store}
-            X-Request-ID:
-              schema: {type: string}
-            Set-Cookie:
-              schema: {type: string}
+            Cache-Control: {$ref: '#/components/headers/NoStore'}
+            X-Request-ID: {$ref: '#/components/headers/RequestID'}
+            Set-Cookie: {schema: {type: string}}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/TokenResponse'}
@@ -170,66 +141,115 @@ paths:
         '401': {$ref: '#/components/responses/InvalidRefresh'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/sessions/current:
+    get:
+      operationId: getCurrentSession
+      summary: Read the current BeeBox session
+      description: BeeBox validates the access JWT and current persisted session state, so BeeBox itself observes revocation immediately.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      responses:
+        '200':
+          description: Current application-scoped session.
+          headers:
+            Cache-Control: {$ref: '#/components/headers/NoStore'}
+            X-Request-ID: {$ref: '#/components/headers/RequestID'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Session'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/sessions/sign-out:
+    post:
+      operationId: signOut
+      summary: Revoke the current session
+      description: Public sign-out is idempotent from the client perspective and clears the application-specific refresh cookie when present.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      responses:
+        '200': {$ref: '#/components/responses/OKStatus'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/backend/sessions/{session_id}:
+    get:
+      operationId: getSession
+      summary: Read one session using backend application authority
+      security: [{secretKey: []}]
+      parameters:
+        - {$ref: '#/components/parameters/SessionID'}
+      responses:
+        '200':
+          description: Session from the application authenticated by the secret key.
+          headers:
+            Cache-Control: {$ref: '#/components/headers/NoStore'}
+            X-Request-ID: {$ref: '#/components/headers/RequestID'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Session'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/SessionNotFound'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/backend/sessions/{session_id}/revoke:
+    post:
+      operationId: revokeSession
+      summary: Revoke one application-scoped session using backend authority
+      security: [{secretKey: []}]
+      parameters:
+        - {$ref: '#/components/parameters/SessionID'}
+      responses:
+        '200': {$ref: '#/components/responses/OKStatus'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/SessionNotFound'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
   /v1/password-resets:
     post:
       operationId: requestPasswordReset
-      summary: Request an email password-reset code
-      description: The response is intentionally generic whether the account exists, is verified, is eligible, is rate limited, or delivery is unavailable. Eligible state is never disclosed by this endpoint.
-      security:
-        - publishableKey: []
+      summary: Request a password reset
+      description: Response is generic for unknown, unverified, ineligible, suppressed, or rate-limited identifiers.
+      security: [{publishableKey: []}]
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/PasswordResetRequest'}
+            schema: {$ref: '#/components/schemas/EmailRequest'}
       responses:
-        '202':
-          description: Request accepted generically. Eligible accounts may receive a reset code after the challenge and issuance audit have committed.
-          headers:
-            Cache-Control:
-              schema: {type: string, const: no-store}
-            X-Request-ID:
-              schema: {type: string}
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/StatusResponse'}
-              examples:
-                accepted: {value: {status: accepted}}
+        '202': {$ref: '#/components/responses/Accepted'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '422': {$ref: '#/components/responses/InvalidInput'}
         '503': {$ref: '#/components/responses/Unavailable'}
+
   /v1/password-resets/confirm:
     post:
       operationId: confirmPasswordReset
-      summary: Confirm a password reset and replace the password credential
-      description: A successful reset consumes the reset code, increments password credential generation, revokes every current session for the user in the application, and writes the required security audit fact atomically. Already-issued stateless access JWTs can remain cryptographically valid for offline consumers until their short expiry.
-      security:
-        - publishableKey: []
+      summary: Replace the password after reset-code verification
+      description: >-
+        Successful reset replaces the password credential, consumes the challenge,
+        revokes all application sessions for the user, and appends its security
+        audit fact atomically. Already-issued stateless access JWTs can remain
+        cryptographically valid for offline consumers until their short expiry.
+      security: [{publishableKey: []}]
       requestBody:
         required: true
         content:
           application/json:
             schema: {$ref: '#/components/schemas/PasswordResetConfirmRequest'}
       responses:
-        '200':
-          description: Password replaced and existing application sessions revoked.
-          headers:
-            Cache-Control:
-              schema: {type: string, const: no-store}
-            X-Request-ID:
-              schema: {type: string}
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/StatusResponse'}
-              examples:
-                reset: {value: {status: password_reset}}
+        '200': {$ref: '#/components/responses/OKStatus'}
         '400': {$ref: '#/components/responses/PasswordResetFailed'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '422': {$ref: '#/components/responses/InvalidInput'}
         '503': {$ref: '#/components/responses/Unavailable'}
+
 components:
   securitySchemes:
     publishableKey:
@@ -237,16 +257,38 @@ components:
       in: header
       name: X-BeeBox-Publishable-Key
       description: Non-secret application integration key. It selects application context only and grants no user or backend authority.
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Five-minute BeeBox Ed25519 access JWT. Tokens are never accepted in query parameters.
+    secretKey:
+      type: http
+      scheme: bearer
+      description: BeeBox backend secret application credential. Plaintext is displayed only once when created and only its verifier is persisted.
+
   parameters:
     IdempotencyKey:
       name: Idempotency-Key
       in: header
       required: true
+      schema: {type: string, minLength: 1, maxLength: 200}
+      description: Opaque retry key scoped by server-selected application and operation.
+    SessionID:
+      name: session_id
+      in: path
+      required: true
       schema:
         type: string
-        minLength: 1
-        maxLength: 200
-      description: Opaque retry key scoped by server-selected application and operation.
+        pattern: '^ses_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+      description: Opaque session locator; possession is not authorization.
+
+  headers:
+    NoStore:
+      schema: {type: string, const: no-store}
+    RequestID:
+      schema: {type: string}
+
   schemas:
     StatusResponse:
       type: object
@@ -268,6 +310,12 @@ components:
         code: {type: string}
         message: {type: string}
         request_id: {type: string}
+    EmailRequest:
+      type: object
+      additionalProperties: false
+      required: [email]
+      properties:
+        email: {type: string, format: email}
     SignUpRequest:
       type: object
       additionalProperties: false
@@ -278,7 +326,14 @@ components:
           type: string
           minLength: 15
           maxLength: 128
-          description: 15-128 Unicode code points after NFC normalization. Input is not trimmed and has no composition-rule requirement.
+          description: 15-128 Unicode code points after NFC normalization. Input is not silently trimmed and no composition rule is imposed.
+    EmailVerificationConfirmRequest:
+      type: object
+      additionalProperties: false
+      required: [email, code]
+      properties:
+        email: {type: string, format: email}
+        code: {type: string, pattern: '^[0-9]{6}$'}
     SignInRequest:
       type: object
       additionalProperties: false
@@ -294,7 +349,7 @@ components:
         refresh_token:
           type: string
           minLength: 43
-          description: Opaque random refresh credential. The server stores only a verifier hash and rotates on every successful refresh.
+          description: One-time opaque refresh credential. The server persists only verifier material.
     TokenResponse:
       type: object
       additionalProperties: false
@@ -302,7 +357,7 @@ components:
       properties:
         access_token:
           type: string
-          description: Ed25519/EdDSA JWT with a five-minute lifetime and mandatory iss, sub, aud, sid, exp, nbf, iat, jti claims.
+          description: Ed25519/EdDSA JWT with required iss, sub, aud, sid, exp, nbf, iat and jti claims.
         token_type: {type: string, const: Bearer}
         expires_in: {type: integer, const: 300}
         session_id:
@@ -310,26 +365,21 @@ components:
           pattern: '^ses_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
         refresh_token:
           type: string
-          description: Present only for non-browser mode. Browser mode uses an application-specific __Host- refresh cookie.
-    EmailVerificationRequest:
+          description: Present only in non-browser mode. Browser mode uses the application-specific __Host- refresh cookie.
+    Session:
       type: object
       additionalProperties: false
-      required: [email]
+      required: [id, user_id, created_at, expires_at, revoked]
       properties:
-        email: {type: string, format: email}
-    EmailVerificationConfirmRequest:
-      type: object
-      additionalProperties: false
-      required: [email, code]
-      properties:
-        email: {type: string, format: email}
-        code: {type: string, pattern: '^[0-9]{6}$'}
-    PasswordResetRequest:
-      type: object
-      additionalProperties: false
-      required: [email]
-      properties:
-        email: {type: string, format: email}
+        id:
+          type: string
+          pattern: '^ses_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+        user_id:
+          type: string
+          pattern: '^usr_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+        created_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+        revoked: {type: boolean}
     PasswordResetConfirmRequest:
       type: object
       additionalProperties: false
@@ -339,12 +389,11 @@ components:
         code:
           type: string
           pattern: '^[0-9]{8}$'
-          description: Single-use password-reset code. It is never persisted in plaintext.
         new_password:
           type: string
           minLength: 15
           maxLength: 128
-          description: Uses the same BeeBox public password policy as signup: NFC, 15-128 Unicode code points, no silent trim or composition requirement, plus the repository-owned blocklist.
+          description: Uses exactly the same NFC, length, safe-byte-bound and blocklist policy as signup.
     JWKS:
       type: object
       additionalProperties: false
@@ -363,32 +412,62 @@ components:
         use: {type: string, const: sig}
         alg: {type: string, const: EdDSA}
         kid: {type: string}
-        x:
-          type: string
-          description: Unpadded base64url Ed25519 public key material.
+        x: {type: string, description: Unpadded base64url Ed25519 public key material.}
+
   responses:
+    Accepted:
+      description: Request accepted without revealing protected account state.
+      headers:
+        Cache-Control: {$ref: '#/components/headers/NoStore'}
+        X-Request-ID: {$ref: '#/components/headers/RequestID'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/StatusResponse'}
+    OKStatus:
+      description: Operation completed.
+      headers:
+        Cache-Control: {$ref: '#/components/headers/NoStore'}
+        X-Request-ID: {$ref: '#/components/headers/RequestID'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/StatusResponse'}
     BadRequest:
-      description: Invalid request or generic verification failure.
+      description: Invalid request.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
     Unauthorized:
-      description: Invalid application publishable key.
+      description: Application credential is invalid.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
     InvalidCredentials:
-      description: Email/password credentials are invalid without revealing whether the identifier exists or is verified.
+      description: Credentials are invalid without revealing identifier existence or verification state.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
     InvalidRefresh:
-      description: Refresh credential is invalid, expired, revoked, or was replayed. Replay revokes the owning session.
+      description: Refresh credential is invalid, expired, revoked or replayed. Replay revokes its owning session.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    InvalidSession:
+      description: Access token or persisted current session state is invalid/revoked.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    SessionNotFound:
+      description: Session is absent from the authenticated application scope.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    VerificationFailed:
+      description: Email verification cannot be completed without exposing protected identifier state.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
     PasswordResetFailed:
-      description: Password reset cannot be completed. Account, challenge, expiration, replay, attempt-budget, and stale-generation details are intentionally not exposed.
+      description: Password reset cannot be completed. Challenge/account/replay/expiry details are intentionally collapsed.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
@@ -398,7 +477,7 @@ components:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
     Conflict:
-      description: Idempotency key conflicts with a different request.
+      description: Idempotency key conflicts with a different canonical request.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
@@ -410,13 +489,12 @@ components:
     RateLimited:
       description: Public authentication request limit reached.
       headers:
-        Retry-After:
-          schema: {type: string}
+        Retry-After: {schema: {type: string}}
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
     Unavailable:
-      description: Authentication or delivery dependency is temporarily unavailable without provider or database details.
+      description: A required dependency is temporarily unavailable without provider/database details.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
