@@ -85,7 +85,7 @@ Security and administrative audit facts are correctness evidence, not optional n
 
 A security-sensitive action introduced by a product slice is incomplete unless that slice records the required audit fact as part of the action's correctness boundary. Failure of later asynchronous email, webhook, notification, provider delivery, or other secondary work must not erase an audit fact for an action that already committed.
 
-The audit record/event contract for such an action includes, as applicable:
+Every security or administrative audit fact must contain:
 
 - immutable event identifier;
 - occurred-at timestamp;
@@ -94,11 +94,13 @@ The audit record/event contract for such an action includes, as applicable:
 - explicit application/instance scope;
 - organization scope only where applicable;
 - action name/category;
-- resource type/reference where applicable;
+- a resource category/reference identifying what the action concerns. When no persisted resource object exists yet, the implementing slice records the logical resource, category, or operation concerned rather than omitting the field;
 - result/outcome, including denied or failed security-sensitive attempts when the concrete threat model requires them;
 - source/context sufficient for investigation without storing secrets or unnecessary PII;
-- correlation/request identifier when available;
+- a correlation/operation identifier. If no inbound request correlation identifier exists, including non-HTTP/background work, the implementing slice creates and propagates an appropriate identifier rather than omitting the field;
 - redaction/minimization rules for secrets and PII.
+
+This Phase 0 baseline does not ratify the resource-reference encoding, correlation-identifier encoding, database primary-key type, audit table layout, or event-schema wire encoding.
 
 The storage mechanism, table design, outbox, worker, event bus, and export pipeline are **not** selected by this Phase 0 document. A future slice chooses only the smallest mechanism that can satisfy its correctness, transaction, retention, and operational requirements. Kafka, queues, or outbox infrastructure are not implied by these semantics.
 
