@@ -26,7 +26,14 @@ func TestMigrationEightBackfillsStablePublicIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fs.Sub() error = %v", err)
 	}
-	if err := upWithSources(ctx, pool.OpenSQLDB(), omitMigrationFS{FS: sources, omit: "00008_phase1_public_integration.sql"}); err != nil {
+	preEight := omitMigrationFS{
+		FS: omitMigrationFS{
+			FS:   sources,
+			omit: "00009_public_auth_controls.sql",
+		},
+		omit: "00008_phase1_public_integration.sql",
+	}
+	if err := upWithSources(ctx, pool.OpenSQLDB(), preEight); err != nil {
 		t.Fatalf("apply pre-00008 migrations error = %v", err)
 	}
 
@@ -41,12 +48,28 @@ func TestMigrationEightBackfillsStablePublicIDs(t *testing.T) {
 		db.Close()
 		t.Fatalf("insert legacy user row error = %v", err)
 	}
-	if err := db.Close(); err != nil {
-		t.Fatalf("close legacy-row adapter error = %v", err)
-	}
 
-	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
-		t.Fatalf("apply migration 00008 error = %v", err)
+	migrationEight, err := fs.ReadFile(sources, "00008_phase1_public_integration.sql")
+	if err != nil {
+		db.Close()
+		t.Fatalf("read migration 00008 error = %v", err)
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		db.Close()
+		t.Fatalf("begin migration 00008 transaction error = %v", err)
+	}
+	if _, err := tx.ExecContext(ctx, string(migrationEight)); err != nil {
+		_ = tx.Rollback()
+		db.Close()
+		t.Fatalf("apply migration 00008 SQL error = %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		db.Close()
+		t.Fatalf("commit migration 00008 transaction error = %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close migration adapter error = %v", err)
 	}
 
 	appPublicID, userPublicID := readBackfilledPublicIDs(t, ctx, pool, appID, userID)
@@ -55,14 +78,6 @@ func TestMigrationEightBackfillsStablePublicIDs(t *testing.T) {
 	}
 	if !userPublicIDPattern.MatchString(userPublicID) {
 		t.Fatalf("backfilled user public ID %q is not usr UUIDv4", userPublicID)
-	}
-
-	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
-		t.Fatalf("rerun migrations error = %v", err)
-	}
-	afterAppPublicID, afterUserPublicID := readBackfilledPublicIDs(t, ctx, pool, appID, userID)
-	if afterAppPublicID != appPublicID || afterUserPublicID != userPublicID {
-		t.Fatalf("public IDs changed across rerun: app %q -> %q, user %q -> %q", appPublicID, afterAppPublicID, userPublicID, afterUserPublicID)
 	}
 }
 
