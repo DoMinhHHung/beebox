@@ -2,12 +2,13 @@
 
 BeeBox is an open-source identity and access platform implemented primarily in Go.
 
-This repository currently contains the initial runtime, PostgreSQL connection, explicit migration runner, Phase 0 governance/contracts baseline, the v1 `application_instance` root isolation boundary, and the first application-scoped internal user persistence slice. Users currently have no identifiers, profile data, credentials, authentication, authorization, sessions, organizations, or public product API.
+This repository currently contains the initial runtime, PostgreSQL connection, explicit migration runner, Phase 0 governance/contracts baseline, the v1 `application_instance` root isolation boundary, application-scoped internal user persistence, and application-scoped internal email-identifier persistence. Email is now persisted PII, but verification, authentication, authorization, signup/signin, sessions, organizations, and public product APIs are not implemented yet.
 
 ## Project documentation
 
 - [Repository instructions](Instruction.md) — product, architecture, security, data, testing, delivery, and change-control invariants.
 - [ADR 0001: application_instance root](docs/adr/0001-application-instance-root.md) — the Human-ratified v1 root product isolation decision and its intentionally unresolved public-ID boundary.
+- [ADR 0002: email identity v1](docs/adr/0002-email-identity-v1.md) — the Human-ratified application-scoped email normalization, uniqueness, verification-state, and no-auto-link decision.
 - [Initial threat model](docs/threat-model/initial.md) — current assets, actors, trust boundaries, implemented controls, required future controls, residual risks, and review triggers.
 - [Contract and tenancy conventions](docs/contracts/conventions.md) — Phase 0 semantics for resource IDs, errors, pagination, idempotency, time, API versioning, audit events, and tenancy.
 - [Contributing](CONTRIBUTING.md) — current branch/PR workflow, repository checks, migration policy, and contribution evidence.
@@ -107,9 +108,10 @@ Current migrations are:
 
 - `00001_runtime_baseline.sql` — anchors forward migration history without product schema/data;
 - `00002_application_instances.sql` — creates the `application_instances` root table with an internal generated identity and `timestamptz` creation time;
-- `00003_users.sql` — creates the minimal `users` child table with an internal generated identity, mandatory `application_instance_id` foreign key, and `timestamptz` creation time.
+- `00003_users.sql` — creates the minimal `users` child table with an internal generated identity, mandatory `application_instance_id` foreign key, and `timestamptz` creation time;
+- `00004_email_identifiers.sql` — adds scoped user referential integrity and creates application-scoped `email_identifiers` with per-application normalized-email uniqueness and explicit nullable verification state.
 
-The database identities in `application_instances.id` and `users.id` are internal persistence details. They are not permanent public BeeBox resource identifiers, and no public product API exists in this slice.
+The database identities in `application_instances.id`, `users.id`, and `email_identifiers.id` are internal persistence details. They are not permanent public BeeBox resource identifiers, and no public product API exists in this slice.
 
 Use separate credentials where possible:
 
@@ -180,20 +182,25 @@ The repository currently contains:
 - explicit embedded forward-only migrations serialized by an advisory lock;
 - the `application_instances` v1 root product-isolation table and internal persistence model;
 - concrete application-instance `Create` and exact trusted-scope `Resolve` persistence;
-- the `users` table as the first child product table, with mandatory `application_instance_id` foreign-key scope;
+- the `users` table with mandatory `application_instance_id` foreign-key scope;
 - a minimal BeeBox-owned internal user model containing only internal identity, application-instance scope, and creation time;
 - concrete scoped user `Create` and `Resolve(applicationScope, userID)` persistence;
-- PostgreSQL integration evidence that a user from application A does not resolve under application B, missing/invalid scope cannot fall through, foreign keys prevent orphan users, and concurrent inserts retain unique generated identities;
-- Phase 0 governance/security/contracts documentation and ADR 0001.
+- the `email_identifiers` table with explicit application/user ownership, per-application normalized-email uniqueness, nullable `verified_at`, and no public identifier contract;
+- deterministic BeeBox v1 ASCII email normalization: trim surrounding ASCII spaces, preserve case in the stored mailbox, lowercase the complete mailbox for comparison, and preserve dots and `+tag` suffixes without provider-specific rewriting;
+- concrete internal email-identifier create and application-scoped resolve-by-address persistence;
+- PostgreSQL integration evidence for same-app conflict/no-auto-link behavior, same-email cross-app coexistence, composite-FK cross-scope rejection, unverified-by-default state, and concurrent duplicate convergence;
+- Phase 0 governance/security/contracts documentation plus ADRs 0001 and 0002.
 
-The user persistence surface is internal only. It does **not** implement user management, authentication, authorization, public creation, public IDs, email/phone/username identifiers, profile data, credentials, sessions/tokens, organizations, or a product audit subsystem. The store does not define how a future HTTP/client caller obtains a trusted application scope.
+Email addresses are now the first persisted product PII in BeeBox. Stable errors introduced by this slice do not contain email values, and no logging/metrics/tracing surface is added for them.
 
-User rows are durable application-scoped identity records in this slice. No deletion, anonymization, or retention lifecycle is defined. Backup/restore must preserve user/application-instance relationships and internal identities; the first real user lifecycle that needs deletion must define retention, downstream cleanup, and referential behavior before claiming completion.
+The email persistence surface is internal only. It does **not** implement email verification, OTP/link delivery, password authentication, signup/signin, authorization, public identifier lookup, public user/email IDs, account linking/merging, primary-email semantics, sessions/tokens, organizations, or a product audit subsystem. New identifiers remain unverified until a later reviewed verification lifecycle is implemented.
+
+User and email-identifier rows are durable scoped records in this persistence slice. No deletion, anonymization, export, or retention lifecycle is defined. Backup/restore must preserve application/user/email relationships and internal identities, and backup handling now includes email PII. The first reachable lifecycle that needs deletion/export must define authorization, audit, retention, downstream cleanup, backup treatment, referential behavior, and partial-failure semantics.
 
 Phase 1 remains incomplete.
 
 ## Rollout and rollback
 
-No hosted database mutation is performed by repository changes alone. For a reviewed release, run the exact promoted binary/image with `migrate` and a migration-capable credential before starting code that depends on `users`. Normal serve mode still does not auto-migrate.
+No hosted database mutation is performed by repository changes alone. For a reviewed release, run the exact promoted binary/image with `migrate` and a migration-capable credential before starting code that depends on `email_identifiers`. Normal serve mode still does not auto-migrate.
 
-BeeBox production migration policy is forward-only. Before production data depends on the additive `users` table, code can be reverted while the schema remains harmless. Once data depends on it, schema correction uses a reviewed forward migration; destructive rollback is not automatic.
+BeeBox production migration policy is forward-only. Before production data depends on the additive email-identifier schema, code can be reverted while the schema remains. Once data depends on it, schema correction uses a reviewed forward migration; destructive rollback is not automatic.
