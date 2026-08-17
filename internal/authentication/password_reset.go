@@ -117,9 +117,9 @@ type PasswordResetSnapshot struct {
 	EmailIdentifierID    identity.EmailIdentifierInternalID
 	ChallengeGeneration  int64
 	CredentialGeneration int64
-	CodeHash              PasswordResetCodeHash
-	ExpiresAt             time.Time
-	FailedAttempts        int
+	CodeHash             PasswordResetCodeHash
+	ExpiresAt            time.Time
+	FailedAttempts       int
 }
 
 type PasswordResetFinalize struct {
