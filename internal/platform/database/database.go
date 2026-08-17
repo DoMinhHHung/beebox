@@ -19,6 +19,13 @@ type Pool struct {
 	pool *pgxpool.Pool
 }
 
+type Stats struct {
+	AcquiredConns int32
+	IdleConns     int32
+	TotalConns    int32
+	MaxConns      int32
+}
+
 // Open parses the PostgreSQL configuration and creates a pool without
 // establishing a connection. Call Ping with a bounded context before serving.
 func Open(ctx context.Context, databaseURL string) (*Pool, error) {
@@ -43,6 +50,22 @@ func (p *Pool) Ping(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// Stats returns bounded process-pool occupancy values suitable for operational
+// metrics. It exposes no database URL, credentials, SQL text, tenant or resource
+// identifiers.
+func (p *Pool) Stats() Stats {
+	if p == nil || p.pool == nil {
+		return Stats{}
+	}
+	stats := p.pool.Stat()
+	return Stats{
+		AcquiredConns: stats.AcquiredConns(),
+		IdleConns:     stats.IdleConns(),
+		TotalConns:    stats.TotalConns(),
+		MaxConns:      stats.MaxConns(),
+	}
 }
 
 // OpenSQLDB returns a database/sql adapter backed by this pool. Closing the

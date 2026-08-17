@@ -16,10 +16,12 @@ import (
 	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
 	applicationpostgres "github.com/DoMinhHHung/beebox/internal/applicationinstance/postgres"
 	"github.com/DoMinhHHung/beebox/internal/authentication"
+	"github.com/DoMinhHHung/beebox/internal/authentication/metricsdelivery"
 	authpostgres "github.com/DoMinhHHung/beebox/internal/authentication/postgres"
 	"github.com/DoMinhHHung/beebox/internal/authentication/smtpdelivery"
 	"github.com/DoMinhHHung/beebox/internal/httpapi"
 	identitypostgres "github.com/DoMinhHHung/beebox/internal/identity/postgres"
+	"github.com/DoMinhHHung/beebox/internal/metrics"
 	"github.com/DoMinhHHung/beebox/internal/platform/config"
 	"github.com/DoMinhHHung/beebox/internal/platform/database"
 	"github.com/DoMinhHHung/beebox/internal/platform/httpserver"
@@ -89,30 +91,43 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 	if err != nil {
 		return nil, errors.New("load SMTP delivery configuration")
 	}
+	recorder := metrics.New()
+	recorder.SetDatabaseStatsProvider(func() metrics.DatabaseStats {
+		stats := concretePool.Stats()
+		return metrics.DatabaseStats{
+			AcquiredConns: stats.AcquiredConns,
+			IdleConns:     stats.IdleConns,
+			TotalConns:    stats.TotalConns,
+			MaxConns:      stats.MaxConns,
+		}
+	})
+	delivery := metricsdelivery.New(sender, recorder)
 	integrationStore := applicationpostgres.NewIntegrationStore(concretePool)
 	integrationService := applicationinstance.NewIntegrationService(integrationStore)
 	authStore := authpostgres.New(concretePool)
-	verificationCore := authentication.NewEmailVerificationService(authStore, sender)
+	verificationCore := authentication.NewEmailVerificationService(authStore, delivery)
 	verification := authentication.NewPublicVerificationService(
 		identitypostgres.New(concretePool),
 		authStore,
 		verificationCore,
 	)
-	signup := authentication.NewPublicSignupService(authStore, sender)
-	reset := authentication.NewPasswordResetService(authStore, sender)
+	signup := authentication.NewPublicSignupService(authStore, delivery)
+	reset := authentication.NewPasswordResetService(authStore, delivery)
 	base := httpapi.New(health, integrationService, integrationStore, signup, verification)
 	base = httpapi.WithPasswordReset(base, integrationService, integrationStore, reset)
 
 	ring, err := session.KeyRingFromLookup(session.LookupEnv(lookup))
 	if errors.Is(err, session.ErrTokenDisabled) {
-		return base, nil
+		return httpapi.WithMetrics(base, recorder), nil
 	}
 	if err != nil {
 		return nil, errors.New("load access token signing configuration")
 	}
 	sessionStore := sessionpostgres.New(concretePool)
 	sessionService := session.NewService(sessionStore, sessionStore, ring)
-	return httpapi.WithSessions(base, integrationService, integrationStore, sessionService, ring), nil
+	base = httpapi.WithSessions(base, integrationService, integrationStore, sessionService, ring)
+	base = httpapi.WithSessionManagement(base, integrationService, integrationService, sessionService)
+	return httpapi.WithMetrics(base, recorder), nil
 }
 
 func runWithDependencies(ctx context.Context, logger *slog.Logger, lookup config.LookupEnv, dependencies runtimeDependencies, args []string) error {
