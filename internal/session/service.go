@@ -30,10 +30,11 @@ var (
 )
 
 type CredentialRecord struct {
-	UserInternalID      identity.InternalID
-	UserPublicID        string
-	ApplicationPublicID string
-	PasswordHash        authentication.PasswordHash
+	UserInternalID       identity.InternalID
+	UserPublicID         string
+	ApplicationPublicID  string
+	CredentialGeneration int64
+	PasswordHash         authentication.PasswordHash
 }
 
 type CredentialLookup interface {
@@ -42,7 +43,7 @@ type CredentialLookup interface {
 
 type Store interface {
 	AllowSignInAttempt(context.Context, applicationinstance.InternalID, [32]byte) error
-	CreateSession(context.Context, applicationinstance.InternalID, identity.InternalID, string, [32]byte, time.Time, time.Time, audit.CorrelationID) error
+	CreateSession(context.Context, applicationinstance.InternalID, identity.InternalID, int64, string, [32]byte, time.Time, time.Time, audit.CorrelationID) error
 	RotateRefresh(context.Context, applicationinstance.InternalID, [32]byte, [32]byte, time.Time, time.Time, audit.CorrelationID) (CredentialRecord, string, error)
 }
 
@@ -82,7 +83,6 @@ func (s *Service) SignIn(ctx context.Context, appID applicationinstance.Internal
 			return TokenPair{}, ctxErr
 		}
 		if errors.Is(err, ErrInvalidCredentials) {
-			// Burn the same expensive primitive on unknown identifiers to reduce a cheap timing oracle.
 			_, _ = authentication.HashPassword([]byte(password))
 			return TokenPair{}, ErrInvalidCredentials
 		}
@@ -104,19 +104,14 @@ func (s *Service) issueNewSession(ctx context.Context, appID applicationinstance
 		return TokenPair{}, ErrSessionUnavailable
 	}
 	now := s.now().UTC()
-	if err := s.store.CreateSession(ctx, appID, record.UserInternalID, sessionID, refreshHash, now.Add(InactivityLifetime), now.Add(AbsoluteLifetime), correlationID); err != nil {
+	if err := s.store.CreateSession(ctx, appID, record.UserInternalID, record.CredentialGeneration, sessionID, refreshHash, now.Add(InactivityLifetime), now.Add(AbsoluteLifetime), correlationID); err != nil {
 		return TokenPair{}, err
 	}
 	access, err := s.ring.Sign(record.UserPublicID, record.ApplicationPublicID, sessionID, now)
 	if err != nil {
 		return TokenPair{}, ErrSessionUnavailable
 	}
-	return TokenPair{
-		AccessToken:  access,
-		RefreshToken: refresh,
-		ExpiresIn:    int64(AccessTokenLifetime / time.Second),
-		SessionID:    sessionID,
-	}, nil
+	return TokenPair{AccessToken: access, RefreshToken: refresh, ExpiresIn: int64(AccessTokenLifetime / time.Second), SessionID: sessionID}, nil
 }
 
 func (s *Service) Refresh(ctx context.Context, appID applicationinstance.InternalID, refresh string, correlationID audit.CorrelationID) (TokenPair, error) {
@@ -137,10 +132,5 @@ func (s *Service) Refresh(ctx context.Context, appID applicationinstance.Interna
 	if err != nil {
 		return TokenPair{}, ErrSessionUnavailable
 	}
-	return TokenPair{
-		AccessToken:  access,
-		RefreshToken: newRefresh,
-		ExpiresIn:    int64(AccessTokenLifetime / time.Second),
-		SessionID:    sessionID,
-	}, nil
+	return TokenPair{AccessToken: access, RefreshToken: newRefresh, ExpiresIn: int64(AccessTokenLifetime / time.Second), SessionID: sessionID}, nil
 }
