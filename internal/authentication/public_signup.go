@@ -40,7 +40,7 @@ type PublicSignupWrite struct {
 
 type PublicSignupPersistenceResult struct {
 	Replay      bool
-	ShouldSend bool
+	ShouldSend  bool
 	Destination string
 	ExpiresAt   time.Time
 }
