@@ -57,6 +57,12 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: OpenAPI contract validation
+        run: go test ./api/openapi
+
+      - name: Go SDK tests
+        run: go test ./sdk/go
+
       - name: Test
         run: go test ./...
 
