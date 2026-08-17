@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
+	"github.com/DoMinhHHung/beebox/internal/audit"
 	"github.com/DoMinhHHung/beebox/internal/authentication"
 )
 
@@ -38,32 +40,55 @@ func (f fakeOrigins) AnyAllowedOrigin(_ context.Context, origin string) (bool, e
 }
 
 type fakeSignup struct {
-	appID    applicationinstance.InternalID
-	email    string
-	password string
-	key      string
-	err      error
+	appID       applicationinstance.InternalID
+	email       string
+	password    string
+	key         string
+	correlation audit.CorrelationID
+	err         error
 }
 
-func (f *fakeSignup) SignUp(_ context.Context, appID applicationinstance.InternalID, email, password, key string) error {
-	f.appID, f.email, f.password, f.key = appID, email, password, key
+func (f *fakeSignup) SignUpWithCorrelation(
+	_ context.Context,
+	appID applicationinstance.InternalID,
+	email string,
+	password string,
+	key string,
+	correlation audit.CorrelationID,
+) error {
+	f.appID, f.email, f.password, f.key, f.correlation = appID, email, password, key, correlation
 	return f.err
 }
 
 type fakeVerification struct {
-	requestErr error
-	confirmErr error
+	requestCorrelation audit.CorrelationID
+	confirmCorrelation audit.CorrelationID
+	requestErr          error
+	confirmErr          error
 }
 
-func (f fakeVerification) Request(context.Context, applicationinstance.InternalID, string) error {
+func (f *fakeVerification) RequestWithCorrelation(
+	_ context.Context,
+	_ applicationinstance.InternalID,
+	_ string,
+	correlation audit.CorrelationID,
+) error {
+	f.requestCorrelation = correlation
 	return f.requestErr
 }
 
-func (f fakeVerification) Confirm(context.Context, applicationinstance.InternalID, string, string) error {
+func (f *fakeVerification) ConfirmWithCorrelation(
+	_ context.Context,
+	_ applicationinstance.InternalID,
+	_ string,
+	_ string,
+	correlation audit.CorrelationID,
+) error {
+	f.confirmCorrelation = correlation
 	return f.confirmErr
 }
 
-func TestSignUpBoundaryScopesApplicationOriginAndIdempotency(t *testing.T) {
+func TestSignUpBoundaryScopesApplicationOriginIdempotencyAndCorrelation(t *testing.T) {
 	appID := applicationinstance.InternalID(42)
 	signup := &fakeSignup{}
 	handler := New(
@@ -71,7 +96,7 @@ func TestSignUpBoundaryScopesApplicationOriginAndIdempotency(t *testing.T) {
 		fakeApps{key: "bb_pk_test", app: applicationinstance.Instance{InternalID: appID}},
 		fakeOrigins{appID: appID, origin: "https://app.example"},
 		signup,
-		fakeVerification{},
+		&fakeVerification{},
 	)
 	req := httptest.NewRequest(http.MethodPost, "/v1/sign-ups", strings.NewReader(`{"email":"user@example.com","password":"correct horse battery staple"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -86,6 +111,12 @@ func TestSignUpBoundaryScopesApplicationOriginAndIdempotency(t *testing.T) {
 	if signup.appID != appID || signup.key != "signup-1" {
 		t.Fatalf("signup scope/key = %d/%q", signup.appID, signup.key)
 	}
+	if signup.correlation == (audit.CorrelationID{}) {
+		t.Fatal("signup did not receive request correlation")
+	}
+	if got, want := response.Header().Get(RequestIDHeader), hex.EncodeToString(signup.correlation[:]); got != want {
+		t.Fatalf("request ID = %q, want correlation %q", got, want)
+	}
 	if response.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal("auth response omitted no-store")
 	}
@@ -97,6 +128,42 @@ func TestSignUpBoundaryScopesApplicationOriginAndIdempotency(t *testing.T) {
 	}
 }
 
+func TestVerificationBoundariesReceiveRequestCorrelation(t *testing.T) {
+	appID := applicationinstance.InternalID(42)
+	verification := &fakeVerification{}
+	handler := New(
+		http.NotFoundHandler(),
+		fakeApps{key: "key", app: applicationinstance.Instance{InternalID: appID}},
+		fakeOrigins{appID: appID},
+		&fakeSignup{},
+		verification,
+	)
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/email-verifications", strings.NewReader(`{"email":"user@example.com"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(PublishableKeyHeader, "key")
+	requestResponse := httptest.NewRecorder()
+	handler.ServeHTTP(requestResponse, request)
+	if requestResponse.Code != http.StatusAccepted {
+		t.Fatalf("verification request status = %d body=%s", requestResponse.Code, requestResponse.Body.String())
+	}
+	if got, want := requestResponse.Header().Get(RequestIDHeader), hex.EncodeToString(verification.requestCorrelation[:]); got != want {
+		t.Fatalf("verification request ID = %q, want correlation %q", got, want)
+	}
+
+	confirm := httptest.NewRequest(http.MethodPost, "/v1/email-verifications/confirm", strings.NewReader(`{"email":"user@example.com","code":"123456"}`))
+	confirm.Header.Set("Content-Type", "application/json")
+	confirm.Header.Set(PublishableKeyHeader, "key")
+	confirmResponse := httptest.NewRecorder()
+	handler.ServeHTTP(confirmResponse, confirm)
+	if confirmResponse.Code != http.StatusOK {
+		t.Fatalf("verification confirm status = %d body=%s", confirmResponse.Code, confirmResponse.Body.String())
+	}
+	if got, want := confirmResponse.Header().Get(RequestIDHeader), hex.EncodeToString(verification.confirmCorrelation[:]); got != want {
+		t.Fatalf("verification confirm ID = %q, want correlation %q", got, want)
+	}
+}
+
 func TestSignUpRejectsForeignOriginAndUnknownJSONField(t *testing.T) {
 	appID := applicationinstance.InternalID(42)
 	handler := New(
@@ -104,7 +171,7 @@ func TestSignUpRejectsForeignOriginAndUnknownJSONField(t *testing.T) {
 		fakeApps{key: "key", app: applicationinstance.Instance{InternalID: appID}},
 		fakeOrigins{appID: appID, origin: "https://good.example"},
 		&fakeSignup{},
-		fakeVerification{},
+		&fakeVerification{},
 	)
 	foreign := httptest.NewRequest(http.MethodPost, "/v1/sign-ups", strings.NewReader(`{"email":"a@example.com","password":"correct horse battery staple"}`))
 	foreign.Header.Set("Content-Type", "application/json")
@@ -145,7 +212,7 @@ func TestSignUpMapsSecurityErrorsWithoutProviderDetails(t *testing.T) {
 			fakeApps{key: "key", app: applicationinstance.Instance{InternalID: appID}},
 			fakeOrigins{appID: appID},
 			signup,
-			fakeVerification{},
+			&fakeVerification{},
 		)
 		req := httptest.NewRequest(http.MethodPost, "/v1/sign-ups", strings.NewReader(`{"email":"a@example.com","password":"correct horse battery staple"}`))
 		req.Header.Set("Content-Type", "application/json")
@@ -169,7 +236,7 @@ func TestPreflightRequiresStoredExactOrigin(t *testing.T) {
 		fakeApps{},
 		fakeOrigins{appID: appID, origin: "https://app.example"},
 		&fakeSignup{},
-		fakeVerification{},
+		&fakeVerification{},
 	)
 	req := httptest.NewRequest(http.MethodOptions, "/v1/sign-ups", nil)
 	req.Header.Set("Origin", "https://app.example")
