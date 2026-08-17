@@ -34,8 +34,7 @@ type PublicSignupWrite struct {
 	IdempotencyKeyHash    [32]byte
 	RequestFingerprint    [32]byte
 	IdentifierFingerprint [32]byte
-	RegistrationAuditID   audit.CorrelationID
-	VerificationAuditID   audit.CorrelationID
+	CorrelationID         audit.CorrelationID
 }
 
 type PublicSignupPersistenceResult struct {
@@ -65,11 +64,29 @@ func (s *PublicSignupService) SignUp(
 	rawPassword string,
 	idempotencyKey string,
 ) error {
+	correlationID, err := audit.NewCorrelationID()
+	if err != nil {
+		return ErrPublicSignupPersistence
+	}
+	return s.SignUpWithCorrelation(ctx, applicationInstanceID, rawEmail, rawPassword, idempotencyKey, correlationID)
+}
+
+func (s *PublicSignupService) SignUpWithCorrelation(
+	ctx context.Context,
+	applicationInstanceID applicationinstance.InternalID,
+	rawEmail string,
+	rawPassword string,
+	idempotencyKey string,
+	correlationID audit.CorrelationID,
+) error {
 	if !applicationInstanceID.Valid() {
 		return ErrInvalidApplicationInstanceScope
 	}
 	if len(idempotencyKey) == 0 || len(idempotencyKey) > 200 {
 		return ErrPublicIdempotencyKey
+	}
+	if correlationID == (audit.CorrelationID{}) {
+		return ErrPublicSignupPersistence
 	}
 	if s == nil || s.persistence == nil {
 		return ErrPublicSignupPersistence
@@ -113,14 +130,6 @@ func (s *PublicSignupService) SignUp(
 	if err != nil {
 		return err
 	}
-	registrationAuditID, err := audit.NewCorrelationID()
-	if err != nil {
-		return ErrPublicSignupPersistence
-	}
-	verificationAuditID, err := audit.NewCorrelationID()
-	if err != nil {
-		return ErrPublicSignupPersistence
-	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -133,8 +142,7 @@ func (s *PublicSignupService) SignUp(
 		IdempotencyKeyHash:    keyHash,
 		RequestFingerprint:    requestFingerprint,
 		IdentifierFingerprint: identifierFingerprint,
-		RegistrationAuditID:   registrationAuditID,
-		VerificationAuditID:   verificationAuditID,
+		CorrelationID:         correlationID,
 	})
 	if err != nil {
 		return err
