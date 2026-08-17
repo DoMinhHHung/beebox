@@ -60,7 +60,9 @@ func (s *Store) CreateSession(ctx context.Context, appID applicationinstance.Int
 	db := s.pool.OpenSQLDB()
 	defer db.Close()
 	tx, err := db.BeginTx(ctx, nil)
-	if err != nil { return classify(ctx, err) }
+	if err != nil {
+		return classify(ctx, err)
+	}
 	defer func() { _ = tx.Rollback() }()
 	var sessionID int64
 	if err := tx.QueryRowContext(ctx, `
@@ -71,8 +73,12 @@ func (s *Store) CreateSession(ctx context.Context, appID applicationinstance.Int
 	if _, err := tx.ExecContext(ctx, `INSERT INTO session_refresh_credentials (session_id, verifier_hash) VALUES ($1,$2)`, sessionID, refreshHash[:]); err != nil {
 		return classify(ctx, err)
 	}
-	if err := insertAudit(ctx, tx, appID, userID, "authentication.session.create", correlationID); err != nil { return err }
-	if err := tx.Commit(); err != nil { return classify(ctx, err) }
+	if err := insertAudit(ctx, tx, appID, userID, "authentication.session.create", correlationID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return classify(ctx, err)
+	}
 	return nil
 }
 
@@ -83,7 +89,9 @@ func (s *Store) RotateRefresh(ctx context.Context, appID applicationinstance.Int
 	db := s.pool.OpenSQLDB()
 	defer db.Close()
 	tx, err := db.BeginTx(ctx, nil)
-	if err != nil { return session.CredentialRecord{}, "", classify(ctx, err) }
+	if err != nil {
+		return session.CredentialRecord{}, "", classify(ctx, err)
+	}
 	defer func() { _ = tx.Rollback() }()
 
 	var credentialID, sessionInternalID, userID int64
@@ -102,25 +110,51 @@ func (s *Store) RotateRefresh(ctx context.Context, appID applicationinstance.Int
 		&credentialID, &sessionInternalID, &userID, &consumedAt, &revokedAt, &expiresAt, &idleExpiresAt,
 		&sessionPublicID, &userPublicID, &appPublicID,
 	)
-	if errors.Is(err, sql.ErrNoRows) { return session.CredentialRecord{}, "", session.ErrRefreshInvalid }
-	if err != nil { return session.CredentialRecord{}, "", classify(ctx, err) }
+	if errors.Is(err, sql.ErrNoRows) {
+		return session.CredentialRecord{}, "", session.ErrRefreshInvalid
+	}
+	if err != nil {
+		return session.CredentialRecord{}, "", classify(ctx, err)
+	}
 	uid := identity.InternalID(userID)
 	if consumedAt.Valid {
-		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET revoked_at = COALESCE(revoked_at,$2) WHERE id = $1`, sessionInternalID, now); err != nil { return session.CredentialRecord{}, "", classify(ctx, err) }
-		if err := insertAudit(ctx, tx, appID, uid, "authentication.session.refresh_reuse", correlationID); err != nil { return session.CredentialRecord{}, "", err }
-		if err := tx.Commit(); err != nil { return session.CredentialRecord{}, "", classify(ctx, err) }
+		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET revoked_at = COALESCE(revoked_at,$2) WHERE id = $1`, sessionInternalID, now); err != nil {
+			return session.CredentialRecord{}, "", classify(ctx, err)
+		}
+		if err := insertAudit(ctx, tx, appID, uid, "authentication.session.refresh_reuse", correlationID); err != nil {
+			return session.CredentialRecord{}, "", err
+		}
+		if err := tx.Commit(); err != nil {
+			return session.CredentialRecord{}, "", classify(ctx, err)
+		}
 		return session.CredentialRecord{}, "", session.ErrRefreshReused
 	}
 	if revokedAt.Valid || !expiresAt.After(now) || !idleExpiresAt.After(now) {
 		return session.CredentialRecord{}, "", session.ErrRefreshInvalid
 	}
-	if requestedIdleExpiry.After(expiresAt) { requestedIdleExpiry = expiresAt }
-	if _, err := tx.ExecContext(ctx, `UPDATE session_refresh_credentials SET consumed_at = $2 WHERE id = $1 AND consumed_at IS NULL`, credentialID, now); err != nil { return session.CredentialRecord{}, "", classify(ctx, err) }
-	if _, err := tx.ExecContext(ctx, `INSERT INTO session_refresh_credentials (session_id, verifier_hash) VALUES ($1,$2)`, sessionInternalID, newHash[:]); err != nil { return session.CredentialRecord{}, "", classify(ctx, err) }
-	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET last_seen_at = $2, idle_expires_at = $3 WHERE id = $1`, sessionInternalID, now, requestedIdleExpiry); err != nil { return session.CredentialRecord{}, "", classify(ctx, err) }
-	if err := insertAudit(ctx, tx, appID, uid, "authentication.session.refresh", correlationID); err != nil { return session.CredentialRecord{}, "", err }
-	if err := tx.Commit(); err != nil { return session.CredentialRecord{}, "", classify(ctx, err) }
-	return session.CredentialRecord{UserInternalID: uid, UserPublicID: userPublicID, ApplicationPublicID: appPublicID}, sessionPublicID, nil
+	if requestedIdleExpiry.After(expiresAt) {
+		requestedIdleExpiry = expiresAt
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE session_refresh_credentials SET consumed_at = $2 WHERE id = $1 AND consumed_at IS NULL`, credentialID, now); err != nil {
+		return session.CredentialRecord{}, "", classify(ctx, err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO session_refresh_credentials (session_id, verifier_hash) VALUES ($1,$2)`, sessionInternalID, newHash[:]); err != nil {
+		return session.CredentialRecord{}, "", classify(ctx, err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET last_seen_at = $2, idle_expires_at = $3 WHERE id = $1`, sessionInternalID, now, requestedIdleExpiry); err != nil {
+		return session.CredentialRecord{}, "", classify(ctx, err)
+	}
+	if err := insertAudit(ctx, tx, appID, uid, "authentication.session.refresh", correlationID); err != nil {
+		return session.CredentialRecord{}, "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return session.CredentialRecord{}, "", classify(ctx, err)
+	}
+	return session.CredentialRecord{
+		UserInternalID:      uid,
+		UserPublicID:        userPublicID,
+		ApplicationPublicID: appPublicID,
+	}, sessionPublicID, nil
 }
 
 func insertAudit(ctx context.Context, tx *sql.Tx, appID applicationinstance.InternalID, userID identity.InternalID, action string, correlationID audit.CorrelationID) error {
@@ -131,7 +165,11 @@ func insertAudit(ctx context.Context, tx *sql.Tx, appID applicationinstance.Inte
 }
 
 func classify(ctx context.Context, err error) error {
-	if err == nil { return nil }
-	if ctxErr := ctx.Err(); ctxErr != nil { return ctxErr }
+	if err == nil {
+		return nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
 	return session.ErrSessionUnavailable
 }
