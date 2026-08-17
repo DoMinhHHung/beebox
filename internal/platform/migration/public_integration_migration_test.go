@@ -29,7 +29,10 @@ func TestMigrationEightBackfillsStablePublicIDs(t *testing.T) {
 	preEight := omitMigrationFS{
 		FS: omitMigrationFS{
 			FS: omitMigrationFS{
-				FS:   sources,
+				FS: omitMigrationFS{
+					FS:   sources,
+					omit: "00011_password_resets.sql",
+				},
 				omit: "00010_sessions.sql",
 			},
 			omit: "00009_public_auth_controls.sql",
