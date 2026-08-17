@@ -43,7 +43,7 @@ func TestBrowserSignInReturnsHostRefreshCookie(t *testing.T) {
 		sessions,
 		nil,
 	)
-	req := httptest.NewRequest(http.MethodPost, "/v1/sign-ins", strings.NewReader(`{"email":"user@example.com","password":"password"}`))
+	req := httptest.NewRequest(http.MethodPost, "/v1/sign-ins", strings.NewReader("{\"email\":\"user@example.com\",\"password\":\"password\"}"))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(PublishableKeyHeader, "key")
 	req.Header.Set("Origin", "https://app.example")
