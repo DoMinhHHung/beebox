@@ -13,6 +13,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
+	applicationpostgres "github.com/DoMinhHHung/beebox/internal/applicationinstance/postgres"
+	"github.com/DoMinhHHung/beebox/internal/authentication"
+	authpostgres "github.com/DoMinhHHung/beebox/internal/authentication/postgres"
+	"github.com/DoMinhHHung/beebox/internal/authentication/smtpdelivery"
+	identitypostgres "github.com/DoMinhHHung/beebox/internal/identity/postgres"
+	"github.com/DoMinhHHung/beebox/internal/httpapi"
 	"github.com/DoMinhHHung/beebox/internal/platform/config"
 	"github.com/DoMinhHHung/beebox/internal/platform/database"
 	"github.com/DoMinhHHung/beebox/internal/platform/httpserver"
@@ -41,6 +48,7 @@ type runtimeDependencies struct {
 	listen       func(string, string) (net.Listener, error)
 	serveHTTP    func(context.Context, *http.Server, net.Listener, time.Duration) error
 	migrate      func(context.Context, databasePool) error
+	buildHTTP    func(databasePool, config.LookupEnv, http.Handler) (http.Handler, error)
 }
 
 func main() {
@@ -66,7 +74,30 @@ func run(ctx context.Context, logger *slog.Logger, lookup config.LookupEnv, args
 		migrate: func(ctx context.Context, pool databasePool) error {
 			return migration.Up(ctx, pool.OpenSQLDB())
 		},
+		buildHTTP: buildProductHTTP,
 	}, args)
+}
+
+func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Handler) (http.Handler, error) {
+	concretePool, ok := pool.(*database.Pool)
+	if !ok {
+		return nil, errors.New("initialize product HTTP dependencies")
+	}
+	sender, err := smtpdelivery.FromLookup(smtpdelivery.LookupEnv(lookup))
+	if err != nil {
+		return nil, errors.New("load SMTP delivery configuration")
+	}
+	integrationStore := applicationpostgres.NewIntegrationStore(concretePool)
+	integrationService := applicationinstance.NewIntegrationService(integrationStore)
+	authStore := authpostgres.New(concretePool)
+	verificationCore := authentication.NewEmailVerificationService(authStore, sender)
+	verification := authentication.NewPublicVerificationService(
+		identitypostgres.New(concretePool),
+		authStore,
+		verificationCore,
+	)
+	signup := authentication.NewPublicSignupService(authStore, sender)
+	return httpapi.New(health, integrationService, integrationStore, signup, verification), nil
 }
 
 func runWithDependencies(ctx context.Context, logger *slog.Logger, lookup config.LookupEnv, dependencies runtimeDependencies, args []string) error {
@@ -108,12 +139,22 @@ func runServeMode(ctx context.Context, logger *slog.Logger, lookup config.Lookup
 		return errors.New("verify PostgreSQL connectivity")
 	}
 	cancelStartup()
+
+	health := httpserver.NewHandler(pool.Ping, cfg.DatabaseReadinessTimeout)
+	handler := health
+	if dependencies.buildHTTP != nil {
+		handler, err = dependencies.buildHTTP(pool, lookup, health)
+		if err != nil {
+			return err
+		}
+	}
+
 	listener, err := dependencies.listen("tcp", cfg.HTTPAddr)
 	if err != nil {
 		return fmt.Errorf("listen on %q: %w", cfg.HTTPAddr, err)
 	}
 	defer func() { _ = listener.Close() }()
-	server := httpserver.New(cfg.HTTPAddr, httpserver.NewHandler(pool.Ping, cfg.DatabaseReadinessTimeout))
+	server := httpserver.New(cfg.HTTPAddr, handler)
 	logger.Info("HTTP server starting", "address", listener.Addr().String())
 	if err := dependencies.serveHTTP(ctx, server, listener, cfg.ShutdownTimeout); err != nil {
 		return err
