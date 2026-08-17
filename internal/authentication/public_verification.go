@@ -7,14 +7,15 @@ import (
 	"time"
 
 	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
+	"github.com/DoMinhHHung/beebox/internal/audit"
 	"github.com/DoMinhHHung/beebox/internal/identity"
 )
 
 const (
-	PublicVerificationGlobalLimit      = 200
-	PublicVerificationGlobalWindow     = time.Minute
-	PublicVerificationIdentifierLimit  = 5
-	PublicVerificationIdentifierWindow = 15 * time.Minute
+	PublicVerificationGlobalLimit       = 200
+	PublicVerificationGlobalWindow      = time.Minute
+	PublicVerificationIdentifierLimit   = 5
+	PublicVerificationIdentifierWindow  = 15 * time.Minute
 )
 
 type PublicEmailIdentifierResolver interface {
@@ -39,12 +40,28 @@ func NewPublicVerificationService(
 	return &PublicVerificationService{resolver: resolver, limiter: limiter, verification: verification}
 }
 
-// Request emits only a generic success/failure category at higher public layers.
-// Identifier absence, verified state, cooldown, issue exhaustion, and provider
-// delivery ambiguity are intentionally collapsed to preserve account secrecy.
 func (s *PublicVerificationService) Request(ctx context.Context, appID applicationinstance.InternalID, rawEmail string) error {
+	correlationID, err := audit.NewCorrelationID()
+	if err != nil {
+		return ErrEmailVerificationPersistence
+	}
+	return s.RequestWithCorrelation(ctx, appID, rawEmail, correlationID)
+}
+
+// RequestWithCorrelation emits only a generic success/failure category at higher
+// public layers. Identifier absence, verified state, cooldown, issue exhaustion,
+// and provider delivery ambiguity are intentionally collapsed to preserve account secrecy.
+func (s *PublicVerificationService) RequestWithCorrelation(
+	ctx context.Context,
+	appID applicationinstance.InternalID,
+	rawEmail string,
+	correlationID audit.CorrelationID,
+) error {
 	if !appID.Valid() {
 		return ErrInvalidApplicationInstanceScope
+	}
+	if correlationID == (audit.CorrelationID{}) {
+		return ErrEmailVerificationPersistence
 	}
 	if s == nil || s.resolver == nil || s.limiter == nil || s.verification == nil {
 		return ErrEmailVerificationPersistence
@@ -70,7 +87,7 @@ func (s *PublicVerificationService) Request(ctx context.Context, appID applicati
 	if identifier.VerifiedAt != nil {
 		return nil
 	}
-	if err := s.verification.IssueEmailVerification(ctx, appID, identifier.InternalID); err != nil {
+	if err := s.verification.IssueEmailVerificationWithCorrelation(ctx, appID, identifier.InternalID, correlationID); err != nil {
 		switch {
 		case errors.Is(err, ErrEmailVerificationAlreadyCompleted),
 			errors.Is(err, ErrEmailVerificationResendCooldown),
@@ -85,8 +102,25 @@ func (s *PublicVerificationService) Request(ctx context.Context, appID applicati
 }
 
 func (s *PublicVerificationService) Confirm(ctx context.Context, appID applicationinstance.InternalID, rawEmail, code string) error {
+	correlationID, err := audit.NewCorrelationID()
+	if err != nil {
+		return ErrEmailVerificationPersistence
+	}
+	return s.ConfirmWithCorrelation(ctx, appID, rawEmail, code, correlationID)
+}
+
+func (s *PublicVerificationService) ConfirmWithCorrelation(
+	ctx context.Context,
+	appID applicationinstance.InternalID,
+	rawEmail string,
+	code string,
+	correlationID audit.CorrelationID,
+) error {
 	if !appID.Valid() {
 		return ErrInvalidApplicationInstanceScope
+	}
+	if correlationID == (audit.CorrelationID{}) {
+		return ErrEmailVerificationPersistence
 	}
 	if s == nil || s.resolver == nil || s.verification == nil {
 		return ErrEmailVerificationPersistence
@@ -98,6 +132,6 @@ func (s *PublicVerificationService) Confirm(ctx context.Context, appID applicati
 		}
 		return err
 	}
-	_, err = s.verification.VerifyEmailCode(ctx, appID, identifier.InternalID, code)
+	_, err = s.verification.VerifyEmailCodeWithCorrelation(ctx, appID, identifier.InternalID, code, correlationID)
 	return err
 }
