@@ -198,7 +198,7 @@ func TestStoreDatabaseFailureUsesStableSafeError(t *testing.T) {
 	}
 
 	db := pool.OpenSQLDB()
-	if _, err := db.ExecContext(ctx, "DROP TABLE users"); err != nil {
+	if _, err := db.ExecContext(ctx, "DROP TABLE users CASCADE"); err != nil {
 		db.Close()
 		t.Fatalf("drop users error = %v", err)
 	}
