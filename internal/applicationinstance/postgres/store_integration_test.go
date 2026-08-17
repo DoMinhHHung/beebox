@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -83,6 +84,59 @@ func TestStoreCreateAndResolveKeepRootScopesDistinct(t *testing.T) {
 	cancelNow()
 	if _, err := store.Resolve(cancelledCtx, instanceA.InternalID); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Resolve(cancelled) error = %v, want context.Canceled", err)
+	}
+}
+
+func TestStoreConcurrentCreateGetsDistinctDatabaseIdentities(t *testing.T) {
+	databaseURL := isolatedDatabaseURL(t, "beebox_application_instance_concurrent")
+	pool := openPool(t, databaseURL)
+
+	setupCtx, cancelSetup := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelSetup()
+	if err := migration.Up(setupCtx, pool.OpenSQLDB()); err != nil {
+		t.Fatalf("migration.Up() error = %v", err)
+	}
+
+	store := New(pool)
+	const creators = 8
+	ids := make(chan applicationinstance.InternalID, creators)
+	errs := make(chan error, creators)
+	var wg sync.WaitGroup
+
+	for range creators {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			instance, err := store.Create(ctx)
+			if err != nil {
+				errs <- err
+				return
+			}
+			ids <- instance.InternalID
+		}()
+	}
+
+	wg.Wait()
+	close(ids)
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent Create() error = %v", err)
+	}
+
+	seen := make(map[applicationinstance.InternalID]struct{}, creators)
+	for id := range ids {
+		if !id.Valid() {
+			t.Fatalf("concurrent Create() internal ID = %d, want positive", id)
+		}
+		if _, exists := seen[id]; exists {
+			t.Fatalf("duplicate database-generated internal ID = %d", id)
+		}
+		seen[id] = struct{}{}
+	}
+	if len(seen) != creators {
+		t.Fatalf("unique internal IDs = %d, want %d", len(seen), creators)
 	}
 }
 
