@@ -84,7 +84,10 @@ func persistRegistrationRows(
 			application_instance_id, user_id, email_address, normalized_email
 		 ) VALUES ($1, $2, $3, $4)
 		 RETURNING id, application_instance_id, user_id, email_address, normalized_email, verified_at, created_at`,
-		int64(write.ApplicationInstanceID), userID, write.Email.EmailAddress, write.Email.ComparisonKey,
+		int64(write.ApplicationInstanceID),
+		userID,
+		write.Email.EmailAddress,
+		write.Email.ComparisonKey,
 	).Scan(
 		&emailID,
 		&emailAppID,
@@ -99,14 +102,19 @@ func persistRegistrationRows(
 	result.EmailIdentifier.InternalID = identity.EmailIdentifierInternalID(emailID)
 	result.EmailIdentifier.ApplicationInstanceID = applicationinstance.InternalID(emailAppID)
 	result.EmailIdentifier.UserID = identity.InternalID(emailUserID)
-	result.EmailIdentifier.VerifiedAt = nullableTimeUTC(verifiedAt)
+	if verifiedAt.Valid {
+		verifiedUTC := verifiedAt.Time.UTC()
+		result.EmailIdentifier.VerifiedAt = &verifiedUTC
+	}
 	result.EmailIdentifier.CreatedAt = result.EmailIdentifier.CreatedAt.UTC()
 
 	if _, err := tx.ExecContext(
 		ctx,
 		`INSERT INTO password_credentials (application_instance_id, user_id, password_hash)
 		 VALUES ($1, $2, $3)`,
-		int64(write.ApplicationInstanceID), userID, write.PasswordHash.StorageEncoding(),
+		int64(write.ApplicationInstanceID),
+		userID,
+		write.PasswordHash.StorageEncoding(),
 	); err != nil {
 		return authentication.RegistrationResult{}, err
 	}
