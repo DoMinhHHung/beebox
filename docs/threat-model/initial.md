@@ -1,354 +1,287 @@
 # Initial BeeBox Threat Model
 
-> Status: repository-owned threat model for the architecture represented by this PR.
-> Current governance baseline: `Instruction.md`, `docs/contracts/conventions.md`, `docs/adr/0001-application-instance-root.md`, and `docs/adr/0002-email-identity-v1.md`.
-> Scope: current Go runtime, PostgreSQL lifecycle, explicit migration mode, application-scoped users/email/password credentials, transactional registration, internal audit persistence, and the internal email OTP ownership-verification lifecycle.
+> Status: repository-owned threat model for the architecture represented by this checkpoint.
+> Current governance baseline: `Instruction.md`, `docs/contracts/conventions.md`, accepted ADRs 0001/0002, and proposed `docs/adr/0003-phase1-public-auth-contract.md`.
+> Scope: current Go runtime, PostgreSQL lifecycle, explicit migration/operator modes, application-scoped identity persistence, transactional registration, internal email OTP ownership verification, typed public locators, application integration credentials, exact allowed origins, and local signing-key generation.
 
-## 1. Purpose and scope
+## 1. Purpose and decision state
 
-This document records controls actually implemented by the repository and the controls that remain required before internal identity operations become reachable product behavior.
+This document distinguishes controls actually implemented by the repository from controls still required before Phase 1 authentication becomes publicly reachable.
 
-It distinguishes:
+ADR 0001 keeps `application_instance` as the root isolation resource. ADR 0002 keeps email application-scoped and forbids automatic account linking from email equality. Email verification proves control of one stored address only; it is not authentication, MFA, session establishment, authorization, account linking, or account merging.
 
-1. **Implemented now** — present in code/schema/tests/CI.
-2. **Required invariant** — repository policy the introducing slice must satisfy.
-3. **Deferred capability control** — not meaningful until that capability exists, but mandatory once it does.
+ADR 0003 is **proposed while Checkpoint 1 is open**. Human squash-merge of the checkpoint constitutes acceptance. Until that acceptance is on `main`, BeeBox exposes no public product-authentication route that relies on the proposed public-ID, application-key, password, JWT, key-ring, refresh, or cookie semantics.
 
-ADR 0001 keeps `application_instance` as the BeeBox v1 root isolation resource. ADR 0002 keeps email application-scoped, unverified by default, and forbids automatic account linking from email equality. Email verification introduced here proves control of one stored email address only. It is **not authentication**, does not create a principal/session/token, is not MFA, and does not authorize linking or merging accounts.
+BeeBox remains one Go deployable modular monolith. PostgreSQL remains the correctness source of truth. No Redis, queue, outbox, distributed transaction, service extraction, OAuth/OIDC authorization server, or public product API is introduced by this checkpoint.
 
-This slice does not ratify public IDs, public password/OTP contracts, token/session trust boundaries, provider choice, public API compatibility, or future service ownership.
+## 2. Implemented architecture and persistence
 
-## 2. Current architecture and security posture
+Embedded forward migrations now contain:
 
-BeeBox remains one Go deployable. Serve mode exposes only health endpoints and never auto-migrates. `beebox migrate` explicitly applies embedded forward migrations.
+1. runtime baseline;
+2. `application_instances`;
+3. application-scoped `users`;
+4. scoped `email_identifiers`;
+5. scoped `password_credentials`;
+6. scoped `audit_events`;
+7. scoped `email_verification_challenges`;
+8. typed application/user public IDs plus application integration credentials and exact allowed origins.
 
-Embedded migrations now contain:
+Migration 00008 is additive. Existing application/user rows receive random UUIDv4-based public IDs and the columns become `NOT NULL`, unique, and format constrained. Defaults preserve compatibility with existing internal inserts. Internal BIGINT primary keys remain internal persistence identities.
 
-- version 1 runtime baseline;
-- version 2 `application_instances`;
-- version 3 application-scoped `users`;
-- version 4 application-scoped `email_identifiers` and scoped user referenced key;
-- version 5 application-scoped `password_credentials`;
-- version 6 application-scoped `audit_events`;
-- version 7 application-scoped `email_verification_challenges`, plus the scoped email-identifier key required by its composite foreign key.
+Current internal identity/authentication behavior retains:
 
-Current internal identity/authentication behavior includes:
+- scoped user/email/password persistence;
+- no-auto-link email semantics;
+- transactional email/password registration with required success audit;
+- six-digit cryptographically random email-verification codes stored only as dedicated Argon2id verifier hashes;
+- bounded verification challenge expiry, attempts, issue window/count, cooldown, generation rotation, consumption, replay protection, and resend-generation race protection;
+- challenge issuance audit committed before delivery;
+- verification denied/success audit inside the corresponding state transaction;
+- no concrete production email provider.
 
-- application-instance create/exact resolve;
-- application-scoped user create/resolve;
-- application-scoped email identifier create/resolve with deterministic ASCII normalization and no-auto-link conflict semantics;
-- Argon2id password hashing and scoped password credentials;
-- transactional `RegisterEmailPassword`, atomically creating user + unverified email + password credential + registration-success audit;
-- six-digit cryptographically random email verification codes stored only as dedicated Argon2id-derived verifier hashes;
-- bounded issue/resend challenge state with expiry, failed-attempt budget, issue window/count, cooldown and generation rotation;
-- issuance audit committed with challenge mutation before delivery;
-- an internal delivery port with no concrete production provider;
-- verify processing that performs expensive verifier work outside the final database transaction, then re-locks/revalidates current challenge generation/state;
-- denied verification audit for wrong/expired/attempt-exhausted operations reaching finalization;
-- atomic `email_identifiers.verified_at` transition + challenge consumption/verifier clearing + success audit;
-- replay and resend-generation race protection.
+Checkpoint 1 additionally implements:
 
-There is still no reachable/public signup or verification endpoint, production email provider, signin, public password policy, request/IP/account abuse layer, password reset/change, session/token behavior, public IDs, or account-linking lifecycle.
+- `app_<uuidv4>` application public locators;
+- `usr_<uuidv4>` user public locators;
+- `cred_<uuidv4>` application credential record locators;
+- non-secret `bb_pk_<uuidv4>` publishable application keys;
+- backend secret keys formatted `bb_sk_<credential-uuidv4>.<32-byte-base64url-secret>`;
+- SHA-256 verifier-at-rest for uniformly random 256-bit application secrets;
+- constant-time secret comparison followed by current persisted credential-state recheck;
+- scoped, atomic credential rotation and scoped revocation;
+- exact application allowed origins;
+- trusted operator commands for application bootstrap, origin addition, credential rotation/revocation, and local Ed25519 key generation;
+- proposed ADR 0003 covering later Phase 1 public password/token/session/cookie contracts.
+
+Serve mode still exposes only health endpoints.
 
 ## 3. Assets
 
-| Asset | Security property |
+| Asset | Required security property |
 | --- | --- |
-| Runtime availability | Bounded I/O and truthful health behavior. |
-| PostgreSQL state | Correct scoped relationships and atomic identity/security transitions. |
-| Migration history | Embedded forward-only ordered migrations; failed transactional migrations are not recorded. |
-| Application/user rows | Root and child identities remain explicitly application-scoped. |
-| Email identifiers | Per-application normalized uniqueness, same-app user ownership, explicit verification state, PII protection. |
-| Password credentials | One credential per scoped user; plaintext absent; same-app ownership enforced. |
-| Verification challenge | One current row per scoped email identifier with bounded generation/expiry/attempt/issue/consumption state. |
-| Raw verification code | Transient secret generated for delivery/verification only; never persisted, logged, traced, metered or audited. |
-| Verification code hash | Sensitive verifier material; persisted only as a strict internal Argon2id-derived encoding and cleared on consumption. |
-| Audit facts | Append-oriented correctness evidence for committed security actions; scoped, minimized and correlated. |
-| Email PII | Persisted for identity/delivery, but excluded from audit/stable errors/telemetry introduced here. |
-| Database/backups | Contain email PII, password hashes, OTP verifier hashes while active, challenge metadata and audit metadata. |
-| Internal IDs/correlation IDs | Storage/operation identifiers only; never public compatibility or authorization primitives. |
+| Application root | Every product/resource lookup remains tied to explicit trusted application scope. |
+| Public application/user/credential IDs | Stable opaque locators only; no tenant, role, permission, ownership, or authority encoding. |
+| Publishable key | Non-secret application-context selector only; must never imply backend/user/admin authority. |
+| Application secret | 32 random bytes, one-time plaintext output only, never persisted/logged/audited/traced/metered. |
+| Application secret verifier | SHA-256 digest of high-entropy random material; sensitive credential verifier state. |
+| Credential revocation/rotation state | Current persisted state must win over stale verification snapshots. |
+| Allowed origins | Exact application-scoped browser-origin allowlist; no wildcard authority. |
+| Signing private key | Local/configuration secret only; never stored in source or PostgreSQL for convenience. |
+| Email PII | Excluded from stable errors/audit/telemetry added here. |
+| Password/OTP material | Existing secret-handling guarantees remain unchanged. |
+| Audit facts | Append-oriented scoped evidence committed with security-sensitive credential/origin mutations. |
+| PostgreSQL/backups | Sensitive boundary containing PII and verifier material; operator access is privileged. |
 
-## 4. Actors and trust assumptions
+## 4. Actors and trust boundaries
 
-| Actor | Capability / trust assumption |
+| Actor | Trust meaning |
 | --- | --- |
-| Unauthenticated network client | Can reach health endpoints only; no product signup/verification route exists. |
-| Malicious external actor | Future enumeration, OTP guessing, resend abuse, provider abuse and credential attacks become applicable when public routes exist. |
-| Trusted internal caller | Supplies server-trusted application scope plus internal email-identifier identity to verification operations. |
-| Anonymous registration actor | Internal audit identity for unauthenticated registration; not an authenticated user. |
-| Anonymous email-verification actor | Internal audit identity for address-control challenge/verification; not an authenticated principal. |
-| Delivery adapter | External-I/O boundary that may observe destination + raw OTP + expiry. Only in-memory test fakes exist now. |
-| Operator/migration operator | Controls configuration/process execution and reviewed migration-capable DB access. |
-| PostgreSQL / backup storage | Source of truth and sensitive persistence boundary. |
-| CI | Executes synthetic unit and real PostgreSQL integration tests. |
+| Unauthenticated network client | Can reach health endpoints only; no public product-auth route exists. |
+| Publishable-key holder | Future application integration context only; not a backend or user principal. |
+| Backend secret-key holder | After verification, establishes backend application scope only; not a user identity. |
+| Trusted operator | May explicitly bootstrap applications, rotate/revoke credentials, configure origins, and generate local signing material. |
+| Anonymous registration/email-verification actors | Existing internal audit identities only; not authenticated users. |
+| PostgreSQL | Source of truth for application scope, credential verifier/revocation state, origins, identity state, and audit facts. |
+| CI | Runs synthetic tests and real PostgreSQL integration tests. |
 
-## 5. Trust boundaries and entry points
+### Operator process -> PostgreSQL
 
-### Network -> HTTP runtime
+Operator database commands load the existing migration-mode database configuration and execute under a bounded context. They never run migrations implicitly. The operator must apply reviewed migrations explicitly before using commands that depend on migration 00008.
 
-Current HTTP handlers remain health-only. They accept no signup, verification code, password, email identifier, application scope, token, cookie or product mutation.
+Application bootstrap creates a root and then initial credentials/origins using trusted process authority. Generated application secrets are written only to the explicit command output stream. Structured logs and stable errors do not include them.
 
-### Trusted server code -> verification issuance
+### Publishable key -> application context
 
-`IssueEmailVerification` accepts only trusted application scope plus an internal email-identifier ID. Arbitrary destination email is not accepted as the source of truth.
+A publishable key is stored directly because it is intentionally non-secret. Resolution joins the credential to its owning application and requires an unrevoked publishable credential. The result establishes only integration context. The key cannot be parsed or reused as a backend secret.
 
-The application flow:
+### Backend secret -> application scope
 
-1. validates scope and identifier shape;
-2. generates exactly six decimal digits using `crypto/rand` with unbiased integer generation;
-3. derives a dedicated `VerificationCodeHash` outside database I/O using the already reviewed Argon2id primitive;
-4. generates an internal cryptographically random audit correlation ID;
-5. re-checks cancellation;
-6. enters transactional persistence.
+A backend secret key contains a credential UUID locator plus 32 random secret bytes. Verification:
 
-The persistence transaction locks/resolves the actual scoped `email_identifiers` row, obtains its owner and stored destination, locks current challenge state, enforces issue window/cooldown/count rules, creates or rotates challenge generation/hash/expiry, and appends a `challenge_issued` audit fact. It commits before external delivery.
+1. validates the BeeBox-owned format;
+2. loads verifier material by credential locator;
+3. hashes the candidate secret with SHA-256;
+4. executes constant-time comparison, including a fixed-size dummy comparison path for load failure;
+5. rejects already-revoked state;
+6. performs a database-authoritative finalize step that requires the same verifier and `revoked_at IS NULL` before recording `last_used_at`;
+7. only then returns the owning internal application scope.
 
-### Committed issuance -> delivery port
+A revoke that races after the snapshot but before finalization prevents successful authentication. Credential locator possession alone is not authority.
 
-After challenge + issuance audit commit, the delivery port receives only destination, raw six-digit code and expiry. No production provider implementation is selected in this slice.
+### Credential rotation/revocation -> PostgreSQL
 
-Provider errors return a stable delivery failure but do not roll back or delete committed challenge/audit state. Delivery has ambiguous external success/failure semantics, so later provider failure cannot erase the security fact that a challenge was issued. No automatic retry, queue, outbox or worker is introduced.
+Rotation is explicitly scoped by trusted application ID + credential public ID + credential kind. One transaction locks the old scoped credential, rejects missing/revoked/wrong-scope state, inserts the new credential, appends its create audit, revokes the old credential, appends its revoke audit, then commits. Separate audit correlation IDs are used because current audit correlation IDs are unique per fact.
 
-### Trusted server code -> verification
+Direct revocation is also application-scoped and row-locked. Cross-application rotation/revocation cannot select the foreign credential.
 
-`VerifyEmailCode` accepts trusted application scope, scoped internal email-identifier ID and an exact six-digit candidate. Whitespace is not trimmed.
+### Allowed origin -> future browser trust
 
-Verification is deliberately split:
+Allowed origins are application-scoped exact HTTP/HTTPS origins. Canonicalization rejects userinfo, path other than `/`, query, fragment, unsupported schemes, surrounding whitespace, and wildcards. Host/scheme casing is canonicalized and explicit ports are retained. PostgreSQL enforces per-application uniqueness.
 
-1. load a scoped challenge snapshot outside a transaction;
-2. parse and verify its stored hash using constant-time comparison outside a long-held database transaction;
-3. generate correlation and re-check cancellation;
-4. enter finalization with the loaded generation + match result;
-5. lock the scoped email identifier then challenge in a consistent order;
-6. re-check generation, verified/consumed state, DB-authoritative expiry and failed-attempt budget before mutation.
+No current HTTP handler trusts or consumes these origins yet. Later browser/CORS/CSRF work must use the exact stored application origins rather than treating Origin parsing as authorization.
 
-If a resend rotated generation after the snapshot was loaded, finalization returns a stable stale-challenge error and does not increment attempts or verify against the new generation.
+## 5. Public-ID security properties
 
-### Verification finalization -> PostgreSQL
+Public IDs are random UUIDv4 bodies with BeeBox-owned type prefixes. Migration constraints enforce application/user format and uniqueness; runtime generators use `crypto/rand` and set UUIDv4 version/variant bits.
 
-For a wrong candidate, one transaction increments `failed_attempts`, appends a denied verify audit fact, commits, then returns mismatch.
+Security invariant:
 
-For an expired or already exhausted challenge reaching finalization, no verification transition occurs; a denied verify audit is appended and committed before the stable error is returned.
+- `app_`, `usr_`, `cred_`, and future `ses_` prefixes communicate resource category only;
+- IDs do not encode tenant, role, permission, organization, ownership, shard, or other authority;
+- parsing success never authenticates or authorizes;
+- internal persistence still scopes queries by trusted application context where applicable;
+- no public API currently returns these IDs.
 
-For a correct candidate, one transaction:
+The migration integration suite proves pre-00008 application/user rows receive valid IDs and those IDs remain unchanged on migration rerun.
 
-1. sets `email_identifiers.verified_at` using trusted DB time;
-2. sets `consumed_at` to the same trusted time;
-3. clears `code_hash`;
-4. appends exactly one successful verify audit fact;
-5. commits.
-
-Concurrent correct finalizations serialize through row locks. Exactly one may create the verification transition/success audit; later contenders observe already verified/consumed state.
-
-### Scoped relationships
-
-Challenge ownership is enforced by a composite foreign key from `(application_instance_id,email_identifier_id)` to `email_identifiers(application_instance_id,id)`. Every issue/load/finalize query includes both values. There is no global email-identifier-ID lookup.
-
-Audit subject references remain protected by scoped `(application_instance_id,user_id)` foreign keys.
-
-## 6. Existing controls verified now
-
-### Registration controls retained
-
-- registration remains one transaction for user + email + password + success audit;
-- same-app normalized email duplicates conflict without auto-link/adoption/merge;
-- cross-app same normalized email may coexist;
-- password hashing occurs outside the registration transaction;
-- no public signup/signin behavior is introduced by verification.
-
-### Verification-code secret handling
+## 6. Application credential controls
 
 Implemented:
 
-- exactly six ASCII decimal digits;
-- unbiased `crypto/rand.Int` generation over `[0, 1_000_000)` with leading-zero formatting;
-- dedicated `VerificationCodeHash` semantic type rather than `PasswordHash` exposure;
-- internal reuse of the reviewed Argon2id implementation: v19, time 3, memory 65536 KiB, parallelism 4, random 16-byte salt and 32-byte derived value;
-- strict existing envelope parsing before Argon work and constant-time derived comparison;
-- no plaintext OTP persistence;
-- verifier storage does not contain the plaintext code;
-- malformed candidate or stored verifier metadata fails with BeeBox-owned internal categories;
-- raw code crosses only the delivery port and verification call;
-- no code/hash/email is added to audit, stable errors, logs, metrics or traces.
+- publishable vs secret kinds constrained in PostgreSQL;
+- publishable rows cannot contain secret verifier material;
+- secret rows cannot contain publishable-key values and require exactly a 32-byte verifier digest;
+- secret plaintext is absent from PostgreSQL;
+- generated secrets use `crypto/rand` for 32 bytes;
+- SHA-256 is used only for already-uniform 256-bit application secrets, not passwords/OTP/reset codes;
+- constant-time verifier comparison;
+- current-state finalization prevents concurrent revoke from being ignored;
+- successful secret verification records `last_used_at`;
+- rotation/revocation is application scoped;
+- publishable credentials cannot authenticate through the backend-secret path;
+- credential create/revoke facts are transactionally audited without key material;
+- no credential mutation HTTP API exists.
 
-The six-digit format and internal policy values are implementation defaults, not a public compatibility contract.
+Residual risk: compromise of a plaintext backend secret grants its application-level backend authority until revocation. Future reachable backend APIs must enforce least-privilege route semantics and must never treat a secret key as a user principal.
 
-### Challenge lifecycle
+## 7. Signing-key preparation
 
-The current internal defaults are:
+Checkpoint 1 includes only a safe local Ed25519 key generator. It uses Go's standard Ed25519 implementation and cryptographic randomness, emitting a unique key ID plus base64url public/private material as explicit operator output.
 
-- code TTL: 10 minutes;
-- max failed attempts: 5 in the active issue window;
-- issue/resend window: 15 minutes;
-- max issues in a window: 3;
-- resend cooldown: 60 seconds.
+No JWT is issued or validated yet. No JWKS endpoint exists. No signing private key is persisted to PostgreSQL or source. Proposed ADR 0003 requires one active signer, retiring public verification keys, strict EdDSA, mandatory `kid`, bounded key-retention overlap, and startup failure for malformed token configuration when token capability is later enabled.
 
-Within one active issue window, resend increments generation and issue count, replaces code hash/expiry and **does not reset failed attempts**. Once the issue window has elapsed, a newly issued challenge may reset issue count and failed attempts for the new bounded window.
+## 8. Existing email-verification controls retained
 
-The challenge table enforces positive generation, bounded attempts/issues, one row per scoped identifier, scoped referential integrity, valid consumed/hash pairing and simple timestamp ordering. No `ON DELETE CASCADE` is used.
+The internal verification lifecycle remains unchanged by this checkpoint:
 
-### Replay and race controls
+- exactly six ASCII decimal digits from unbiased `crypto/rand` generation;
+- dedicated Argon2id verification-code hash;
+- 10-minute TTL;
+- five failed attempts per active issue window;
+- 15-minute issue window;
+- three issues per window;
+- 60-second resend cooldown;
+- generation rotation invalidates prior code state;
+- resend inside the same window does not reset failed attempts;
+- success atomically sets `verified_at`, consumes the challenge, clears verifier material, and appends success audit;
+- concurrent successful verification has one winner;
+- stale generation after resend cannot verify;
+- every lookup carries explicit application scope.
 
-- successful verification consumes the challenge and clears verifier material;
-- replay never returns success merely because the email is already verified;
-- concurrent successful finalization has one winner and one success audit transition;
-- resend rotates generation immediately;
-- stale generation finalization cannot verify after resend;
-- stale generation does not increment attempts against the newer challenge;
-- no mutex, Redis, distributed lock or global lookup is used.
+Email verification remains identity evidence only and creates no authenticated principal/session/token.
 
-### Audit correctness/minimization
+## 9. Audit and privacy
 
-Current email-verification audit semantics:
+Checkpoint 1 security-sensitive application-integration mutations use append-oriented audit facts:
 
-**Challenge issued**
-- actor: anonymous email verification;
-- subject: scoped owner user;
-- action: `authentication.email_verification.challenge_issued`;
-- resource: `email_identifier`;
-- outcome: `success`;
-- source: `internal_email_verification`.
+- `application.credential.created`;
+- `application.credential.revoked`;
+- `application.allowed_origin.added`.
 
-**Verify denied/success**
-- actor: anonymous email verification;
-- subject: scoped owner user;
-- action: `authentication.email_verification.verify`;
-- resource: `email_identifier`;
-- outcome: `denied` or `success`;
-- source: `internal_email_verification`.
+Actor is the trusted operator; source is the trusted operator CLI; resource category is credential or allowed origin; application scope and cryptographically random correlation remain mandatory.
 
-Issue/rotate mutation + issuance audit share a transaction. Failed-attempt increment + denied audit share a transaction. `verified_at` + challenge consumption + success audit share a transaction.
+Audit rows contain no publishable/secret key value, secret verifier, allowed-origin string payload, signing private key, email, password, OTP, or token. Existing audit storage is not claimed to be tamper-proof or compliance-certified.
 
-Audit records contain no email address, OTP, OTP hash, password or password hash. Delivery failure after commit does not delete the issuance fact.
+Stable application-integration errors do not include SQL, SQLSTATE, constraint names, provider/database topology, credentials, or secret material. Context cancellation/deadline remains causal where applicable.
 
-Audit behavior is append-oriented at the application layer and no audit update/delete API is introduced. This is **not** a claim of tamper-proof storage or compliance-grade operational immutability.
+## 10. Migration and concurrency controls
 
-### Migration integrity
+Migration 00008 is forward-only and does not modify migrations 00001–00007. Normal applied versions are now 1 through 8. Synthetic transactional failure evidence moves to version 9.
 
-- migrations remain embedded, Up-only and transactional under existing runner defaults;
-- merged migrations 1-6 remain immutable;
-- migration 7 is additive and contains no Down, ENVSUB, NO TRANSACTION, destructive rewrite, hosted backfill or cascade deletion;
-- exact normal migration state is versions 1/2/3/4/5/6/7;
-- exact tables are `application_instances`, `audit_events`, `email_identifiers`, `email_verification_challenges`, `goose_db_version`, `password_credentials`, and `users`;
-- synthetic transactional failure is version 8;
-- rerun idempotency, advisory locking, cancellation, concurrent migration convergence and failed-version non-recording remain tested.
+The existing migration guarantees remain required and tested:
 
-## 7. Threat analysis
+- embedded ordered sources;
+- first apply;
+- rerun idempotency;
+- concurrent runner convergence under the same-session advisory lock;
+- cancellation while waiting for the migration lock;
+- transactional rollback;
+- failed synthetic version is not recorded;
+- serve mode never auto-migrates.
 
-| Threat | Implemented mitigation | Residual / required future control |
+Credential correctness uses PostgreSQL row locks/transactions and constraints rather than Redis or process mutexes. Cross-application credential tests prove app A cannot rotate/revoke an app B credential.
+
+## 11. Reachability boundary and deferred Phase 1 work
+
+Current HTTP surface remains health-only. Checkpoint 1 does **not** implement:
+
+- `/v1` product routes;
+- public signup or email-verification endpoints;
+- request idempotency/rate limits;
+- production SMTP delivery;
+- public password policy enforcement;
+- signin;
+- session persistence;
+- JWT issuance/validation;
+- JWKS;
+- refresh tokens;
+- browser auth cookies/CORS credential flow;
+- password reset/recovery;
+- OpenAPI public auth contract;
+- Go SDK;
+- auth metrics or final E2E setup.
+
+Those capabilities must be introduced by later Phase 1 checkpoints after ADR 0003 is Human-accepted on `main`.
+
+## 12. Residual threats and future controls
+
+| Threat | Current state | Required later control |
 | --- | --- | --- |
-| Partial registration | One transaction spans user/email/password/audit. | Reachable signup still needs public idempotency/abuse contracts. |
-| Duplicate-email account takeover | Same-app registration conflicts; ADR 0002 forbids automatic adoption/linking. | Explicit linking requires separately reviewed verified-identity semantics. |
-| OTP plaintext leakage | Code is transient, never persisted/audited/logged by this core, and only crosses the delivery port. | Production provider, handler, telemetry and support tooling must preserve the same boundary. |
-| OTP hash leakage | Dedicated sensitive verifier value is persisted only while active and cleared on consume. | DB/backups/support access remain sensitive; retention/backup policy is operational work. |
-| OTP offline guessing after DB compromise | Argon2id with random salt raises per-guess cost despite small six-digit space. | A six-digit OTP remains low entropy; short expiry, attempt controls and storage/access hardening remain essential. |
-| Online OTP brute force | Five-failure challenge budget is DB-enforced in the lifecycle. | Public endpoints additionally require request/IP/account/device abuse controls and fairness limits. |
-| Resend abuse / attempt-budget bypass | Cooldown, issue-window count and failed-attempt preservation across same-window resend. | Public layer must add request-level abuse/rate controls and provider-cost protection. |
-| Old code accepted after resend | Generation + hash rotation; finalizer requires the same generation loaded before Argon verification. | Provider UI must communicate replacement semantics without exposing sensitive state. |
-| Verification replay | Successful transition consumes challenge, clears hash and rejects replay/already-verified state. | Future public errors must remain anti-enumerating where appropriate. |
-| Concurrent double verification | Scoped row locks + final state recheck permit one transition/success audit. | None within this single-DB boundary; future service extraction would require a new ADR/contract. |
-| Expired code verification | Finalizer uses trusted DB time and refuses transition; denied audit is recorded. | Public UX may expose safe retry/resend guidance without confirming unrelated account state. |
-| Cross-application challenge takeover | Every query includes trusted app scope; composite challenge FK rejects foreign-app email IDs. | Future handler must derive scope from trusted server context rather than client authority. |
-| Cross-application audit subject | Existing scoped audit-user FK rejects foreign-app subjects. | Future audit resource references must preserve scope. |
-| Provider delivery ambiguity | DB challenge/audit commit precedes provider I/O; provider failure cannot erase issuance fact. | Production adapter must define timeouts, safe retries/idempotency where applicable and observability/redaction. |
-| Email verification treated as authentication | Code changes only `verified_at`; no principal/session/token/link/role is created. | Future signin/MFA/account-linking features must separately define authority and trust. |
-| Audit loss during mutation | Required audit fact lives in the same DB transaction as each security-state mutation. | Operational DB tamper resistance/retention/export are separate future work. |
-| PII/secret leakage | Audit/stable errors omit email/code/hash and no telemetry fields are added. | Reachable APIs/providers/support tools must preserve minimization. |
-| Argon2 resource exhaustion | Expensive hash work happens outside DB transactions; code input is fixed-length. | Reachable handlers require concurrency/request budgets so attackers cannot trigger unbounded Argon2 work. |
-| Email enumeration | No public verification/signup/signin route exists. | Reachable contracts must map internal state to anti-enumerating public behavior. |
+| Public-ID guessing/confusion | IDs are random/typed and carry no authority; no product API exposes them yet. | Every public lookup must still derive trusted application scope and perform authorization. |
+| Publishable-key theft | Key is intentionally non-secret and grants context only. | Public endpoints must constrain operations and add request abuse/idempotency controls. |
+| Backend secret theft | High-entropy secret with hash-at-rest and revocation. | Secret storage/rotation operational guidance and least-privilege backend APIs. |
+| Stale secret auth during revoke | Final database recheck fails a concurrent revoke. | Preserve the same state-authoritative pattern in future backend middleware. |
+| Cross-app credential mutation | Scoped row selection rejects foreign credential. | All future management/backend operations must retain application scope. |
+| Origin confusion | Canonical exact origins are stored; no browser auth exists yet. | Exact CORS/CSRF validation for credentialed cookie requests. |
+| Private signing-key exposure | Only explicit local generation exists; no DB/source persistence. | Secure runtime secret/config distribution and key-ring validation. |
+| JWT revocation gap | JWT not implemented. | Proposed 5-minute lifetime, max 30-second skew, DB session check for BeeBox immediate revoke paths, explicit offline limitation. |
+| Refresh theft/replay | Refresh not implemented. | One-time rotation; consumed-token reuse revokes session; no blind retry. |
+| Signup/signin enumeration | Not publicly reachable. | Anti-enumerating public errors, dummy password verification, rate limits. |
+| OTP/provider abuse | Verification is internal; no production provider. | Request-level limits, exact application scope/origin, bounded SMTP adapter. |
 
-## 8. Security meaning of verified email
+## 13. Review triggers
 
-A successful internal verification performs only this identity transition:
+Review this model whenever a change introduces or changes:
 
-`email_identifiers.verified_at: NULL -> trusted timestamp`
-
-It does not:
-
-- authenticate the user;
-- create an authenticated principal;
-- create a session, cookie, JWT, refresh token or bearer token;
-- act as MFA or privilege elevation;
-- authorize application/organization access;
-- authorize account linking or merging;
-- change roles or permissions.
-
-Possession of a valid email verification code is evidence of address control for that challenge only. Future account linking remains a distinct, separately reviewed product/security decision under ADR 0002.
-
-## 9. Reachability and provider boundary
-
-The verification lifecycle remains INTERNAL. No HTTP handler, `/v1` route, JSON verification contract, public application/user/email/challenge ID, browser flow or SDK calls it.
-
-There is no production email provider adapter. The delivery interface exists because email delivery is a real external-I/O boundary; tests use in-memory recording/failing fakes only. SMTP, SES, Resend, SendGrid, Postmark, Mailgun and other providers are not selected.
-
-The first reachable verification slice must still define:
-
-- trusted server-selected application scope;
-- versioned public request/response and identifier contracts;
-- anti-enumerating safe errors;
-- request idempotency/retry behavior where applicable;
-- request/IP/account/device abuse controls in addition to challenge-local limits;
-- provider timeout/retry/idempotency and operational failure behavior;
-- observability with strict OTP/email redaction;
-- public resend/retry semantics without weakening generation/attempt rules.
-
-## 10. Data lifecycle and residual risks
-
-1. Registration creates durable application-scoped user, email, password credential and audit records.
-2. Verification challenge rows are durable while present; this slice defines lifecycle transitions but no deletion/retention job.
-3. Active challenge verifier hashes are sensitive despite Argon2id because six-digit codes have a small candidate space.
-4. Successful verification clears the active verifier hash but leaves consumed challenge metadata and audit facts.
-5. Backups may retain older verifier hashes and contain email PII/password hashes/audit metadata; backup access is security-sensitive.
-6. No user/email/challenge/audit deletion, anonymization, export or retention lifecycle is implemented.
-7. Future user deletion must define challenge and audit retention/referential behavior rather than relying on cascade deletion.
-8. Public failed/abusive request auditing beyond the challenge-local denied facts remains a future reachable-handler policy.
-9. No GDPR or other compliance claim is made.
-
-## 11. Deferred security lifecycles
-
-Still not implemented:
-
-- production email provider adapter;
-- reachable/public signup or verification endpoint;
-- public API/resource identifiers;
-- email/password signin and online credential lookup;
-- public password policy and breach screening;
-- request/IP/account/device CAPTCHA/rate/abuse controls;
-- password change/reset/recovery/history;
-- sessions/tokens/cookies/JWT/JWKS and revocation behavior;
-- account linking/merging;
-- audit query/export/search/pagination/retention APIs or delivery infrastructure.
-
-## 12. Review/update triggers
-
-Review this model when a change introduces or changes:
-
-- a production email provider or delivery retry mechanism;
-- reachable/public signup or email verification;
+- ADR 0003 acceptance or amendment;
+- public `/v1` reachability;
+- publishable/secret credential trust semantics;
+- application/user/session public ID format;
+- password policy;
+- SMTP/provider delivery;
 - signin/password verification;
-- password policy, breach screening, request-level abuse/rate/lockout;
-- password change/reset/recovery;
-- sessions/tokens/cookies;
+- sessions/refresh/cookies;
+- JWT/JWKS/signing-key configuration;
+- password reset/recovery;
 - account linking/merging;
-- audit query/export/retention or external event delivery;
-- public IDs/API contracts;
-- identity/audit logging/tracing/metrics;
-- challenge/user/email deletion/retention/backup/restore behavior;
-- migration/schema ownership or new service boundaries;
-- production transport/storage/secret assumptions.
+- authorization/organizations;
+- audit query/export/retention;
+- telemetry containing identity/security metadata;
+- migration/schema ownership or service boundaries.
 
-## 13. Evidence map
+## 14. Evidence map
 
-- `Instruction.md` — architecture, security, tenant/data, testing and audit invariants.
-- `docs/contracts/conventions.md` — required audit fields, audit correctness boundary, safe errors, tenancy and idempotency rules.
-- `docs/adr/0001-application-instance-root.md` — v1 root isolation.
-- `docs/adr/0002-email-identity-v1.md` — email scope/no-auto-link/verification-state semantics.
-- `internal/authentication/verification_code.go` / `verification_code_test.go` — cryptographic six-digit generation, dedicated Argon2id-derived verifier semantics, strict validation and constant-time verification path.
-- `internal/authentication/email_verification.go` / `email_verification_test.go` — issue/verify orchestration, real delivery port, pre-transaction hashing/verification, stable internal errors and cancellation.
-- `internal/authentication/postgres/email_verification_store.go` — scoped issue/rotate/audit transaction, challenge snapshot, generation-safe finalization, failed-attempt/expiry/replay/success semantics.
-- `internal/authentication/postgres/email_verification_store_integration_test.go` — real PostgreSQL issue/resend/delivery-failure/expiry/attempt/replay/generation/concurrency/cross-app/cancellation evidence.
-- `internal/audit/event.go` — internal registration and email-verification audit semantics/correlation generation.
-- `internal/platform/migration/sql/00007_email_verification_challenges.sql` — bounded scoped challenge schema and composite email-identifier FK.
-- `internal/platform/migration/*` — exact migration state and migration-safety evidence.
-- `.github/workflows/ci.yml` — formatting, vet, unit, PostgreSQL integration and race checks.
-- `README.md` / `CONTRIBUTING.md` — current internal-only scope and repository-native verification commands.
+- `docs/adr/0001-application-instance-root.md` — root scope.
+- `docs/adr/0002-email-identity-v1.md` — app-scoped email/no-auto-link.
+- `docs/adr/0003-phase1-public-auth-contract.md` — proposed public trust/token/password/session contract.
+- `internal/platform/publicid/*` — typed cryptographically random UUIDv4 generation/validation.
+- `internal/platform/migration/sql/00008_phase1_public_integration.sql` — backfill/defaults/constraints, credential/origin tables.
+- `internal/platform/migration/public_integration_migration_test.go` — preexisting-row public-ID backfill and stability evidence.
+- `internal/applicationinstance/integration.go` — credential/origin semantics and secret verification orchestration.
+- `internal/applicationinstance/postgres/integration_store.go` — scoped transactional credential/origin persistence and audit.
+- `internal/applicationinstance/postgres/integration_store_integration_test.go` — secret-at-rest, publishable authority separation, rotation/revoke, cross-app and audit evidence.
+- `internal/platform/signingkey/*` — local Ed25519 generation/validation.
+- `cmd/beebox/operator.go` — trusted bounded operator entry points.
+- `internal/authentication/*` — retained registration/email-verification security lifecycle.
+- `.github/workflows/ci.yml` — formatting, vet, unit, real PostgreSQL integration and race gates.
