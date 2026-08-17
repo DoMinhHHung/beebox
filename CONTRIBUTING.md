@@ -44,7 +44,7 @@ go test -race ./...
 Run the current PostgreSQL integration suite with a disposable test database:
 
 ```bash
-BEEBOX_TEST_DATABASE_URL='postgres://beebox:test-password@127.0.0.1:5432/beebox_test?sslmode=disable' go test -tags=integration ./internal/platform/database ./internal/platform/migration
+BEEBOX_TEST_DATABASE_URL='postgres://beebox:test-password@127.0.0.1:5432/beebox_test?sslmode=disable' go test -tags=integration ./internal/platform/database ./internal/platform/migration ./internal/applicationinstance/postgres
 ```
 
 The URI above is a fake/local test placeholder. Never substitute a production credential into documentation, fixtures, issue text, or PR evidence.
