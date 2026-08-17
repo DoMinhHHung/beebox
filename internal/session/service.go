@@ -12,22 +12,22 @@ import (
 )
 
 const (
-	AbsoluteLifetime = 30 * 24 * time.Hour
+	AbsoluteLifetime   = 30 * 24 * time.Hour
 	InactivityLifetime = 7 * 24 * time.Hour
 )
 
 var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrSessionUnavailable = errors.New("session unavailable")
-	ErrRefreshInvalid = errors.New("invalid refresh credential")
-	ErrRefreshReused = errors.New("refresh credential reused")
+	ErrRefreshInvalid     = errors.New("invalid refresh credential")
+	ErrRefreshReused      = errors.New("refresh credential reused")
 )
 
 type CredentialRecord struct {
-	UserInternalID identity.InternalID
-	UserPublicID string
+	UserInternalID      identity.InternalID
+	UserPublicID        string
 	ApplicationPublicID string
-	PasswordHash authentication.PasswordHash
+	PasswordHash        authentication.PasswordHash
 }
 
 type CredentialLookup interface {
@@ -40,17 +40,17 @@ type Store interface {
 }
 
 type TokenPair struct {
-	AccessToken string
+	AccessToken  string
 	RefreshToken string
-	ExpiresIn int64
-	SessionID string
+	ExpiresIn    int64
+	SessionID    string
 }
 
 type Service struct {
 	credentials CredentialLookup
-	store Store
-	ring *KeyRing
-	now func() time.Time
+	store       Store
+	ring        *KeyRing
+	now         func() time.Time
 }
 
 func NewService(credentials CredentialLookup, store Store, ring *KeyRing) *Service {
@@ -94,7 +94,12 @@ func (s *Service) issueNewSession(ctx context.Context, appID applicationinstance
 	if err != nil {
 		return TokenPair{}, ErrSessionUnavailable
 	}
-	return TokenPair{AccessToken: access, RefreshToken: refresh, ExpiresIn: int64(AccessTokenLifetime / time.Second), SessionID: sessionID}, nil
+	return TokenPair{
+		AccessToken:  access,
+		RefreshToken: refresh,
+		ExpiresIn:    int64(AccessTokenLifetime / time.Second),
+		SessionID:    sessionID,
+	}, nil
 }
 
 func (s *Service) Refresh(ctx context.Context, appID applicationinstance.InternalID, refresh string, correlationID audit.CorrelationID) (TokenPair, error) {
@@ -115,5 +120,10 @@ func (s *Service) Refresh(ctx context.Context, appID applicationinstance.Interna
 	if err != nil {
 		return TokenPair{}, ErrSessionUnavailable
 	}
-	return TokenPair{AccessToken: access, RefreshToken: newRefresh, ExpiresIn: int64(AccessTokenLifetime / time.Second), SessionID: sessionID}, nil
+	return TokenPair{
+		AccessToken:  access,
+		RefreshToken: newRefresh,
+		ExpiresIn:    int64(AccessTokenLifetime / time.Second),
+		SessionID:    sessionID,
+	}, nil
 }
