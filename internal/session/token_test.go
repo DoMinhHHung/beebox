@@ -73,7 +73,7 @@ func TestAccessTokenFailsClosed(t *testing.T) {
 		t.Fatal("expired token accepted")
 	}
 	parts := strings.Split(token, ".")
-	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","kid":"key_active","typ":"JWT"}`))
+	header := base64.RawURLEncoding.EncodeToString([]byte("{\"alg\":\"HS256\",\"kid\":\"key_active\",\"typ\":\"JWT\"}"))
 	if _, err := ring.Verify(header+"."+parts[1]+"."+parts[2], app, now); err == nil {
 		t.Fatal("wrong algorithm accepted")
 	}
