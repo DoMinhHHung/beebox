@@ -19,6 +19,15 @@ type CredentialKind string
 const (
 	CredentialKindPublishable CredentialKind = "publishable"
 	CredentialKindSecret      CredentialKind = "secret"
+
+	AuditActorOperator = "trusted_operator"
+	AuditActionCredentialCreated = "application.credential.created"
+	AuditActionCredentialRevoked = "application.credential.revoked"
+	AuditActionOriginAdded = "application.allowed_origin.added"
+	AuditResourceCredential = "application_credential"
+	AuditResourceOrigin = "application_allowed_origin"
+	AuditOutcomeSuccess = "success"
+	AuditSourceOperator = "trusted_operator_cli"
 )
 
 var (
@@ -29,6 +38,8 @@ var (
 	ErrOriginConflict         = errors.New("application allowed origin conflict")
 	ErrIntegrationPersistence = errors.New("application integration persistence failure")
 )
+
+type CorrelationID [16]byte
 
 type CredentialPublicID string
 func (id CredentialPublicID) Valid() bool { return publicid.IsUUIDv4(string(id), "cred") }
@@ -44,11 +55,6 @@ type Credential struct {
 	LastUsedAt            *time.Time
 }
 
-type SecretCredential struct {
-	Credential Credential
-	SecretKey  string
-}
-
 type AllowedOrigin struct {
 	InternalID            int64
 	ApplicationInstanceID InternalID
@@ -57,11 +63,11 @@ type AllowedOrigin struct {
 }
 
 type IntegrationPersistence interface {
-	CreateCredential(context.Context, InternalID, CredentialKind, CredentialMaterial) (Credential, error)
-	RevokeCredential(context.Context, CredentialPublicID) error
+	CreateCredential(context.Context, InternalID, CredentialKind, CredentialMaterial, CorrelationID) (Credential, error)
+	RevokeCredential(context.Context, CredentialPublicID, CorrelationID) error
 	ResolvePublishable(context.Context, string) (Instance, error)
 	LoadSecretCredential(context.Context, string) (Credential, []byte, error)
-	AddAllowedOrigin(context.Context, InternalID, string) (AllowedOrigin, error)
+	AddAllowedOrigin(context.Context, InternalID, string, CorrelationID) (AllowedOrigin, error)
 }
 
 type CredentialMaterial struct {
@@ -76,13 +82,17 @@ func NewIntegrationService(p IntegrationPersistence) *IntegrationService { retur
 func (s *IntegrationService) CreateCredential(ctx context.Context, appID InternalID, kind CredentialKind) (Credential, string, error) {
 	if !appID.Valid() || s == nil || s.persistence == nil { return Credential{}, "", ErrIntegrationPersistence }
 	material, raw, err := newCredentialMaterial(kind); if err != nil { return Credential{}, "", err }
-	credential, err := s.persistence.CreateCredential(ctx, appID, kind, material); if err != nil { return Credential{}, "", err }
+	correlation, err := newCorrelationID(); if err != nil { return Credential{}, "", ErrIntegrationPersistence }
+	if err:=ctx.Err();err!=nil{return Credential{},"",err}
+	credential, err := s.persistence.CreateCredential(ctx, appID, kind, material, correlation); if err != nil { return Credential{}, "", err }
 	return credential, raw, nil
 }
 
 func (s *IntegrationService) RevokeCredential(ctx context.Context, id CredentialPublicID) error {
 	if !id.Valid() || s == nil || s.persistence == nil { return ErrInvalidCredential }
-	return s.persistence.RevokeCredential(ctx, id)
+	correlation,err:=newCorrelationID();if err!=nil{return ErrIntegrationPersistence}
+	if err:=ctx.Err();err!=nil{return err}
+	return s.persistence.RevokeCredential(ctx, id, correlation)
 }
 
 func (s *IntegrationService) ResolvePublishable(ctx context.Context, key string) (Instance, error) {
@@ -106,15 +116,18 @@ func (s *IntegrationService) AuthenticateSecret(ctx context.Context, key string)
 func (s *IntegrationService) AddAllowedOrigin(ctx context.Context, appID InternalID, raw string) (AllowedOrigin, error) {
 	if !appID.Valid() || s == nil || s.persistence == nil { return AllowedOrigin{}, ErrIntegrationPersistence }
 	canonical, err := CanonicalizeOrigin(raw); if err != nil { return AllowedOrigin{}, err }
-	return s.persistence.AddAllowedOrigin(ctx, appID, canonical)
+	correlation,err:=newCorrelationID();if err!=nil{return AllowedOrigin{},ErrIntegrationPersistence}
+	if err:=ctx.Err();err!=nil{return AllowedOrigin{},err}
+	return s.persistence.AddAllowedOrigin(ctx, appID, canonical, correlation)
 }
 
 func CanonicalizeOrigin(raw string) (string, error) {
 	if raw == "" || strings.TrimSpace(raw) != raw { return "", ErrInvalidOrigin }
 	u, err := url.Parse(raw); if err != nil || u.Scheme == "" || u.Host == "" || u.User != nil { return "", ErrInvalidOrigin }
-	if u.Scheme != "http" && u.Scheme != "https" { return "", ErrInvalidOrigin }
+	scheme:=strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" { return "", ErrInvalidOrigin }
 	if u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") { return "", ErrInvalidOrigin }
-	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host), nil
+	return scheme + "://" + strings.ToLower(u.Host), nil
 }
 
 func newCredentialMaterial(kind CredentialKind) (CredentialMaterial, string, error) {
@@ -136,6 +149,8 @@ func newCredentialMaterial(kind CredentialKind) (CredentialMaterial, string, err
 		return CredentialMaterial{}, "", ErrInvalidCredential
 	}
 }
+
+func newCorrelationID()(CorrelationID,error){var id CorrelationID;if _,err:=rand.Read(id[:]);err!=nil{return CorrelationID{},err};return id,nil}
 
 func validPublishableKey(key string) bool {
 	return strings.HasPrefix(key, "bb_pk_") && publicid.IsUUIDv4("pk_"+strings.TrimPrefix(key,"bb_pk_"), "pk")
