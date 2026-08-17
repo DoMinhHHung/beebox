@@ -13,6 +13,9 @@ func TestRecorderExportsBoundedCounters(t *testing.T) {
 	r.Observe("signup", "success")
 	r.Observe("signin", "denied")
 	r.Observe("user@example.test", "denied")
+	r.SetDatabaseStatsProvider(func() DatabaseStats {
+		return DatabaseStats{AcquiredConns: 2, IdleConns: 3, TotalConns: 5, MaxConns: 10}
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	res := httptest.NewRecorder()
@@ -23,6 +26,10 @@ func TestRecorderExportsBoundedCounters(t *testing.T) {
 	}
 	if !strings.Contains(body, `beebox_auth_operations_total{operation="signin",outcome="denied"} 1`) {
 		t.Fatalf("missing signin counter: %s", body)
+	}
+	if !strings.Contains(body, `beebox_database_pool_connections{state="acquired"} 2`) ||
+		!strings.Contains(body, `beebox_database_pool_connections{state="max"} 10`) {
+		t.Fatalf("missing bounded database pool gauges: %s", body)
 	}
 	if strings.Contains(body, "example.test") {
 		t.Fatal("unsafe/high-cardinality label was exported")
