@@ -20,14 +20,14 @@ const (
 	CredentialKindPublishable CredentialKind = "publishable"
 	CredentialKindSecret      CredentialKind = "secret"
 
-	AuditActorOperator             = "trusted_operator"
-	AuditActionCredentialCreated   = "application.credential.created"
-	AuditActionCredentialRevoked   = "application.credential.revoked"
-	AuditActionOriginAdded         = "application.allowed_origin.added"
-	AuditResourceCredential        = "application_credential"
-	AuditResourceOrigin            = "application_allowed_origin"
-	AuditOutcomeSuccess            = "success"
-	AuditSourceOperator            = "trusted_operator_cli"
+	AuditActorOperator           = "trusted_operator"
+	AuditActionCredentialCreated = "application.credential.created"
+	AuditActionCredentialRevoked = "application.credential.revoked"
+	AuditActionOriginAdded       = "application.allowed_origin.added"
+	AuditResourceCredential      = "application_credential"
+	AuditResourceOrigin          = "application_allowed_origin"
+	AuditOutcomeSuccess          = "success"
+	AuditSourceOperator          = "trusted_operator_cli"
 )
 
 var (
@@ -67,7 +67,8 @@ type AllowedOrigin struct {
 
 type IntegrationPersistence interface {
 	CreateCredential(context.Context, InternalID, CredentialKind, CredentialMaterial, CorrelationID) (Credential, error)
-	RevokeCredential(context.Context, CredentialPublicID, CorrelationID) error
+	RotateCredential(context.Context, InternalID, CredentialPublicID, CredentialKind, CredentialMaterial, CorrelationID, CorrelationID) (Credential, error)
+	RevokeCredential(context.Context, InternalID, CredentialPublicID, CorrelationID) error
 	ResolvePublishable(context.Context, string) (Instance, error)
 	LoadSecretCredential(context.Context, string) (Credential, []byte, error)
 	FinalizeSecretCredential(context.Context, string, []byte) (Credential, error)
@@ -110,8 +111,47 @@ func (s *IntegrationService) CreateCredential(ctx context.Context, appID Interna
 	return credential, raw, nil
 }
 
-func (s *IntegrationService) RevokeCredential(ctx context.Context, id CredentialPublicID) error {
-	if !id.Valid() || s == nil || s.persistence == nil {
+func (s *IntegrationService) RotateCredential(
+	ctx context.Context,
+	appID InternalID,
+	oldID CredentialPublicID,
+	kind CredentialKind,
+) (Credential, string, error) {
+	if !appID.Valid() || !oldID.Valid() || s == nil || s.persistence == nil {
+		return Credential{}, "", ErrInvalidCredential
+	}
+	material, raw, err := newCredentialMaterial(kind)
+	if err != nil {
+		return Credential{}, "", err
+	}
+	createCorrelation, err := newCorrelationID()
+	if err != nil {
+		return Credential{}, "", ErrIntegrationPersistence
+	}
+	revokeCorrelation, err := newCorrelationID()
+	if err != nil {
+		return Credential{}, "", ErrIntegrationPersistence
+	}
+	if err := ctx.Err(); err != nil {
+		return Credential{}, "", err
+	}
+	credential, err := s.persistence.RotateCredential(
+		ctx,
+		appID,
+		oldID,
+		kind,
+		material,
+		createCorrelation,
+		revokeCorrelation,
+	)
+	if err != nil {
+		return Credential{}, "", err
+	}
+	return credential, raw, nil
+}
+
+func (s *IntegrationService) RevokeCredential(ctx context.Context, appID InternalID, id CredentialPublicID) error {
+	if !appID.Valid() || !id.Valid() || s == nil || s.persistence == nil {
 		return ErrInvalidCredential
 	}
 	correlation, err := newCorrelationID()
@@ -121,7 +161,7 @@ func (s *IntegrationService) RevokeCredential(ctx context.Context, id Credential
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return s.persistence.RevokeCredential(ctx, id, correlation)
+	return s.persistence.RevokeCredential(ctx, appID, id, correlation)
 }
 
 func (s *IntegrationService) ResolvePublishable(ctx context.Context, key string) (Instance, error) {
@@ -136,7 +176,7 @@ func (s *IntegrationService) AuthenticateSecret(ctx context.Context, key string)
 	if !ok || s == nil || s.persistence == nil {
 		return Instance{}, ErrInvalidCredential
 	}
-	_, storedHash, err := s.persistence.LoadSecretCredential(ctx, locator)
+	credential, storedHash, err := s.persistence.LoadSecretCredential(ctx, locator)
 	candidate := sha256.Sum256(secret)
 	var zero [32]byte
 	compare := subtle.ConstantTimeCompare(zero[:], candidate[:])
@@ -146,7 +186,10 @@ func (s *IntegrationService) AuthenticateSecret(ctx context.Context, key string)
 	if err != nil || compare != 1 {
 		return Instance{}, ErrInvalidCredential
 	}
-	credential, err := s.persistence.FinalizeSecretCredential(ctx, locator, candidate[:])
+	if credential.RevokedAt != nil {
+		return Instance{}, ErrCredentialRevoked
+	}
+	credential, err = s.persistence.FinalizeSecretCredential(ctx, locator, candidate[:])
 	if err != nil {
 		return Instance{}, err
 	}
