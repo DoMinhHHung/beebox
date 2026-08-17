@@ -139,13 +139,13 @@ func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 
 	const secretMarker = "super-secret-provider-dsn"
 	failingSources := fstest.MapFS{
-		"00001_runtime_baseline.sql":                 {Data: []byte(validMigration)},
-		"00002_application_instances.sql":            {Data: []byte(validMigration)},
-		"00003_users.sql":                            {Data: []byte(validMigration)},
-		"00004_email_identifiers.sql":                {Data: []byte(validMigration)},
-		"00005_password_credentials.sql":             {Data: []byte(validMigration)},
-		"00006_audit_events.sql":                     {Data: []byte(validMigration)},
-		"00007_email_verification_challenges.sql":    {Data: []byte(validMigration)},
+		"00001_runtime_baseline.sql":              {Data: []byte(validMigration)},
+		"00002_application_instances.sql":         {Data: []byte(validMigration)},
+		"00003_users.sql":                         {Data: []byte(validMigration)},
+		"00004_email_identifiers.sql":             {Data: []byte(validMigration)},
+		"00005_password_credentials.sql":          {Data: []byte(validMigration)},
+		"00006_audit_events.sql":                  {Data: []byte(validMigration)},
+		"00007_email_verification_challenges.sql": {Data: []byte(validMigration)},
 		"00008_failure_probe.sql": {Data: []byte(
 			"-- +goose Up\n" +
 				"-- " + secretMarker + "\n" +
