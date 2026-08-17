@@ -27,8 +27,10 @@ func TestEmbeddedSourcesAreValidAndOrdered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fs.ReadDir() error = %v", err)
 	}
-	if len(entries) != 1 || entries[0].Name() != "00001_runtime_baseline.sql" {
-		t.Fatalf("embedded migration sources = %v, want version 1 baseline", entries)
+	if len(entries) != 2 ||
+		entries[0].Name() != "00001_runtime_baseline.sql" ||
+		entries[1].Name() != "00002_application_instances.sql" {
+		t.Fatalf("embedded migration sources = %v, want ordered versions 1 and 2", entries)
 	}
 }
 
