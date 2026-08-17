@@ -23,6 +23,95 @@ type Store struct {
 
 func New(pool Pool) *Store { return &Store{pool: pool} }
 
+func (s *Store) AllowSignInAttempt(ctx context.Context, appID applicationinstance.InternalID, identifierHash [32]byte) error {
+	if s == nil || s.pool == nil || !appID.Valid() {
+		return session.ErrSessionUnavailable
+	}
+	db := s.pool.OpenSQLDB()
+	defer db.Close()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return classify(ctx, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var now time.Time
+	if err := tx.QueryRowContext(ctx, `SELECT CURRENT_TIMESTAMP`).Scan(&now); err != nil {
+		return classify(ctx, err)
+	}
+	now = now.UTC()
+	globalHash := [32]byte{1}
+	globalLimited, err := incrementSignInRate(
+		ctx,
+		tx,
+		appID,
+		"signin_global",
+		globalHash,
+		session.SignInGlobalLimit,
+		session.SignInGlobalWindow,
+		now,
+	)
+	if err != nil {
+		return err
+	}
+	identifierLimited, err := incrementSignInRate(
+		ctx,
+		tx,
+		appID,
+		"signin_identifier",
+		identifierHash,
+		session.SignInIdentifierLimit,
+		session.SignInIdentifierWindow,
+		now,
+	)
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return classify(ctx, err)
+	}
+	if globalLimited || identifierLimited {
+		return session.ErrSignInRateLimited
+	}
+	return nil
+}
+
+func incrementSignInRate(
+	ctx context.Context,
+	tx *sql.Tx,
+	appID applicationinstance.InternalID,
+	operation string,
+	subjectHash [32]byte,
+	limit int,
+	window time.Duration,
+	now time.Time,
+) (bool, error) {
+	var count int
+	if err := tx.QueryRowContext(ctx, `
+		INSERT INTO public_auth_rate_limits (
+			application_instance_id, operation, subject_hash, window_started_at, request_count, expires_at
+		) VALUES ($1,$2,$3,$4,1,$5)
+		ON CONFLICT (application_instance_id, operation, subject_hash) DO UPDATE SET
+			window_started_at = CASE
+				WHEN public_auth_rate_limits.expires_at <= EXCLUDED.window_started_at THEN EXCLUDED.window_started_at
+				ELSE public_auth_rate_limits.window_started_at
+			END,
+			request_count = CASE
+				WHEN public_auth_rate_limits.expires_at <= EXCLUDED.window_started_at THEN 1
+				ELSE public_auth_rate_limits.request_count + 1
+			END,
+			expires_at = CASE
+				WHEN public_auth_rate_limits.expires_at <= EXCLUDED.window_started_at THEN EXCLUDED.expires_at
+				ELSE public_auth_rate_limits.expires_at
+			END
+		RETURNING request_count`,
+		int64(appID), operation, subjectHash[:], now, now.Add(window),
+	).Scan(&count); err != nil {
+		return false, classify(ctx, err)
+	}
+	return count > limit, nil
+}
+
 func (s *Store) LookupPasswordCredential(ctx context.Context, appID applicationinstance.InternalID, normalizedEmail string) (session.CredentialRecord, error) {
 	if s == nil || s.pool == nil || !appID.Valid() || normalizedEmail == "" {
 		return session.CredentialRecord{}, session.ErrSessionUnavailable
@@ -41,8 +130,11 @@ func (s *Store) LookupPasswordCredential(ctx context.Context, appID applicationi
 		WHERE e.application_instance_id = $1 AND e.normalized_email = $2 AND e.verified_at IS NOT NULL`,
 		int64(appID), normalizedEmail,
 	).Scan(&userID, &record.UserPublicID, &record.ApplicationPublicID, &encoded)
+	if errors.Is(err, sql.ErrNoRows) {
+		return session.CredentialRecord{}, session.ErrInvalidCredentials
+	}
 	if err != nil {
-		return session.CredentialRecord{}, err
+		return session.CredentialRecord{}, classify(ctx, err)
 	}
 	hash, err := authentication.ParsePasswordHash(encoded)
 	if err != nil {
