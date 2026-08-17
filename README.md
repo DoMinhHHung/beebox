@@ -2,11 +2,15 @@
 
 BeeBox is an open-source identity and access platform implemented primarily in Go.
 
-This repository currently contains the initial runtime, PostgreSQL connection, and explicit migration-runner foundation only. Product capabilities such as users, authentication, sessions, organizations, product schemas, and persistence queries are not implemented yet.
+This repository currently contains the initial runtime, PostgreSQL connection, explicit migration-runner foundation, and Phase 0 governance/contract baseline. Product capabilities such as users, authentication, sessions, organizations, product schemas, and persistence queries are not implemented yet.
 
-## Security documentation
+## Project documentation
 
-- [Initial threat model](docs/threat-model/initial.md) — current assets, actors, trust boundaries, implemented controls, deferred security requirements, residual risks, and review triggers.
+- [Repository instructions](Instruction.md) — product, architecture, security, data, testing, delivery, and change-control invariants.
+- [Initial threat model](docs/threat-model/initial.md) — current assets, actors, trust boundaries, implemented controls, required future controls, residual risks, and review triggers.
+- [Contract and tenancy conventions](docs/contracts/conventions.md) — Phase 0 semantics for resource IDs, errors, pagination, idempotency, time, API versioning, audit events, and tenancy.
+- [Contributing](CONTRIBUTING.md) — current branch/PR workflow, repository checks, migration policy, and contribution evidence.
+- [Security policy](SECURITY.md) — safe vulnerability-reporting guidance and the repository's current reporting-channel limitations.
 
 ## Prerequisites
 
@@ -183,7 +187,8 @@ This bootstrap contains:
 - transactional migrations serialized by a bounded advisory lock;
 - a version-1 runtime baseline and migration metadata only;
 - focused automated tests;
-- minimal GitHub Actions CI.
+- minimal GitHub Actions CI;
+- Phase 0 threat-model, contract-convention, contribution, and security-reporting documentation.
 
 There are no product schemas, product tables, product data, queries, repositories, Redis, or identity behaviors in this slice. Those capabilities are intentionally deferred to later vertical slices.
 
