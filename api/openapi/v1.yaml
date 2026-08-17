@@ -1,0 +1,288 @@
+openapi: 3.1.0
+info:
+  title: BeeBox Public API
+  version: 1.0.0
+  description: BeeBox-owned Phase 1 public authentication contract. BeeBox Phase 1 is not an OAuth or OpenID Connect authorization server.
+servers:
+  - url: /
+components:
+  securitySchemes:
+    publishableKey:
+      type: apiKey
+      in: header
+      name: X-BeeBox-Publishable-Key
+      description: Non-secret application integration key. It selects application context only and grants no user or backend authority.
+  schemas:
+    StatusResponse:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+    ErrorDetail:
+      type: object
+      additionalProperties: false
+      required: [code, message, request_id]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        request_id:
+          type: string
+    SignUpRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 15
+          maxLength: 128
+          description: 15-128 Unicode code points after NFC normalization. Input is not trimmed and has no composition-rule requirement.
+    EmailVerificationRequest:
+      type: object
+      additionalProperties: false
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+    EmailVerificationConfirmRequest:
+      type: object
+      additionalProperties: false
+      required: [email, code]
+      properties:
+        email:
+          type: string
+          format: email
+        code:
+          type: string
+          pattern: '^[0-9]{6}$'
+paths:
+  /v1/sign-ups:
+    post:
+      operationId: signUp
+      summary: Start email/password signup
+      security:
+        - publishableKey: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          description: Opaque retry key scoped by server-selected application and signup operation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignUpRequest'
+      responses:
+        '202':
+          description: Signup request accepted. Response does not reveal whether an identifier previously existed.
+          headers:
+            Cache-Control:
+              schema: {type: string, const: no-store}
+            X-Request-ID:
+              schema: {type: string}
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+              examples:
+                pending:
+                  value: {status: verification_pending}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/InvalidInput'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /v1/email-verifications:
+    post:
+      operationId: requestEmailVerification
+      summary: Request or resend email verification
+      security:
+        - publishableKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailVerificationRequest'
+      responses:
+        '202':
+          description: Accepted generically whether the identifier exists, is verified, or issuance is suppressed.
+          headers:
+            Cache-Control:
+              schema: {type: string, const: no-store}
+            X-Request-ID:
+              schema: {type: string}
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+              examples:
+                accepted:
+                  value: {status: accepted}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/InvalidInput'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /v1/email-verifications/confirm:
+    post:
+      operationId: confirmEmailVerification
+      summary: Confirm email ownership with the active verification code
+      security:
+        - publishableKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailVerificationConfirmRequest'
+      responses:
+        '200':
+          description: Email verified.
+          headers:
+            Cache-Control:
+              schema: {type: string, const: no-store}
+            X-Request-ID:
+              schema: {type: string}
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+              examples:
+                verified:
+                  value: {status: verified}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/InvalidInput'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+components:
+  securitySchemes:
+    publishableKey:
+      type: apiKey
+      in: header
+      name: X-BeeBox-Publishable-Key
+      description: Non-secret application integration key. It selects application context only and grants no user or backend authority.
+  schemas:
+    StatusResponse:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: {type: string}
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error: {$ref: '#/components/schemas/ErrorDetail'}
+    ErrorDetail:
+      type: object
+      additionalProperties: false
+      required: [code, message, request_id]
+      properties:
+        code: {type: string}
+        message: {type: string}
+        request_id: {type: string}
+    SignUpRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email: {type: string, format: email}
+        password:
+          type: string
+          minLength: 15
+          maxLength: 128
+          description: 15-128 Unicode code points after NFC normalization. Input is not trimmed and has no composition-rule requirement.
+    EmailVerificationRequest:
+      type: object
+      additionalProperties: false
+      required: [email]
+      properties:
+        email: {type: string, format: email}
+    EmailVerificationConfirmRequest:
+      type: object
+      additionalProperties: false
+      required: [email, code]
+      properties:
+        email: {type: string, format: email}
+        code: {type: string, pattern: '^[0-9]{6}$'}
+  responses:
+    BadRequest:
+      description: Invalid request or verification failure.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    Unauthorized:
+      description: Invalid application publishable key.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    Forbidden:
+      description: Origin is not allowed for the resolved application.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    Conflict:
+      description: Idempotency key conflicts with a different request.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    InvalidInput:
+      description: Input fails deterministic validation or public password policy.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    RateLimited:
+      description: Public authentication request limit reached.
+      headers:
+        Retry-After:
+          schema: {type: string}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    Unavailable:
+      description: Authentication or delivery dependency is temporarily unavailable without provider/database details.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
