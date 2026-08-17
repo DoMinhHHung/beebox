@@ -12,11 +12,21 @@ import (
 const (
 	CorrelationIDBytes = 16
 
-	ActorKindAnonymousRegistration   = "anonymous_registration"
-	ActionEmailPasswordRegistration  = "authentication.email_password.register"
+	ActorKindAnonymousRegistration      = "anonymous_registration"
+	ActorKindAnonymousEmailVerification = "anonymous_email_verification"
+
+	ActionEmailPasswordRegistration        = "authentication.email_password.register"
+	ActionEmailVerificationChallengeIssued = "authentication.email_verification.challenge_issued"
+	ActionEmailVerificationVerify          = "authentication.email_verification.verify"
+
 	ResourceCategoryUserRegistration = "user_registration"
-	OutcomeSuccess                   = "success"
-	SourceInternalRegistration       = "internal_registration"
+	ResourceCategoryEmailIdentifier  = "email_identifier"
+
+	OutcomeSuccess = "success"
+	OutcomeDenied  = "denied"
+
+	SourceInternalRegistration      = "internal_registration"
+	SourceInternalEmailVerification = "internal_email_verification"
 )
 
 var ErrCorrelationGeneration = errors.New("audit correlation generation failure")
@@ -34,8 +44,8 @@ func NewCorrelationID() (CorrelationID, error) {
 }
 
 // Event is the smallest BeeBox-owned internal security audit fact needed by
-// the current registration core. It intentionally contains no email/password
-// data and defines no public event schema.
+// current authentication cores. It intentionally contains no email/password
+// or verification-code data and defines no public event schema.
 type Event struct {
 	InternalID            int64
 	ApplicationInstanceID applicationinstance.InternalID

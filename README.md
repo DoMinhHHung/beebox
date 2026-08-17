@@ -2,7 +2,7 @@
 
 BeeBox is an open-source identity and access platform implemented primarily in Go.
 
-This repository currently contains the initial runtime, PostgreSQL connection, explicit migration runner, Phase 0 governance/contracts baseline, the v1 `application_instance` root isolation boundary, application-scoped internal user/email/password persistence, and an internal transactional email/password registration core with required success-audit persistence. Email is persisted PII and password hashes are sensitive credential-derived data, but email verification, reachable/public signup, signin, sessions, authorization, organizations, and public product APIs are not implemented yet.
+This repository currently contains the initial runtime, PostgreSQL connection, explicit migration runner, Phase 0 governance/contracts baseline, the v1 `application_instance` root isolation boundary, application-scoped internal user/email/password persistence, an internal transactional email/password registration core, and an internal email OTP ownership-verification lifecycle. Email is persisted PII; password hashes and OTP verifier hashes are sensitive derived data. Public signup/signin, sessions, authorization, organizations, production email delivery, and public product APIs are not implemented yet.
 
 ## Project documentation
 
@@ -87,16 +87,17 @@ Current migrations are:
 - `00003_users.sql` — creates the minimal application-scoped `users` child table;
 - `00004_email_identifiers.sql` — creates application-scoped email identifiers and scoped user referential integrity;
 - `00005_password_credentials.sql` — creates one internal password credential per application-scoped user;
-- `00006_audit_events.sql` — creates the minimal internal application-scoped immutable audit-fact table required by the transactional registration core, including required resource category, source, outcome, scoped subject/actor references, and a required 16-byte internal correlation identifier.
+- `00006_audit_events.sql` — creates the minimal internal application-scoped audit-fact table used by current security mutations;
+- `00007_email_verification_challenges.sql` — adds the scoped email-identifier key needed for referential integrity and creates one bounded internal verification challenge per application-scoped email identifier, with generation, expiry, failed-attempt, issue-window/cooldown, consumption, and verifier-hash state.
 
-Database identities remain internal persistence details. `audit_events.id` and `correlation_id` do not ratify any public event/resource identifier encoding. No public product or audit API exists.
+Database identities remain internal persistence details. `audit_events.id`, audit correlation IDs, email identifier IDs, and verification challenge state do not ratify any public identifier encoding. No public product, verification, or audit API exists.
 
 Use separate credentials where possible:
 
 - migration mode receives a short-lived credential allowed to perform reviewed DDL;
 - serve mode receives a least-privilege runtime credential and never needs migration privileges merely to start.
 
-Migration failures, connectivity failures, lock timeouts, and cancellation exit nonzero, close acquired resources, do not open an HTTP listener, and report stable errors without SQL, provider, topology, credential, password, password-hash, or email details.
+Migration failures, connectivity failures, lock timeouts, and cancellation exit nonzero, close acquired resources, do not open an HTTP listener, and report stable errors without SQL, provider, topology, credential, password, password-hash, OTP, OTP-hash, or email details.
 
 ## Health endpoints
 
@@ -159,23 +160,29 @@ The repository currently contains:
 - deterministic BeeBox v1 ASCII email normalization with no provider-specific rewriting;
 - internal Argon2id password hashing using version 19, time 3, 64 MiB memory, parallelism 4, random 16-byte salt, and 32-byte derived hash;
 - application-scoped password credentials with a composite same-application user foreign key;
-- the internal `audit_events` persistence foundation with explicit application scope, required action/resource/outcome/source/correlation fields, optional scoped actor/subject user references, server/database occurrence time, no cascade deletion, and no PII/credential payload;
-- an internal `RegisterEmailPassword` application operation that reuses the existing email normalizer and password hasher, hashes before opening the DB transaction, then atomically persists one user, one unverified email identifier, one password credential, and one successful registration audit fact;
-- rollback semantics proving registration state does not partially commit when email conflict, password persistence, audit persistence, nonexistent application, or cancellation prevents completion;
-- concurrency evidence proving same-application normalized-email races converge to one complete registration bundle with no orphan loser users/credentials/audit facts;
-- cross-application evidence proving the same normalized email may register independently in different application roots;
+- internal append-oriented audit persistence with explicit application scope, required action/resource/outcome/source/correlation fields, optional scoped actor/subject user references, and no PII/credential payload;
+- an internal `RegisterEmailPassword` operation that atomically persists one scoped user, one unverified email identifier, one password credential, and one successful registration audit fact;
+- an internal six-digit email verification code primitive generated with `crypto/rand`; codes are stored only as dedicated Argon2id-derived `VerificationCodeHash` values;
+- one `email_verification_challenges` row per scoped email identifier, with a 10-minute code lifetime, five-failure verification budget, 15-minute issue window, three issues per window, 60-second resend cooldown, and generation rotation;
+- internal issue/resend orchestration that resolves the stored scoped destination, hashes before database I/O, atomically commits challenge state plus a `challenge_issued` audit fact, and invokes a narrow delivery port only after commit;
+- delivery-failure semantics that preserve the already committed challenge and issuance audit because provider delivery can be ambiguous;
+- internal verification that loads a scoped generation snapshot, performs Argon2 verification outside the final transaction, then re-locks/rechecks current generation/state before mutating anything;
+- atomic wrong-code failed-attempt increment plus denied audit, and atomic successful `verified_at` transition plus challenge consumption/verifier clearing plus success audit;
+- PostgreSQL evidence for expiry, attempt exhaustion, resend cooldown/window behavior, replay resistance, stale-generation rejection, concurrent one-winner verification, cancellation, and cross-application challenge isolation;
 - Phase 0 governance/security/contracts documentation plus ADRs 0001 and 0002.
 
-Email addresses are persisted PII. Password hashes are sensitive credential-derived data. Raw password bytes exist only transiently inside internal hash/verify calls and are never persisted. Registration audit rows contain scoped internal user identity and operation metadata, not raw email, password, or password hash.
+Email addresses are persisted PII. Password hashes and verification-code hashes are sensitive derived data. Raw passwords and raw verification codes are transient inputs only; plaintext verification codes cross only the internal delivery port and are never persisted or written to audit records.
 
-The registration capability is **internal and unreachable from HTTP/public APIs**. It does not implement email verification, OTP/link delivery, reachable/public signup, signin, public password policy, breach screening, login attempt/rate/lockout controls, password change/reset, sessions/tokens, public identifiers, account linking/merging, organizations, or audit search/export/retention APIs. Email identifiers created by registration remain unverified.
+Email verification in this repository proves control of an address only. It does **not** authenticate a BeeBox user, create an authenticated principal, act as MFA, establish a session/token/cookie, authorize account linking, merge accounts, or grant privileges. ADR 0002 no-auto-link semantics remain unchanged.
 
-A future reachable signup contract must still define server-selected application scope, public password policy, request idempotency/retry behavior, anti-enumerating safe errors, abuse/rate controls, HTTP/API compatibility, and which denied/abusive attempts require audit evidence.
+The verification lifecycle is internal and unreachable from HTTP/public APIs. No production email provider adapter exists; tests use in-memory fake delivery only. Public signup/verification contracts, request/IP/account abuse controls, signin, public password policy, password reset/change, sessions/tokens, public IDs, account linking, organizations, or audit query/export/retention APIs remain unimplemented.
+
+A future reachable signup/verification contract must still define server-selected application scope, versioned public models/IDs, anti-enumerating safe errors, request idempotency/retry behavior, request-level abuse controls, provider behavior, and compatibility semantics.
 
 Phase 1 remains incomplete.
 
 ## Rollout and rollback
 
-No hosted database mutation is performed by repository changes alone. For a reviewed release, run the exact promoted binary/image with `migrate` before starting code that depends on `audit_events` or the registration transaction. Normal serve mode still does not auto-migrate.
+No hosted database mutation is performed by repository changes alone. For a reviewed release, run the exact promoted binary/image with `migrate` before starting code that depends on `email_verification_challenges`. Normal serve mode still does not auto-migrate.
 
-BeeBox production migration policy is forward-only. Before production data depends on the additive audit schema, code can be reverted while schema remains. Once data depends on it, schema correction uses a reviewed forward migration; destructive rollback is not automatic.
+A production email provider adapter and any public verification handler require separate reviewed changes after the persistence/application core is promoted. BeeBox production migration policy remains forward-only: once data depends on the additive schema, corrections use reviewed forward migrations rather than destructive automatic rollback.
