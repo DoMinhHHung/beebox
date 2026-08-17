@@ -13,8 +13,8 @@ import (
 )
 
 type fakeSessions struct {
-	signInPair session.TokenPair
-	refreshPair session.TokenPair
+	signInPair   session.TokenPair
+	refreshPair  session.TokenPair
 	refreshValue string
 }
 
@@ -30,10 +30,10 @@ func (f *fakeSessions) Refresh(_ context.Context, _ applicationinstance.Internal
 func TestBrowserSignInReturnsHostRefreshCookie(t *testing.T) {
 	appID := applicationinstance.InternalID(42)
 	sessions := &fakeSessions{signInPair: session.TokenPair{
-		AccessToken: "access-token",
+		AccessToken:  "access-token",
 		RefreshToken: "refresh-secret",
-		ExpiresIn: 300,
-		SessionID: "ses_21234567-89ab-4cde-8fab-0123456789ab",
+		ExpiresIn:    300,
+		SessionID:    "ses_21234567-89ab-4cde-8fab-0123456789ab",
 	}}
 	base := New(http.NotFoundHandler(), fakeApps{}, fakeOrigins{}, nil, nil)
 	handler := WithSessions(
@@ -68,10 +68,10 @@ func TestBrowserSignInReturnsHostRefreshCookie(t *testing.T) {
 func TestCookieRefreshRequiresExactOrigin(t *testing.T) {
 	appID := applicationinstance.InternalID(42)
 	sessions := &fakeSessions{refreshPair: session.TokenPair{
-		AccessToken: "new-access",
+		AccessToken:  "new-access",
 		RefreshToken: "new-refresh",
-		ExpiresIn: 300,
-		SessionID: "ses_21234567-89ab-4cde-8fab-0123456789ab",
+		ExpiresIn:    300,
+		SessionID:    "ses_21234567-89ab-4cde-8fab-0123456789ab",
 	}}
 	base := New(http.NotFoundHandler(), fakeApps{}, fakeOrigins{}, nil, nil)
 	handler := WithSessions(
