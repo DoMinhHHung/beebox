@@ -4,7 +4,6 @@ package postgres
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"sync"
 	"testing"
@@ -14,7 +13,9 @@ import (
 	applicationpostgres "github.com/DoMinhHHung/beebox/internal/applicationinstance/postgres"
 	"github.com/DoMinhHHung/beebox/internal/audit"
 	"github.com/DoMinhHHung/beebox/internal/authentication"
+	"github.com/DoMinhHHung/beebox/internal/identity"
 	identitypostgres "github.com/DoMinhHHung/beebox/internal/identity/postgres"
+	"github.com/DoMinhHHung/beebox/internal/platform/database"
 	"github.com/DoMinhHHung/beebox/internal/platform/migration"
 )
 
@@ -117,7 +118,7 @@ func TestPasswordResetChangesCredentialRevokesSessionsAndRejectsReplay(t *testin
 	}
 }
 
-func TestPasswordResetUnknownAndUnverifiedRequestsDoNotRevealOrDeliver(t *testing.T) {
+func TestPasswordResetUnknownRequestsDoNotRevealOrDeliver(t *testing.T) {
 	pool, ctx := resetTestDatabase(t, "beebox_password_reset_enumeration")
 	app, err := applicationpostgres.New(pool).Create(ctx)
 	if err != nil {
@@ -242,5 +243,3 @@ func createResetSession(t *testing.T, ctx context.Context, pool *database.Pool, 
 		t.Fatalf("insert refresh credential error = %v", err)
 	}
 }
-
-var _ = sql.ErrNoRows
