@@ -46,19 +46,22 @@ func (g *KDFGate) Do(ctx context.Context, fn func() error) error {
 	if g == nil || g.Limit() <= 0 || fn == nil {
 		return ErrKDFAdmissionLimited
 	}
+
 	select {
 	case g.waiting <- struct{}{}:
 	default:
 		return ErrKDFAdmissionLimited
 	}
-	defer func() { <-g.waiting }()
 
 	select {
 	case g.running <- struct{}{}:
+		<-g.waiting
 		defer func() { <-g.running }()
 	case <-ctx.Done():
+		<-g.waiting
 		return ctx.Err()
 	}
+
 	return fn()
 }
 
