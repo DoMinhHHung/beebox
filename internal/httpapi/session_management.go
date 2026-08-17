@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
 	"github.com/DoMinhHHung/beebox/internal/audit"
@@ -76,7 +77,9 @@ func (h *sessionManagementHTTP) handleCurrent(w http.ResponseWriter, r *http.Req
 		return
 	}
 	app, token, ok := h.resolveUserContext(w, r, requestID)
-	if !ok { return }
+	if !ok {
+		return
+	}
 	record, err := h.sessions.Current(r.Context(), app.InternalID, string(app.PublicID), token)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "invalid_session", "The session is invalid.", requestID)
@@ -91,7 +94,9 @@ func (h *sessionManagementHTTP) handleSignOut(w http.ResponseWriter, r *http.Req
 		return
 	}
 	app, token, ok := h.resolveUserContext(w, r, requestID)
-	if !ok { return }
+	if !ok {
+		return
+	}
 	if err := h.sessions.SignOut(r.Context(), app.InternalID, string(app.PublicID), token, correlationID); err != nil && !errors.Is(err, session.ErrSessionRevoked) {
 		writeError(w, http.StatusUnauthorized, "invalid_session", "The session is invalid.", requestID)
 		return
@@ -117,13 +122,18 @@ func (h *sessionManagementHTTP) handleBackendSession(w http.ResponseWriter, r *h
 	}
 	path := strings.TrimPrefix(r.URL.Path, "/v1/backend/sessions/")
 	revoke := strings.HasSuffix(path, "/revoke")
-	if revoke { path = strings.TrimSuffix(path, "/revoke") }
+	if revoke {
+		path = strings.TrimSuffix(path, "/revoke")
+	}
 	if path == "" || strings.Contains(path, "/") || !session.ValidPublicID(path) {
 		writeError(w, http.StatusNotFound, "session_not_found", "The session was not found.", requestID)
 		return
 	}
 	if revoke {
-		if r.Method != http.MethodPost { methodNotAllowed(w, requestID); return }
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, requestID)
+			return
+		}
 		if err := h.sessions.RevokeSession(r.Context(), app.InternalID, path, correlationID); err != nil {
 			writeError(w, http.StatusNotFound, "session_not_found", "The session was not found.", requestID)
 			return
@@ -168,12 +178,22 @@ func (h *sessionManagementHTTP) resolveUserContext(w http.ResponseWriter, r *htt
 }
 
 func bearerToken(values []string) (string, bool) {
-	if len(values) != 1 { return "", false }
+	if len(values) != 1 {
+		return "", false
+	}
 	parts := strings.Split(values[0], " ")
-	if len(parts) != 2 || parts[0] != "Bearer" || parts[1] == "" { return "", false }
+	if len(parts) != 2 || parts[0] != "Bearer" || parts[1] == "" {
+		return "", false
+	}
 	return parts[1], true
 }
 
 func publicSession(record session.Record) publicSessionResponse {
-	return publicSessionResponse{ID: record.PublicID, UserID: record.UserPublicID, CreatedAt: record.CreatedAt.UTC().Format(time.RFC3339), ExpiresAt: record.ExpiresAt.UTC().Format(time.RFC3339), Revoked: record.RevokedAt != nil}
+	return publicSessionResponse{
+		ID:        record.PublicID,
+		UserID:    record.UserPublicID,
+		CreatedAt: record.CreatedAt.UTC().Format(time.RFC3339),
+		ExpiresAt: record.ExpiresAt.UTC().Format(time.RFC3339),
+		Revoked:   record.RevokedAt != nil,
+	}
 }
