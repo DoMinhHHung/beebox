@@ -12,8 +12,8 @@ import (
 const (
 	CorrelationIDBytes = 16
 
-	ActorKindAnonymousRegistration = "anonymous_registration"
-	ActionEmailPasswordRegistration = "authentication.email_password.register"
+	ActorKindAnonymousRegistration   = "anonymous_registration"
+	ActionEmailPasswordRegistration  = "authentication.email_password.register"
 	ResourceCategoryUserRegistration = "user_registration"
 	OutcomeSuccess                   = "success"
 	SourceInternalRegistration       = "internal_registration"
@@ -40,12 +40,12 @@ type Event struct {
 	InternalID            int64
 	ApplicationInstanceID applicationinstance.InternalID
 	ActorKind             string
-	ActorUserID            *identity.InternalID
-	SubjectUserID          *identity.InternalID
-	Action                 string
-	ResourceCategory       string
-	Outcome                string
-	CorrelationID          CorrelationID
-	Source                 string
-	OccurredAt             time.Time
+	ActorUserID           *identity.InternalID
+	SubjectUserID         *identity.InternalID
+	Action                string
+	ResourceCategory      string
+	Outcome               string
+	CorrelationID         CorrelationID
+	Source                string
+	OccurredAt            time.Time
 }
