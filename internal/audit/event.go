@@ -15,9 +15,9 @@ const (
 	ActorKindAnonymousRegistration      = "anonymous_registration"
 	ActorKindAnonymousEmailVerification = "anonymous_email_verification"
 
-	ActionEmailPasswordRegistration          = "authentication.email_password.register"
-	ActionEmailVerificationChallengeIssued   = "authentication.email_verification.challenge_issued"
-	ActionEmailVerificationVerify            = "authentication.email_verification.verify"
+	ActionEmailPasswordRegistration        = "authentication.email_password.register"
+	ActionEmailVerificationChallengeIssued = "authentication.email_verification.challenge_issued"
+	ActionEmailVerificationVerify          = "authentication.email_verification.verify"
 
 	ResourceCategoryUserRegistration = "user_registration"
 	ResourceCategoryEmailIdentifier  = "email_identifier"
@@ -25,7 +25,7 @@ const (
 	OutcomeSuccess = "success"
 	OutcomeDenied  = "denied"
 
-	SourceInternalRegistration     = "internal_registration"
+	SourceInternalRegistration      = "internal_registration"
 	SourceInternalEmailVerification = "internal_email_verification"
 )
 
