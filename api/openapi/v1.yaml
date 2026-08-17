@@ -6,6 +6,20 @@ info:
 servers:
   - url: /
 paths:
+  /.well-known/jwks.json:
+    get:
+      operationId: getJWKS
+      summary: Read active and retiring access-token verification keys
+      security: []
+      responses:
+        '200':
+          description: Public Ed25519 verification keys only. Private signing material is never published.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JWKS'
+        '404':
+          description: Access-token capability is not configured.
   /v1/sign-ups:
     post:
       operationId: signUp
@@ -142,6 +156,86 @@ paths:
           $ref: '#/components/responses/InvalidInput'
         '503':
           $ref: '#/components/responses/Unavailable'
+  /v1/sign-ins:
+    post:
+      operationId: signIn
+      summary: Create a session with verified email and password credentials
+      security:
+        - publishableKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignInRequest'
+      responses:
+        '200':
+          description: Session created. Browser requests with an allowed Origin receive the rotating refresh credential only in a Secure HttpOnly SameSite=Strict __Host- cookie; non-browser requests receive it in the response body.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            X-Request-ID:
+              schema:
+                type: string
+            Set-Cookie:
+              schema:
+                type: string
+              description: Present for browser mode; refresh credential is not duplicated in JSON in that mode.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /v1/sessions/refresh:
+    post:
+      operationId: refreshSession
+      summary: Rotate a refresh credential and issue a new access token
+      description: A previously consumed refresh credential is treated as replay and revokes the owning session. Cookie mode requires a non-empty exact stored Origin for the resolved application.
+      security:
+        - publishableKey: []
+      requestBody:
+        required: false
+        description: Required for non-browser bearer mode. Cookie mode reads the __Host-beebox-refresh cookie instead.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: Refresh credential rotated and a new five-minute access token issued.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            X-Request-ID:
+              schema:
+                type: string
+            Set-Cookie:
+              schema:
+                type: string
+              description: Updated refresh cookie in browser mode.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidRefresh'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/Unavailable'
 components:
   securitySchemes:
     publishableKey:
@@ -195,6 +289,52 @@ components:
           minLength: 15
           maxLength: 128
           description: 15-128 Unicode code points after NFC normalization. Input is not trimmed and has no composition-rule requirement.
+    SignInRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - refresh_token
+      properties:
+        refresh_token:
+          type: string
+          minLength: 43
+          description: Opaque 32-byte random refresh credential encoded as unpadded base64url. The server stores only a verifier hash.
+    TokenResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - access_token
+        - token_type
+        - expires_in
+        - session_id
+      properties:
+        access_token:
+          type: string
+          description: Ed25519/EdDSA JWT with a five-minute lifetime and mandatory iss, sub, aud, sid, exp, nbf, iat, jti claims.
+        token_type:
+          type: string
+          const: Bearer
+        expires_in:
+          type: integer
+          const: 300
+        session_id:
+          type: string
+          pattern: '^ses_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+        refresh_token:
+          type: string
+          description: Present only for non-browser mode. Browser mode uses the __Host-beebox-refresh cookie.
     EmailVerificationRequest:
       type: object
       additionalProperties: false
@@ -217,6 +357,44 @@ components:
         code:
           type: string
           pattern: '^[0-9]{6}$'
+    JWKS:
+      type: object
+      additionalProperties: false
+      required:
+        - keys
+      properties:
+        keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/JWK'
+    JWK:
+      type: object
+      additionalProperties: false
+      required:
+        - kty
+        - crv
+        - use
+        - alg
+        - kid
+        - x
+      properties:
+        kty:
+          type: string
+          const: OKP
+        crv:
+          type: string
+          const: Ed25519
+        use:
+          type: string
+          const: sig
+        alg:
+          type: string
+          const: EdDSA
+        kid:
+          type: string
+        x:
+          type: string
+          description: Unpadded base64url Ed25519 public key material.
   responses:
     BadRequest:
       description: Invalid request or generic verification failure.
@@ -226,6 +404,18 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
     Unauthorized:
       description: Invalid application publishable key.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InvalidCredentials:
+      description: Email/password credentials are invalid without revealing whether the identifier exists or is verified.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InvalidRefresh:
+      description: Refresh credential is invalid, expired, revoked, or was replayed. Replay revokes the owning session.
       content:
         application/json:
           schema:
