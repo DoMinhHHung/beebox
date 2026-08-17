@@ -4,6 +4,7 @@ package migration
 
 import (
 	"context"
+	"database/sql"
 	"io/fs"
 	"regexp"
 	"testing"
@@ -65,7 +66,13 @@ func TestMigrationEightBackfillsStablePublicIDs(t *testing.T) {
 	}
 }
 
-func readBackfilledPublicIDs(t *testing.T, ctx context.Context, pool interface{ OpenSQLDB() *sql.DB }, appID, userID int64) (string, string) {
+func readBackfilledPublicIDs(
+	t *testing.T,
+	ctx context.Context,
+	pool interface{ OpenSQLDB() *sql.DB },
+	appID int64,
+	userID int64,
+) (string, string) {
 	t.Helper()
 	db := pool.OpenSQLDB()
 	defer db.Close()
