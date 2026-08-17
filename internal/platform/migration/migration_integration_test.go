@@ -33,11 +33,11 @@ func TestMigrationFirstApplyAndRerunAreIdempotent(t *testing.T) {
 	if err := firstAdapter.PingContext(ctx); err == nil || err.Error() != "sql: database is closed" {
 		t.Fatalf("first adapter remained open after Up: %v", err)
 	}
-	assertMigrationState(t, ctx, pool, 8)
+	assertMigrationState(t, ctx, pool, 9)
 	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
 		t.Fatalf("second Up() error = %v", err)
 	}
-	assertMigrationState(t, ctx, pool, 8)
+	assertMigrationState(t, ctx, pool, 9)
 	assertSchemaTables(t, ctx, pool)
 }
 
@@ -68,7 +68,7 @@ func TestConcurrentMigrationRunnersSerializeAndConverge(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	assertMigrationState(t, ctx, firstPool, 8)
+	assertMigrationState(t, ctx, firstPool, 9)
 	assertSchemaTables(t, ctx, firstPool)
 }
 
@@ -126,7 +126,8 @@ func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 		"00006_audit_events.sql":                  {Data: []byte(validMigration)},
 		"00007_email_verification_challenges.sql": {Data: []byte(validMigration)},
 		"00008_phase1_public_integration.sql":     {Data: []byte(validMigration)},
-		"00009_failure_probe.sql": {Data: []byte(
+		"00009_public_auth_controls.sql":          {Data: []byte(validMigration)},
+		"00010_failure_probe.sql": {Data: []byte(
 			"-- +goose Up\n" +
 				"-- " + secretMarker + "\n" +
 				"CREATE TABLE migration_failure_probe (id bigint PRIMARY KEY);\n" +
@@ -151,12 +152,12 @@ func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 	if probeTable.Valid {
 		t.Fatalf("failing migration left probe table %q", probeTable.String)
 	}
-	var versionNineCount int
-	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM goose_db_version WHERE version_id = 9 AND is_applied").Scan(&versionNineCount); err != nil {
-		t.Fatalf("query version 9 error = %v", err)
+	var versionTenCount int
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM goose_db_version WHERE version_id = 10 AND is_applied").Scan(&versionTenCount); err != nil {
+		t.Fatalf("query version 10 error = %v", err)
 	}
-	if versionNineCount != 0 {
-		t.Fatalf("applied version 9 rows = %d, want 0", versionNineCount)
+	if versionTenCount != 0 {
+		t.Fatalf("applied version 10 rows = %d, want 0", versionTenCount)
 	}
 }
 
@@ -252,6 +253,8 @@ func assertSchemaTables(t *testing.T, ctx context.Context, pool *database.Pool) 
 		"email_verification_challenges",
 		"goose_db_version",
 		"password_credentials",
+		"public_auth_idempotency",
+		"public_auth_rate_limits",
 		"users",
 	}
 	if !reflect.DeepEqual(tables, want) {
