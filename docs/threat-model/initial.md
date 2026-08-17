@@ -2,341 +2,267 @@
 
 > Status: repository-owned threat model for the architecture represented by this PR.
 > Current governance baseline: `Instruction.md`, `docs/contracts/conventions.md`, `docs/adr/0001-application-instance-root.md`, and `docs/adr/0002-email-identity-v1.md`.
-> Scope: current Go runtime, PostgreSQL lifecycle, explicit migration mode, `application_instance` root persistence, application-scoped users, application-scoped email identifiers, repository configuration, and CI.
+> Scope: current Go runtime, PostgreSQL lifecycle, explicit migration mode, `application_instance` root persistence, application-scoped users, application-scoped email identifiers, internal Argon2id password hashing, application-scoped password credentials, repository configuration, and CI.
 
 ## 1. Purpose and scope
 
-This document records security properties demonstrated by the current repository, threats that already apply, and controls future identity/product slices must add as their attack surface appears.
+This document records controls actually implemented by the current repository and the security work that remains required when currently internal primitives become reachable product behavior.
 
-It distinguishes three states:
+It distinguishes:
 
-1. **Implemented now** — present in current code, schema, tests, or CI and grounded in repository evidence.
-2. **Required invariant** — required by repository instructions, contract conventions, or accepted ADRs and must be implemented by the slice that introduces the corresponding behavior.
-3. **Deferred capability control** — not meaningful until the corresponding capability exists, but not permission to defer a correctness requirement after that capability is introduced.
+1. **Implemented now** — present in code/schema/tests/CI.
+2. **Required invariant** — repository policy that the introducing slice must satisfy.
+3. **Deferred capability control** — not meaningful until the capability exists, but mandatory once it does.
 
-ADR 0001 ratifies `application_instance` as the BeeBox v1 root product-isolation resource. ADR 0002 ratifies application-scoped email identity semantics. Neither ADR ratifies permanent public application/user/email identifier encoding, a universal organization tenant model, token/JWT trust boundaries, Clerk compatibility, or future service data ownership.
+ADR 0001 keeps `application_instance` as the root isolation resource. ADR 0002 keeps email application-scoped, unverified by default, and explicitly forbids automatic account linking from email equality. This password foundation does not change either decision and does not ratify public IDs, public password policy, account-linking, token trust boundaries, Clerk compatibility, or future service data ownership.
 
 ## 2. Current architecture and security posture
 
-The repository contains one Go deployable with two process modes:
+BeeBox remains one Go deployable. Serve mode validates configuration, opens one PostgreSQL pool, proves bounded connectivity, then exposes only health endpoints. `beebox migrate` explicitly applies embedded forward migrations and exits. Serve mode never auto-migrates.
 
-- no arguments: validate serve configuration, open one PostgreSQL pool, prove database connectivity with a bounded startup context, then open the HTTP listener;
-- `migrate`: validate migration configuration, open and verify PostgreSQL, apply embedded forward migrations under a bounded migration context, then exit.
-
-The HTTP surface still contains only:
-
-- `GET /health/live`, process-only and independent of PostgreSQL;
-- `GET /health/ready`, which performs a current PostgreSQL ping under a request deadline.
-
-PostgreSQL is the initial source of truth. Embedded migrations now contain:
+Embedded migrations now contain:
 
 - version 1 runtime baseline;
-- version 2 additive `application_instances` root table;
-- version 3 additive application-scoped `users` child table;
-- version 4 additive application-scoped `email_identifiers` plus the scoped referenced-key constraint required for the composite user foreign key.
+- version 2 `application_instances`;
+- version 3 application-scoped `users`;
+- version 4 application-scoped `email_identifiers` and the scoped referenced user key;
+- version 5 application-scoped `password_credentials`.
 
-Current internal persistence includes:
+Current internal identity/authentication persistence includes:
 
 - application-instance create/exact resolve;
-- application-scoped user create and exact `(application scope, user ID)` resolve;
-- email-identifier create under trusted `(application scope, user ID)` and resolve by `(application scope, normalized email)`.
+- application-scoped user create and exact scoped resolve;
+- email-identifier create and application-scoped resolve-by-normalized-address;
+- password-credential create and exact `(application_instance_id, user_id)` resolve.
 
-Email addresses are the first persisted BeeBox product PII. New email identifiers start unverified (`verified_at IS NULL`). The repository contains no operation that marks an identifier verified.
+Password hashing is an internal primitive based on `golang.org/x/crypto/argon2` Argon2id. BeeBox v1 uses Argon2 version 19, time cost 3, memory 64 MiB, parallelism 4, a cryptographically random 16-byte salt, and a 32-byte derived hash. The stored envelope is strict and internal. Raw password bytes are never stored in PostgreSQL.
 
-There is **no reachable application/user/admin identity lifecycle**. There is still no email delivery, OTP/link verification, password, signup/signin, authentication, authorization, session/token behavior, organization resource, public identifier lookup, public application/user/email ID, public product API, SDK, account-linking operation, primary-email behavior, or product audit subsystem.
+There is **no reachable password authentication lifecycle**. No signup, signin, email+password lookup, public password verification, password policy, login-attempt accounting, lockout/rate limiting, password change/reset, session/token creation, authorization, or security audit subsystem exists.
 
 ## 3. Assets
 
-### Current assets
-
 | Asset | Security property |
 | --- | --- |
-| Runtime availability | Reject invalid startup state, bound I/O, clean up deterministically, and expose truthful health. |
-| PostgreSQL connectivity/state | Do not report ready while PostgreSQL is unavailable; do not leak provider/topology details. |
-| Migration integrity/history | Run only reviewed embedded forward migrations; serialize concurrent runners; do not record failed transactional migrations as applied. |
-| `application_instances` root rows | Preserve distinct internal identities and exact root resolution. |
-| `users` child rows | Every row belongs to exactly one existing application instance; scoped lookup must not cross roots. |
-| `email_identifiers` rows | Preserve application/user ownership, normalized-email uniqueness inside one application, explicit verification state, and stored email PII. |
-| Email PII | Prevent unnecessary disclosure in errors, logs, metrics, traces, fixtures, review evidence, backups, and future APIs. |
-| Internal application/user/email identities | Storage-only keys for trusted persistence; never authorization tokens or permanent public resource-ID contracts. |
-| Scoped relationships | PostgreSQL referential integrity must preserve application -> user -> email ownership and survive backup/restore consistently. |
-| Runtime/migration configuration | Fail invalid values safely; database URLs may contain credentials and are secret-bearing inputs. |
-| Database credentials | Runtime and migration privileges have different blast radii; credential values must not leak. |
-| Repository/CI integrity | Source, migrations, dependencies, workflows, and test evidence are part of the trusted build/release base. |
+| Runtime availability | Bounded I/O and truthful health behavior. |
+| PostgreSQL state | Correct scoped relationships and safe operational failures. |
+| Migration history | Embedded forward-only ordered migrations; failed transactional migrations are not recorded. |
+| Application/user rows | Root and child identities remain correctly scoped and internal. |
+| Email identifiers | Per-application uniqueness, same-app ownership, explicit unverified state, PII protection. |
+| Password credentials | One credential per scoped user in this slice; same-app user ownership enforced by PostgreSQL. |
+| Password hashes | Sensitive credential-derived data; protect from logs/errors/telemetry and unnecessary exposure. |
+| Raw password bytes | Transient secret input to hash/verify only; never persisted or logged. |
+| Database/backups | Now contain email PII and password hashes; access compromise can enable offline attack. |
+| Internal database IDs | Storage-only, never authorization or permanent public contracts. |
+| Repository/CI | Source, dependencies, migrations and exact-head verification are trusted release inputs. |
 
-### Future high-value assets
-
-Verified identifier evidence, credentials, password/OTP secrets, authentication factors, sessions/tokens, organization membership, authorization state, audit records, and additional profile PII do not exist yet. Once introduced, confidentiality, integrity, replay resistance, application isolation, applicable organization isolation, deletion/retention, and auditability are merge-blocking properties.
-
-## 4. Actors
+## 4. Actors and trust assumptions
 
 | Actor | Capability / trust assumption |
 | --- | --- |
-| Unauthenticated network client | Can reach health endpoints if deployment networking exposes them. No product route exists. Untrusted. |
-| Malicious external actor | May attempt probing, credential theft, dependency exploitation, future identifier enumeration, account takeover, or cross-scope access. Untrusted. |
-| Operator | Supplies environment configuration and controls serve/migration process execution. Mistakes/credential compromise are in scope. |
-| Runtime process | Owns the PostgreSQL pool and HTTP health surface; no product handler currently calls identity persistence. |
-| Trusted internal persistence caller | May supply trusted application scope, user identity, and raw email to internal stores. No public/client path currently establishes this trust. |
-| Migration operator/process | Performs reviewed DDL with a migration-capable credential; compromise has a larger integrity blast radius. |
-| PostgreSQL | Source of truth/external dependency. Server authorization/network/storage controls are outside the Go process boundary. |
-| CI/test environment | Builds/tests code and starts disposable PostgreSQL with synthetic test-only values. Third-party Actions are supply-chain inputs. |
+| Unauthenticated network client | Can reach health endpoints only; no product auth route exists. |
+| Malicious external actor | Future brute-force/enumeration/reset takeover are expected threats once auth is reachable. |
+| Trusted internal caller | May invoke persistence/hash primitives inside server code; no public path currently establishes this trust. |
+| Operator | Controls configuration and process execution; credential/storage mistakes remain in scope. |
+| Migration operator | Has DDL authority for explicit reviewed migrations. |
+| PostgreSQL / backup storage | Source of truth and sensitive credential-derived storage boundary. |
+| CI | Executes synthetic tests, including real PostgreSQL integration. |
 
 ## 5. Trust boundaries and entry points
 
-### A. Network client -> HTTP runtime
+### Network -> HTTP runtime
 
-Current handlers accept no product body, email, user identity, application-instance identity, token, organization identifier, cookie, or bearer credential.
+Current HTTP handlers remain health-only and accept no password, email credential, user identity, application scope, token, cookie, or product mutation.
 
-### B. Runtime/persistence -> PostgreSQL
+### Trusted server code -> password hashing primitive
 
-Current interactions include startup/readiness checks, migration SQL/goose metadata, application-instance persistence, application-scoped user persistence, and application-scoped email-identifier persistence. PostgreSQL/provider errors are untrusted for direct exposure.
+`HashPassword` accepts exact raw bytes. It rejects empty and oversized input, performs no trim/case/Unicode normalization, generates salt with `crypto/rand`, and derives Argon2id output. `VerifyPassword` parses only the exact supported internal envelope, checks bounded field lengths and metadata before expensive Argon2 work, recomputes Argon2id, then uses constant-time comparison.
 
-### C. Trusted server scope -> application-instance store
+This primitive does not resolve a user, identify an email, authenticate a request, enforce attempts, authorize a scope, create a session, or emit an audit fact.
 
-The root store accepts storage-internal identity as trusted server-selected persistence scope. This is persistence behavior, not authorization.
+### Trusted server scope/user -> password credential store
 
-### D. Trusted server scope -> user store
+Password credential create requires positive trusted application scope, positive internal user ID and a valid internal `PasswordHash`. PostgreSQL enforces `(application_instance_id, user_id) -> users(application_instance_id, id)` and uses `(application_instance_id, user_id)` as the primary key. There is no existence pre-read.
 
-User resolve requires both trusted application scope and internal user ID. A valid foreign user ID resolves as not found under another application. There is no unscoped user lookup.
+Resolve queries by both application scope and user ID. There is no global user-ID-only credential lookup or email fallback.
 
-### E. Trusted server scope/user -> email-identifier store
+### Runtime -> PostgreSQL
 
-Email create requires a positive trusted application scope, a positive internal user identity, and a valid BeeBox-v1 mailbox. PostgreSQL verifies that the selected user belongs to the same selected application using a composite foreign key.
-
-Email resolve normalizes the mailbox using the same domain function and queries by both `application_instance_id` and `normalized_email`. There is no global email lookup or fallback.
-
-**Limit:** persistence-level scoping is implemented; authentication and authorization that establish trusted scope are not.
-
-### F. Operator/environment -> runtime configuration
-
-Current configuration includes the database URL, HTTP address, lifecycle timeouts, and process-mode arguments.
-
-### G. Migration operator/process -> PostgreSQL
-
-`beebox migrate` intentionally crosses a schema-mutation boundary. Serve mode does not automatically migrate.
-
-### H. CI -> disposable test PostgreSQL
-
-CI runs format, vet, unit, database/migration/application-instance/identity PostgreSQL integration, and race checks. Email integration uses only synthetic `example.test` mailbox values.
+Stores reuse the process-owned pgx pool through temporary `database/sql` adapters and preserve context cancellation/deadlines. Raw provider/SQL errors are classified into stable BeeBox-owned categories.
 
 ## 6. Existing controls verified now
 
-### Configuration and credential-safe errors
+### Argon2id password hashing
 
-- configuration/database/readiness/migration failures use stable safe categories;
-- provider/SQL/topology/credential details are not returned by current stable error paths;
-- identity persistence maps provider failures to BeeBox-owned error categories.
+Implemented:
 
-### Bounded runtime and persistence I/O
+- official `golang.org/x/crypto/argon2` Argon2id primitive;
+- version 19 / `v=19`;
+- time cost 3;
+- memory 65536 KiB;
+- parallelism 4;
+- random 16-byte salt from `crypto/rand`;
+- 32-byte derived hash;
+- strict internal envelope `$argon2id$v=19$m=65536,t=3,p=4$...$...`;
+- exact metadata acceptance for v1 rather than speculative algorithm agility;
+- exact encoded salt/hash length checks before base64 decode;
+- strict base64 decode and decoded-length validation;
+- malformed/unsupported parameter rejection before Argon2 allocation;
+- constant-time derived-hash comparison;
+- stable mismatch and malformed-hash error categories;
+- empty and greater-than-1024-byte internal inputs rejected;
+- raw password bytes are not trimmed, lowercased, or Unicode-normalized;
+- independently generated hashes for the same password differ because salts differ.
 
-- startup/readiness/migration work is deadline-bound;
-- HTTP server and graceful shutdown have explicit bounds;
-- one process-owned pgx PostgreSQL pool is reused;
-- stores accept `context.Context`, preserve cancellation/deadline failure, and use temporary `database/sql` adapters backed by the existing pool;
-- temporary adapters close without closing the underlying process pool.
+The 1024-byte bound is internal resource protection, not a public password-policy commitment. No minimum length, complexity, breach screening or password-history rule is ratified.
 
-### Application-instance and user persistence
+### Application-scoped password credential persistence
 
-Implemented now:
+Implemented:
 
-- database-generated internal identities;
-- `TIMESTAMPTZ` server-owned creation time;
-- `users.application_instance_id` is `NOT NULL` with a real root FK;
-- user resolve predicates on both application scope and user ID;
-- cross-application user lookup returns not found;
-- FK tests prevent orphan users;
-- database failures map to stable safe internal categories;
-- concurrent inserts retain distinct generated identities.
+- `password_credentials(application_instance_id, user_id, password_hash, created_at)`;
+- primary key `(application_instance_id, user_id)` allows exactly one credential per user in this slice;
+- real composite foreign key to `users(application_instance_id,id)`;
+- no `ON DELETE CASCADE`;
+- one atomic insert with no SELECT-before-INSERT;
+- duplicate concurrent creates rely on PostgreSQL and map to stable credential conflict;
+- a user from application B cannot be assigned a credential under application A;
+- foreign-application resolve returns not found;
+- resolve always includes application scope and user ID;
+- returned stored hash must parse as a supported BeeBox password hash;
+- context cancellation/deadline is preserved;
+- stable persistence errors do not expose SQL, SQLSTATE, constraint names, topology, raw passwords, or encoded hashes.
 
-### Application-scoped email identity persistence
+### Secret-handling boundary
 
-Implemented now:
+- raw password is never sent to PostgreSQL by this slice;
+- no password/hash logging, metrics, trace attributes, events, HTTP response, or debug dump is added;
+- `PasswordHash` does not implement `fmt.Stringer`;
+- tests use synthetic password values;
+- no memory-zeroization claim is made because Go/runtime guarantees do not support such a claim here;
+- backups now contain password hashes and therefore sensitive credential-derived data.
 
-- `email_identifiers` stores explicit `application_instance_id`, `user_id`, case-preserving `email_address`, lowercase `normalized_email`, nullable `verified_at`, and `created_at`;
-- a composite FK `(application_instance_id, user_id) -> users(application_instance_id, id)` prevents assigning an email claim to a user from another application;
-- PostgreSQL uniqueness on `(application_instance_id, normalized_email)` is the concurrency source of truth;
-- the same normalized mailbox is allowed in different application instances;
-- duplicate normalized mailboxes inside one application return a stable conflict and never reassign/merge/link users;
-- duplicate creation for the same user also conflicts rather than becoming implicit idempotency;
-- new identifiers are unverified and there is no verification mutation in this slice;
-- email create uses one atomic insert with no SELECT-then-INSERT uniqueness pre-check;
-- email resolve always includes trusted application scope and normalized mailbox;
-- cross-application and cross-user adversarial tests exercise real PostgreSQL constraints;
-- concurrent case/space variants that normalize identically produce exactly one committed row and stable conflicts for losers;
-- returned timestamps are normalized to UTC;
-- stable email errors contain no email address, SQLSTATE, SQL, constraint name, credential, or topology detail.
+### Email identity controls remain unchanged
 
-### BeeBox v1 email normalization
+- email remains application-scoped and not globally unique;
+- same-app normalized duplicates conflict rather than link accounts;
+- cross-app same-email coexistence is allowed;
+- new email identifiers remain unverified;
+- no email verification mutation or account-linking lifecycle exists.
 
-Implemented domain policy:
+### Migration integrity
 
-- ASCII mailbox addresses only;
-- surrounding ASCII spaces are trimmed;
-- CR/LF/control characters and non-ASCII input are rejected;
-- mailbox-only syntax is validated with Go standard-library parsing while display-name forms are rejected;
-- accepted mailbox length is bounded;
-- stored mailbox preserves trimmed input case;
-- comparison key lowercases the complete mailbox;
-- dots and plus tags are preserved;
-- no Gmail/Workspace/Outlook/Yahoo/provider alias transformations are performed;
-- SMTPUTF8/internationalized mailbox semantics are unsupported in this slice.
-
-This is a BeeBox v1 comparison policy, not a claim about universal SMTP local-part semantics or complete RFC 5322 compatibility.
-
-### PII minimization boundary
-
-- email is explicitly classified as PII in model/docs;
-- this PR adds no email logging, metrics, tracing, events, or public responses;
-- stable errors do not include raw email;
-- tests/docs use reserved synthetic `example.test` addresses rather than real-person fixtures.
-
-**Important limits:** PostgreSQL/storage/backup encryption, production access controls, retention, export, deletion, anonymization, and compliance programs are not implemented by this repository slice.
-
-### Migration integrity/failure containment
-
-- migrations are embedded, forward-only, ordered five-digit files;
-- exactly one `Up` is allowed and `Down`, `NO TRANSACTION`, and `ENVSUB` are rejected;
-- versions 1/2/3 remain immutable; version 4 is additive and transactional under existing defaults;
-- normal migration evidence requires exactly applied positive versions 1/2/3/4 and tables `application_instances`, `users`, `email_identifiers`, and `goose_db_version`;
-- rerun idempotency and concurrent convergence remain tested;
-- synthetic version-5 failure proves transactional rollback and failed-version non-recording.
-
-### CI/test baseline
-
-Current CI runs:
-
-- `gofmt -l .` verification;
-- `go vet ./...`;
-- `go test ./...`;
-- PostgreSQL integration for database, migration, application-instance, user, and email-identifier persistence;
-- `go test -race ./...`.
+- migrations remain embedded, Up-only and transactionally applied under existing runner defaults;
+- merged migrations 1–4 remain immutable;
+- migration 5 is additive and contains no Down, ENVSUB, NO TRANSACTION, backfill or destructive rewrite;
+- exact normal migration state is versions 1/2/3/4/5;
+- exact table set includes `application_instances`, `email_identifiers`, `goose_db_version`, `password_credentials`, and `users`;
+- synthetic transactional failure moves to version 6;
+- rerun idempotency, advisory locking, cancellation, concurrent convergence and failed-version non-recording remain tested.
 
 ## 7. Threat analysis
 
-| Threat | Current mitigation | Residual/required control |
+| Threat | Implemented mitigation | Residual / required future control |
 | --- | --- | --- |
-| Cross-application email leakage | Email resolve predicates on trusted application scope + normalized email; same mailbox can coexist independently across applications; A/B tests verify isolation. | First reachable lookup must authenticate and separately authorize server-selected scope; no public lookup exists now. |
-| Cross-application user/email ownership mismatch | Composite FK requires `(application_instance_id, user_id)` to identify a real user in the same application; adversarial cross-app owner insert fails. | Future schema changes must preserve scoped referential integrity. |
-| Normalization/case collision | One deterministic domain normalizer plus PostgreSQL `(app, normalized_email)` uniqueness; concurrent variants converge to one row. | Any future normalization-policy change is compatibility/security-sensitive and requires migration/review. |
-| Account takeover through automatic linking | ADR 0002 forbids auto-link/merge/reassignment; same-app duplicate always conflicts, including unverified claims. | Explicit linking/merge requires a separately reviewed verified-identity lifecycle and takeover analysis. |
-| Email enumeration | No reachable product/public email lookup exists. | First signup/signin/recovery/identifier lookup must map internal found/not-found/conflict states to anti-enumerating public behavior with abuse controls. |
-| PII leakage | No email logging/metrics/tracing/public output; stable errors omit email/provider diagnostics; synthetic fixtures only. | Future telemetry, providers, support/admin APIs, exports, backups, and incidents require explicit minimization/redaction/access policy. |
-| Unverified email treated as trusted | New records have `verified_at = NULL`; no verification transition exists. | Verification slice must define OTP/link cryptography, expiry, replay, attempt budgets, delivery, transaction semantics, audit, and takeover resistance. |
-| Verification replay/attempt abuse | Verification capability does not exist. | Required when verification is introduced: bounded attempts, expiry, replay resistance, resend/rate policy, audit, and anti-enumeration. |
-| Cross-application user IDOR | User resolve predicates on application scope + user ID. | First reachable caller must authenticate and authorize trusted scope. |
-| Internal DB keys becoming public authority | Models/docs define DB identities as storage-internal; no public contract exists. | First public resource contract must ratify opaque BeeBox IDs independently and never derive authority from possession. |
-| SQL/provider/topology leakage | Persistence/migration/database failures map to stable BeeBox errors. | Future providers/telemetry need equivalent safe mapping. |
-| Database outage | Readiness is bounded; persistence honors context. | Reachable workflows must define retry/idempotency/user-facing failure semantics. |
-| Unauthorized schema mutation | Explicit migration mode; no serve-time migration. | Runtime/migration production DB privilege separation remains operational policy. |
-| Missing security audit fact | Current persistence primitives are unreachable internal operations. | First reachable identifier/user/admin mutation must create complete audit evidence per contract conventions; async email/provider failure cannot erase it. |
-| Missing email deletion/export/retention lifecycle | No delete/export/retention API exists and no soft-delete column is claimed. | First reachable lifecycle requiring deletion/export must define authorization, audit, retention, backup handling, referential cleanup, retries, and partial failure. |
-| Dependency/CI supply-chain compromise | Versioned Go deps and current-head CI. | Actions remain moving major tags; dedicated SBOM/provenance/signing is not evidenced. |
-| Insecure transport/storage | No repository proof of production HTTP/PostgreSQL TLS or encryption-at-rest policy. | Define/enforce production transport/storage ownership before public production claims. |
+| Offline password cracking after DB/backup compromise | Argon2id with 64 MiB memory, time 3, random salt; plaintext not stored. | Password strength policy, breach screening and operational backup/access protection are future concerns. Hash compromise still permits offline guessing. |
+| Plaintext password leakage | Raw bytes are transient hash/verify inputs only; no persistence/logging/telemetry paths are introduced. | First reachable auth flow must preserve this boundary across handlers, tracing, support tooling and incidents. |
+| Password-hash leakage | Stable errors omit encoded hashes; no telemetry is added; type has no Stringer. | Backups/admin tooling/support access need explicit access/minimization policy. |
+| Argon2 resource exhaustion | Raw input bounded; stored parser accepts only exact parameters and validates metadata/lengths before Argon2 work. | Reachable signin/signup must add request concurrency, rate and attempt controls; do not allow attacker-selected KDF parameters. |
+| Malformed stored hash causing unsafe allocation | Exact algorithm/version/parameter literal and encoded lengths are checked before expensive work. | Future parameter migration must remain bounded and reviewed. |
+| Cross-application credential ownership | Composite FK binds application and user; adversarial A/userB insert fails. | Reachable caller must separately authenticate and authorize server-selected application scope. |
+| Credential duplicate race | `(application_instance_id,user_id)` PK is concurrency source of truth. | Future password replacement/reset must define transactional transition semantics. |
+| Email/account takeover through auto-linking | ADR 0002 unchanged; unverified/matching email does not link. | Explicit linking requires separately reviewed verified-identity lifecycle. |
+| Email/user enumeration during signin | No reachable signin or public credential lookup exists. | First reachable signin must use anti-enumerating external behavior regardless of internal not-found/mismatch distinctions. |
+| Online brute force | No reachable signin exists. | First signin requires attempt budgets, throttling/rate controls, abuse detection and safe failure semantics. |
+| Password reset takeover | Reset capability does not exist. | Reset/recovery must prove identity, bound attempts/replay/expiry, audit and handle sessions safely. |
+| Stale sessions after password change/reset | Password change/reset and sessions do not exist. | Future lifecycle must define session/token revocation/rotation behavior. |
+| Missing audit fact | Current password hashing/store operations are unreachable internal primitives. | First reachable signup/password-change/reset/admin credential mutation must atomically preserve required audit evidence; later async provider failure cannot erase an already committed audit fact. |
+| Database/provider detail leakage | Adapter errors map to BeeBox-owned categories. | Future reachable APIs must map internal distinctions to safe public contracts. |
+| Secret-bearing backup compromise | Plaintext is absent but password hashes and email PII are present. | Production backup encryption/access/retention/restoration policy remains operational work. |
 
-## 8. Ratified identity decisions
+## 8. Reachability and audit boundary
 
-### ADR 0001 — root isolation
+This PR does **not** make credential creation or verification a product/admin security action. No HTTP handler, use case, signup/signin orchestration or admin mutation calls these primitives.
 
-- `application_instance` remains the BeeBox v1 root isolation resource;
-- organization is not the root tenant;
-- public application/user IDs remain separate future compatibility decisions.
+The first reachable signup/password-change/reset/admin credential mutation must define and implement:
 
-### ADR 0002 — email identity v1
+- authenticated/server-selected application context as appropriate;
+- authorization separately from authentication;
+- anti-enumeration where identifier existence is sensitive;
+- attempt/rate/resource controls;
+- idempotency/retry/concurrency/transaction semantics;
+- complete audit facts required by `docs/contracts/conventions.md`;
+- safe public errors;
+- session/token consequences where applicable.
 
-- email identity is application-scoped, not globally unique;
-- one normalized email belongs to at most one user inside an application;
-- same normalized email may belong to independent users in different applications;
-- matching email never automatically links/merges/reassigns accounts;
-- an unverified claim never links accounts;
-- new claims start unverified;
-- v1 comparison is ASCII, outer-space-trimmed, full-mailbox lowercase with case-preserving stored address and no provider-specific alias transformations;
-- SMTPUTF8, public ID encoding, primary-email UX, and explicit linking remain deferred.
+Failure of a later asynchronous email/provider step must not erase an already committed required audit fact.
 
-## 9. Future controls required with corresponding capabilities
+If a future change makes password verification reachable, the current internal `ErrPasswordMismatch`, not-found and credential-conflict categories are not permission to expose account existence publicly.
+
+## 9. Data lifecycle
+
+1. Application-instance and user rows remain durable scoped records.
+2. Email identifiers remain durable PII-bearing records and unverified unless a future verification lifecycle changes that state.
+3. Password credential rows are durable credential-derived records while present.
+4. No plaintext password is retained by this foundation.
+5. Backup/restore now contains email PII and password hashes and must preserve application/user/credential relationships.
+6. Production backup access therefore grants access to material usable for offline password guessing and must be treated accordingly.
+7. No credential deletion, replacement, reset, history or user-deletion cleanup is implemented.
+8. Future password replacement/reset must define transaction boundaries, audit evidence, retries and session/token revocation semantics.
+9. Future user deletion must explicitly define password-credential deletion/retention, backup treatment, authorization, audit and partial failure.
+10. No GDPR or other compliance claim is made.
+
+## 10. Future controls required with corresponding capabilities
+
+### First reachable password signup/signin
+
+Must add explicit public password policy, anti-enumeration, attempt budgets, abuse/rate controls, server-selected application context, authentication orchestration, stable public contracts, audit where required, and session/token behavior separately. The 1024-byte internal hashing bound is not that policy.
+
+### First password change/reset/recovery
+
+Must define proof of authority, current/recovery factor behavior, replay and expiry, transaction semantics, concurrent attempts, audit, notification failure behavior, and session/token revocation or rotation.
 
 ### First email verification flow
 
-The introducing slice must define:
+Must define OTP/link generation, expiry, replay, attempt budgets, resend/rate controls, provider behavior, transaction boundary for `verified_at`, anti-enumeration and audit. Password storage does not make email verified.
 
-- verification proof/token/OTP generation using reviewed cryptographic randomness where applicable;
-- expiry, one-time/replay semantics, bounded attempts, resend/rate behavior, and concurrency;
-- email provider/delivery timeout, safe retry classification, and failure semantics;
-- transaction boundary for setting `verified_at`;
-- anti-enumeration and takeover resistance;
-- complete required security audit evidence;
-- redaction of email/provider/secret data.
+### First public API
 
-### First reachable signup/signin/identifier lookup
+Must use versioned BeeBox-owned models, authenticated and separately authorized server-selected scope, bounded inputs, safe errors, idempotency/retry/concurrency, observability redaction and required audit evidence.
 
-The introducing slice must add authentication-flow semantics, separate authorization where applicable, server-selected application scope, anti-enumerating public errors, abuse/rate controls, idempotency/retry/replay behavior for mutations, and public BeeBox-owned versioned contracts.
+### Explicit account linking
 
-Internal `ErrEmailIdentifierNotFound` and `ErrEmailConflict` do not authorize a public response that reveals identifier existence.
-
-### Explicit account-linking lifecycle
-
-A future linking/merge lifecycle requires a separate reviewed decision. It must rely on verified identity evidence, protect against account takeover, define conflicts/recovery/rollback, preserve application scope, and create required audit evidence. Email-string equality alone is insufficient.
-
-### First password/authentication capability
-
-Use reviewed password hashing/crypto primitives, define attempt budgets/recovery, separate authentication from authorization, and preserve anti-enumeration and audit requirements.
-
-### First state-changing public API
-
-Define versioned BeeBox contracts, authenticated and separately authorized server-selected scope, bounded inputs, stable safe errors, idempotency/retry/replay/concurrency, browser-origin protections where applicable, audit, observability, and PII redaction.
-
-### First user/email deletion, export, or retention lifecycle
-
-Before claiming completion, define deletion/anonymization, retention periods, export authorization/format, downstream cleanup, backup implications, referential behavior, retry/partial failure, and audit evidence. Email PII must be included explicitly.
-
-### First session/token/key capability
-
-Explicitly decide algorithm/issuer/audience/authorized-party/lifetime/rotation/revocation semantics and use cryptographic generation/hashed storage where lifecycle permits.
-
-## 10. Data lifecycle, assumptions and residual risks
-
-1. Application-instance rows remain durable roots; no root delete lifecycle exists.
-2. User rows remain durable application-scoped identity records; no user deletion/anonymization lifecycle exists.
-3. Email-identifier rows are durable PII-bearing records in this persistence slice; no email deletion/export/retention lifecycle exists.
-4. Backup/restore must preserve application/user/email identities and relationships. Backup handling now includes email PII; repository automation does not verify production backup/restore or deletion from historical backups.
-5. Separate runtime/migration DB principals are recommended but not code-enforced.
-6. PostgreSQL remains required for serving; no failover/degraded product mode exists.
-7. Persistence-level scoping does not prove HTTP authorization because no reachable product caller exists.
-8. Go dependencies and GitHub Actions remain trusted build inputs; dedicated supply-chain controls are incomplete.
-9. Email verification is not implemented; stored email claims must not be treated as verified identity evidence.
-10. No GDPR or other regulatory compliance claim is made by this slice.
+Still requires a separate reviewed decision based on verified identity evidence. Password possession or email-string equality does not silently authorize linking.
 
 ## 11. Review/update triggers
 
-Update/review this model when a PR introduces or changes:
+Review this model when a change introduces or changes:
 
-- email verification, OTP/link delivery, provider integration, resend or attempt logic;
-- email normalization, uniqueness, account linking/merging, primary-email semantics, or SMTPUTF8 support;
-- another identifier type or PII-bearing profile field;
-- a reachable user/application/admin lifecycle or public product API;
-- public application/user/email identifier encoding/compatibility;
-- authentication, recovery, MFA, sessions, tokens, cookies, API keys, OAuth, or impersonation;
-- product logging/tracing/metrics/audit/events/webhooks/queues/Redis/workers/providers;
-- deletion/anonymization/export/retention/backup/restore behavior;
-- migration behavior, database privilege assumptions, or schema rollout strategy;
-- public deployment/TLS/proxy/domain/secret-management/production DB configuration;
-- CI permissions, third-party Actions, dependency/provenance/signing/release workflow;
-- a new network/service boundary or service extraction;
-- a security incident or security-relevant ADR.
+- reachable signup/signin/password verification;
+- public password policy or breach screening;
+- password change/reset/recovery/history;
+- login attempts, throttling, CAPTCHA, lockout or other abuse controls;
+- session/token creation or revocation tied to password lifecycle;
+- email verification/provider/OTP behavior;
+- account linking/merging or primary-email semantics;
+- credential deletion/retention/export/backup behavior;
+- public application/user/email identifiers;
+- auth/audit/logging/tracing/metrics involving credentials or PII;
+- migration/schema ownership or a new service boundary;
+- production storage/TLS/secret-management assumptions;
+- dependency/CI/provenance controls.
 
 ## 12. Evidence map
 
-- `Instruction.md` — architecture, security, tenant/data, testing, audit and change-control invariants.
-- `docs/adr/0001-application-instance-root.md` — Human-ratified v1 root isolation decision.
-- `docs/adr/0002-email-identity-v1.md` — Human-ratified email scope, normalization, uniqueness, verification-state, and no-auto-link decision.
-- `docs/contracts/conventions.md` — ID/error/idempotency/time/versioning/audit/tenancy semantics.
-- `internal/platform/migration/sql/00002_application_instances.sql` — root table.
-- `internal/platform/migration/sql/00003_users.sql` — application-scoped user table.
-- `internal/platform/migration/sql/00004_email_identifiers.sql` — scoped email PII table, composite user FK and per-app normalized uniqueness.
-- `internal/platform/migration/*` — forward migration validation, advisory locking, transactional failure behavior and exact migration-state tests.
-- `internal/identity/email.go` / `email_test.go` — BeeBox v1 normalization, internal email model, stable errors, and deterministic validation evidence.
-- `internal/identity/postgres/email_store.go` — scoped atomic create/resolve and safe conflict/error classification using the process-owned pool.
-- `internal/identity/postgres/email_store_integration_test.go` — same-app conflicts, cross-app same-email coexistence, composite-FK rejection, unverified state, concurrency and safe-error evidence.
-- `internal/identity/postgres/store.go` / `store_integration_test.go` — application-scoped user persistence and adversarial root isolation evidence.
-- `internal/platform/database/*` — process-owned pgx pool and temporary `database/sql` adapter behavior.
-- `.github/workflows/ci.yml` — formatting, vet, unit, database/migration/application-instance/identity integration and race checks.
-- `README.md` / `CONTRIBUTING.md` — current scope, PII boundary, migration behavior and repository-native verification commands.
+- `Instruction.md` — architecture, security, tenant/data, testing and audit invariants.
+- `docs/contracts/conventions.md` — safe errors, audit, tenancy, idempotency and public-contract rules.
+- `docs/adr/0001-application-instance-root.md` — v1 root isolation.
+- `docs/adr/0002-email-identity-v1.md` — email scope/no-auto-link/unverified semantics.
+- `internal/authentication/password.go` / `password_test.go` — Argon2id parameters, random salt, strict parser, raw input behavior and constant-time verification.
+- `internal/authentication/credential.go` — BeeBox-owned internal credential model and stable error categories.
+- `internal/authentication/postgres/password_store.go` — scoped atomic create/resolve using the process pool.
+- `internal/authentication/postgres/password_store_integration_test.go` — cross-app FK, no-plaintext storage, duplicate concurrency, verification and safe-error evidence.
+- `internal/platform/migration/sql/00005_password_credentials.sql` — scoped credential table and composite user FK.
+- `internal/platform/migration/*` — exact migration state, forward-only validation, advisory locking and transactional failure evidence.
+- `internal/identity/*` — application-scoped user/email identity persistence retained unchanged.
+- `.github/workflows/ci.yml` — formatting, vet, unit, database/migration/application-instance/identity/authentication integration and race checks.
+- `README.md` / `CONTRIBUTING.md` — current internal-only scope and exact repository verification commands.
