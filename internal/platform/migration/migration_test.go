@@ -22,20 +22,27 @@ func TestEmbeddedSourcesAreValidAndOrdered(t *testing.T) {
 	if err := validateSources(sources); err != nil {
 		t.Fatalf("validateSources() error = %v", err)
 	}
-
 	entries, err := fs.ReadDir(sources, ".")
 	if err != nil {
 		t.Fatalf("fs.ReadDir() error = %v", err)
 	}
-	if len(entries) != 7 ||
-		entries[0].Name() != "00001_runtime_baseline.sql" ||
-		entries[1].Name() != "00002_application_instances.sql" ||
-		entries[2].Name() != "00003_users.sql" ||
-		entries[3].Name() != "00004_email_identifiers.sql" ||
-		entries[4].Name() != "00005_password_credentials.sql" ||
-		entries[5].Name() != "00006_audit_events.sql" ||
-		entries[6].Name() != "00007_email_verification_challenges.sql" {
-		t.Fatalf("embedded migration sources = %v, want ordered versions 1 through 7", entries)
+	want := []string{
+		"00001_runtime_baseline.sql",
+		"00002_application_instances.sql",
+		"00003_users.sql",
+		"00004_email_identifiers.sql",
+		"00005_password_credentials.sql",
+		"00006_audit_events.sql",
+		"00007_email_verification_challenges.sql",
+		"00008_phase1_public_integration.sql",
+	}
+	if len(entries) != len(want) {
+		t.Fatalf("embedded migration count = %d, want %d", len(entries), len(want))
+	}
+	for i, name := range want {
+		if entries[i].Name() != name {
+			t.Fatalf("migration[%d] = %q, want %q", i, entries[i].Name(), name)
+		}
 	}
 }
 
@@ -45,55 +52,31 @@ func TestValidateSourcesRejectsUnsafeOrInvalidSources(t *testing.T) {
 		sources fs.FS
 	}{
 		{name: "empty", sources: fstest.MapFS{}},
-		{
-			name: "invalid name",
-			sources: fstest.MapFS{
-				"1_bad.sql": {Data: []byte(validMigration)},
-			},
-		},
-		{
-			name: "duplicate version",
-			sources: fstest.MapFS{
+		{name: "invalid name", sources: fstest.MapFS{"1_bad.sql": {Data: []byte(validMigration)}}},
+		{name: "duplicate version", sources: fstest.MapFS{
+			"00001_one.sql": {Data: []byte(validMigration)},
+			"00001_two.sql": {Data: []byte(validMigration)},
+		}},
+		{name: "down directive", sources: fstest.MapFS{
+			"00001_bad.sql": {Data: []byte(validMigration + "-- +goose Down\nSELECT 1;\n")},
+		}},
+		{name: "non-transactional directive", sources: fstest.MapFS{
+			"00001_bad.sql": {Data: []byte("-- +goose NO TRANSACTION\n" + validMigration)},
+		}},
+		{name: "environment substitution", sources: fstest.MapFS{
+			"00001_bad.sql": {Data: []byte("-- +goose Up\n-- +goose ENVSUB ON\nSELECT '${SECRET}';\n")},
+		}},
+		{name: "missing up directive", sources: fstest.MapFS{
+			"00001_bad.sql": {Data: []byte("SELECT 1;\n")},
+		}},
+		{name: "out of order", sources: unsortedFS{
+			MapFS: fstest.MapFS{
 				"00001_one.sql": {Data: []byte(validMigration)},
-				"00001_two.sql": {Data: []byte(validMigration)},
+				"00002_two.sql": {Data: []byte(validMigration)},
 			},
-		},
-		{
-			name: "down directive",
-			sources: fstest.MapFS{
-				"00001_bad.sql": {Data: []byte(validMigration + "-- +goose Down\nSELECT 1;\n")},
-			},
-		},
-		{
-			name: "non-transactional directive",
-			sources: fstest.MapFS{
-				"00001_bad.sql": {Data: []byte("-- +goose NO TRANSACTION\n" + validMigration)},
-			},
-		},
-		{
-			name: "environment substitution",
-			sources: fstest.MapFS{
-				"00001_bad.sql": {Data: []byte("-- +goose Up\n-- +goose ENVSUB ON\nSELECT '${SECRET}';\n")},
-			},
-		},
-		{
-			name: "missing up directive",
-			sources: fstest.MapFS{
-				"00001_bad.sql": {Data: []byte("SELECT 1;\n")},
-			},
-		},
-		{
-			name: "out of order",
-			sources: unsortedFS{
-				MapFS: fstest.MapFS{
-					"00001_one.sql": {Data: []byte(validMigration)},
-					"00002_two.sql": {Data: []byte(validMigration)},
-				},
-				order: []string{"00002_two.sql", "00001_one.sql"},
-			},
-		},
+			order: []string{"00002_two.sql", "00001_one.sql"},
+		}},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := validateSources(tt.sources)
@@ -109,13 +92,9 @@ func TestUpRequiresDeadlineAndClosesAdapterWithSafeError(t *testing.T) {
 	if err := db.Ping(); err != nil {
 		t.Fatalf("test db Ping() error = %v", err)
 	}
-	err := upWithSources(
-		context.Background(),
-		db,
-		fstest.MapFS{
-			"00001_baseline.sql": {Data: []byte(validMigration)},
-		},
-	)
+	err := upWithSources(context.Background(), db, fstest.MapFS{
+		"00001_baseline.sql": {Data: []byte(validMigration)},
+	})
 	if !errors.Is(err, errDeadlineRequired) {
 		t.Fatalf("upWithSources() error = %v, want deadline-required error", err)
 	}
@@ -139,7 +118,6 @@ func (u unsortedFS) ReadDir(name string) ([]fs.DirEntry, error) {
 	if name != "." {
 		return nil, fs.ErrNotExist
 	}
-
 	entries := make([]fs.DirEntry, 0, len(u.order))
 	for _, path := range u.order {
 		info, err := fs.Stat(u.MapFS, path)

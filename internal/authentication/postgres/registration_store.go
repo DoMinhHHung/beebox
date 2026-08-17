@@ -14,10 +14,7 @@ import (
 
 // PersistRegistration atomically creates user, unverified email identifier,
 // password credential, and the required successful security audit fact.
-func (s *Store) PersistRegistration(
-	ctx context.Context,
-	write authentication.RegistrationWrite,
-) (authentication.RegistrationResult, error) {
+func (s *Store) PersistRegistration(ctx context.Context, write authentication.RegistrationWrite) (authentication.RegistrationResult, error) {
 	if !write.ApplicationInstanceID.Valid() {
 		return authentication.RegistrationResult{}, authentication.ErrInvalidApplicationInstanceScope
 	}
@@ -36,7 +33,6 @@ func (s *Store) PersistRegistration(
 
 	db := s.pool.OpenSQLDB()
 	defer db.Close()
-
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return authentication.RegistrationResult{}, classifyRegistrationError(ctx, err)
@@ -53,11 +49,7 @@ func (s *Store) PersistRegistration(
 	return result, nil
 }
 
-func persistRegistrationRows(
-	ctx context.Context,
-	tx *sql.Tx,
-	write authentication.RegistrationWrite,
-) (authentication.RegistrationResult, error) {
+func persistRegistrationRows(ctx context.Context, tx *sql.Tx, write authentication.RegistrationWrite) (authentication.RegistrationResult, error) {
 	var result authentication.RegistrationResult
 	var userID int64
 	var appID int64
@@ -65,9 +57,9 @@ func persistRegistrationRows(
 		ctx,
 		`INSERT INTO users (application_instance_id)
 		 VALUES ($1)
-		 RETURNING id, application_instance_id, created_at`,
+		 RETURNING id, public_id, application_instance_id, created_at`,
 		int64(write.ApplicationInstanceID),
-	).Scan(&userID, &appID, &result.User.CreatedAt); err != nil {
+	).Scan(&userID, &result.User.PublicID, &appID, &result.User.CreatedAt); err != nil {
 		return authentication.RegistrationResult{}, err
 	}
 	result.User.InternalID = identity.InternalID(userID)
@@ -118,7 +110,6 @@ func persistRegistrationRows(
 	); err != nil {
 		return authentication.RegistrationResult{}, err
 	}
-
 	if _, err := tx.ExecContext(
 		ctx,
 		`INSERT INTO audit_events (
@@ -136,7 +127,6 @@ func persistRegistrationRows(
 	); err != nil {
 		return authentication.RegistrationResult{}, err
 	}
-
 	return result, nil
 }
 
