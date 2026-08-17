@@ -88,7 +88,7 @@ func TestEmailVerificationVerifySeparatesHashWorkFromFinalization(t *testing.T) 
 		t.Fatalf("HashVerificationCode() error = %v", err)
 	}
 	persistence := &emailVerificationPersistenceStub{
-		snapshot: EmailVerificationChallengeSnapshot{Generation: 4, CodeHash: hash},
+		snapshot:    EmailVerificationChallengeSnapshot{Generation: 4, CodeHash: hash},
 		finalResult: VerifiedEmailResult{EmailIdentifier: identity.EmailIdentifier{InternalID: 7, ApplicationInstanceID: 9}},
 	}
 	service := NewEmailVerificationService(persistence, nil)
