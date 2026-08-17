@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"time"
 
@@ -12,8 +13,12 @@ import (
 )
 
 const (
-	AbsoluteLifetime   = 30 * 24 * time.Hour
-	InactivityLifetime = 7 * 24 * time.Hour
+	AbsoluteLifetime       = 30 * 24 * time.Hour
+	InactivityLifetime     = 7 * 24 * time.Hour
+	SignInGlobalLimit      = 100
+	SignInGlobalWindow     = time.Minute
+	SignInIdentifierLimit  = 10
+	SignInIdentifierWindow = 15 * time.Minute
 )
 
 var (
@@ -21,6 +26,7 @@ var (
 	ErrSessionUnavailable = errors.New("session unavailable")
 	ErrRefreshInvalid     = errors.New("invalid refresh credential")
 	ErrRefreshReused      = errors.New("refresh credential reused")
+	ErrSignInRateLimited  = errors.New("sign-in rate limited")
 )
 
 type CredentialRecord struct {
@@ -35,6 +41,7 @@ type CredentialLookup interface {
 }
 
 type Store interface {
+	AllowSignInAttempt(context.Context, applicationinstance.InternalID, [32]byte) error
 	CreateSession(context.Context, applicationinstance.InternalID, identity.InternalID, string, [32]byte, time.Time, time.Time, audit.CorrelationID) error
 	RotateRefresh(context.Context, applicationinstance.InternalID, [32]byte, [32]byte, time.Time, time.Time, audit.CorrelationID) (CredentialRecord, string, error)
 }
@@ -65,11 +72,21 @@ func (s *Service) SignIn(ctx context.Context, appID applicationinstance.Internal
 	if err != nil {
 		return TokenPair{}, ErrInvalidCredentials
 	}
+	identifierFingerprint := sha256.Sum256([]byte("signin-email\x00" + normalized.ComparisonKey))
+	if err := s.store.AllowSignInAttempt(ctx, appID, identifierFingerprint); err != nil {
+		return TokenPair{}, err
+	}
 	record, err := s.credentials.LookupPasswordCredential(ctx, appID, normalized.ComparisonKey)
 	if err != nil {
-		// Burn the same expensive primitive on unknown identifiers to reduce a cheap timing oracle.
-		_, _ = authentication.HashPassword([]byte(password))
-		return TokenPair{}, ErrInvalidCredentials
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return TokenPair{}, ctxErr
+		}
+		if errors.Is(err, ErrInvalidCredentials) {
+			// Burn the same expensive primitive on unknown identifiers to reduce a cheap timing oracle.
+			_, _ = authentication.HashPassword([]byte(password))
+			return TokenPair{}, ErrInvalidCredentials
+		}
+		return TokenPair{}, ErrSessionUnavailable
 	}
 	if err := authentication.VerifyPassword(record.PasswordHash, []byte(password)); err != nil {
 		return TokenPair{}, ErrInvalidCredentials
