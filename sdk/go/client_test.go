@@ -20,10 +20,16 @@ func TestClientSignUpSendsPublishableAndIdempotencyHeaders(t *testing.T) {
 	}))
 	defer server.Close()
 	client, err := NewClient(server.URL, "bb_pk_test")
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	out, err := client.SignUp(context.Background(), "alice@example.test", "a sufficiently long password", "idem-1")
-	if err != nil { t.Fatal(err) }
-	if out.Status != "verification_pending" { t.Fatalf("status = %q", out.Status) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != "verification_pending" {
+		t.Fatalf("status = %q", out.Status)
+	}
 }
 
 func TestClientBackendUsesSecretBearer(t *testing.T) {
@@ -35,8 +41,12 @@ func TestClientBackendUsesSecretBearer(t *testing.T) {
 	}))
 	defer server.Close()
 	client, err := NewClient(server.URL, "bb_pk_test", WithSecretKey("bb_sk_test.secret"))
-	if err != nil { t.Fatal(err) }
-	if _, err := client.GetSession(context.Background(), "ses_test"); err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.GetSession(context.Background(), "ses_test"); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestClientReturnsTypedSafeError(t *testing.T) {
@@ -48,6 +58,10 @@ func TestClientReturnsTypedSafeError(t *testing.T) {
 	client, _ := NewClient(server.URL, "bb_pk_test")
 	_, err := client.SignIn(context.Background(), "alice@example.test", "secret")
 	beeErr, ok := err.(*Error)
-	if !ok || beeErr.Code != "invalid_credentials" { t.Fatalf("error = %#v", err) }
-	if strings.Contains(err.Error(), "alice") || strings.Contains(err.Error(), "secret") { t.Fatal("credential leaked through SDK error string") }
+	if !ok || beeErr.Code != "invalid_credentials" {
+		t.Fatalf("error = %#v", err)
+	}
+	if strings.Contains(err.Error(), "alice") || strings.Contains(err.Error(), "secret") {
+		t.Fatal("credential leaked through SDK error string")
+	}
 }
