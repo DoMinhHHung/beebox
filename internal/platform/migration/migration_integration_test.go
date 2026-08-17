@@ -128,7 +128,7 @@ func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 		"00008_phase1_public_integration.sql":     {Data: []byte(validMigration)},
 		"00009_public_auth_controls.sql":          {Data: []byte(validMigration)},
 		"00010_sessions.sql":                      {Data: []byte(validMigration)},
-		"00011_failure_probe.sql":                 {Data: []byte(
+		"00011_failure_probe.sql": {Data: []byte(
 			"-- +goose Up\n" +
 				"-- " + secretMarker + "\n" +
 				"CREATE TABLE migration_failure_probe (id bigint PRIMARY KEY);\n" +
