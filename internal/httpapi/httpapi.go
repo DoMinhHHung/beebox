@@ -20,9 +20,9 @@ import (
 const (
 	PublishableKeyHeader = "X-BeeBox-Publishable-Key"
 	IdempotencyKeyHeader = "Idempotency-Key"
-	RequestIDHeader       = "X-Request-ID"
-	maxJSONBodyBytes      = 16 << 10
-	requestTimeout        = 10 * time.Second
+	RequestIDHeader      = "X-Request-ID"
+	maxJSONBodyBytes     = 16 << 10
+	requestTimeout       = 10 * time.Second
 )
 
 type ApplicationResolver interface {
