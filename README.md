@@ -2,11 +2,12 @@
 
 BeeBox is an open-source identity and access platform implemented primarily in Go.
 
-This repository currently contains the initial runtime, PostgreSQL connection, explicit migration-runner foundation, and Phase 0 governance/contract baseline. Product capabilities such as users, authentication, sessions, organizations, product schemas, and persistence queries are not implemented yet.
+This repository currently contains the initial runtime, PostgreSQL connection, explicit migration runner, Phase 0 governance/contracts baseline, and the first Phase 1 persistence boundary: the internal `application_instance` isolation root. Users, credentials, authentication, sessions, organizations, and public product APIs are not implemented yet.
 
 ## Project documentation
 
 - [Repository instructions](Instruction.md) — product, architecture, security, data, testing, delivery, and change-control invariants.
+- [ADR 0001: application_instance root](docs/adr/0001-application-instance-root.md) — the Human-ratified v1 root product isolation decision and its intentionally unresolved public-ID boundary.
 - [Initial threat model](docs/threat-model/initial.md) — current assets, actors, trust boundaries, implemented controls, required future controls, residual risks, and review triggers.
 - [Contract and tenancy conventions](docs/contracts/conventions.md) — Phase 0 semantics for resource IDs, errors, pagination, idempotency, time, API versioning, audit events, and tenancy.
 - [Contributing](CONTRIBUTING.md) — current branch/PR workflow, repository checks, migration policy, and contribution evidence.
@@ -110,7 +111,12 @@ SQL migrations are compiled into the BeeBox binary and cannot be selected from a
 
 Applied migration files are immutable. New database changes use a new ordered version and rolling-safe expand/contract sequencing. Production operations do not expose `Down`, reset, redo, force, manual version overrides, or arbitrary SQL.
 
-Version `00001_runtime_baseline.sql` intentionally contains only a harmless statement. It anchors forward migration history and creates no product schema, table, or data. On first execution, the only created table is goose migration metadata (`goose_db_version`).
+Current migrations are:
+
+- `00001_runtime_baseline.sql` — anchors forward migration history without product schema/data;
+- `00002_application_instances.sql` — additively creates the first product table, `application_instances`, with a database-internal generated identity and `timestamptz` creation time.
+
+The database identity in `application_instances.id` is an internal persistence detail. It is not a permanent public BeeBox application-instance identifier and no public product API exists in this slice.
 
 Use separate credentials where possible:
 
@@ -163,39 +169,39 @@ Race detector:
 
     go test -race ./...
 
-PostgreSQL integration test (requires a real test database and never skips when selected):
+PostgreSQL integration tests (require a real disposable test database and never skip when selected):
 
-    BEEBOX_TEST_DATABASE_URL='postgres://beebox:test-password@127.0.0.1:5432/beebox_test?sslmode=disable' go test -tags=integration ./internal/platform/database ./internal/platform/migration
+    BEEBOX_TEST_DATABASE_URL='postgres://beebox:test-password@127.0.0.1:5432/beebox_test?sslmode=disable' go test -tags=integration ./internal/platform/database ./internal/platform/migration ./internal/applicationinstance/postgres
 
 Regular and race tests do not require a local PostgreSQL instance. GitHub Actions provisions an isolated PostgreSQL service and runs the integration command explicitly.
 
 ## Current scope
 
-This bootstrap contains:
+The repository currently contains:
 
 - one Go process;
-- startup configuration validation;
-- structured logging with `log/slog`;
-- explicit HTTP server timeouts;
-- graceful SIGINT and SIGTERM shutdown;
-- bounded shutdown timeout;
+- startup configuration validation and structured logging;
+- explicit HTTP server timeouts and graceful shutdown;
 - one process-owned PostgreSQL pool with deterministic cleanup;
 - bounded PostgreSQL connectivity verification before HTTP startup;
 - process-only liveness and PostgreSQL-aware readiness endpoints;
-- a real PostgreSQL integration test in CI;
 - an explicit, embedded, forward-only PostgreSQL migration mode;
 - transactional migrations serialized by a bounded advisory lock;
-- a version-1 runtime baseline and migration metadata only;
-- focused automated tests;
-- minimal GitHub Actions CI;
-- Phase 0 threat-model, contract-convention, contribution, and security-reporting documentation.
+- the `application_instances` root product-isolation table;
+- a minimal BeeBox-owned internal application-instance model;
+- a concrete PostgreSQL persistence primitive that creates and exactly resolves trusted internal application-instance scope;
+- integration evidence that two root instances remain distinguishable and missing/invalid scope does not fall through to another row;
+- Phase 0 threat-model, contract-convention, contribution, and security-reporting documentation;
+- ADR 0001 recording the v1 application-instance root decision.
 
-There are no product schemas, product tables, product data, queries, repositories, Redis, or identity behaviors in this slice. Those capabilities are intentionally deferred to later vertical slices.
+There are still no application credentials, users, identifiers, authentication, authorization, sessions/tokens, organization resources, child product resources, public application-instance identifiers, public product routes, OpenAPI product contracts, SDKs, Redis, queues, or product audit subsystem. The internal `Create` persistence primitive is not a reachable application/admin creation lifecycle and does not by itself claim public idempotency, authorization, or audit completeness.
+
+Application-instance rows are durable roots in this slice. No delete or soft-delete lifecycle is defined. Backup/restore must preserve their internal identity and future referential meaning; deletion/retention semantics belong to the first real lifecycle that needs them.
 
 ## Rollout and rollback
 
 This foundation intentionally makes PostgreSQL an unconditional runtime dependency. Every environment must provide a valid `BEEBOX_DATABASE_URL` and a reachable database before BeeBox can serve HTTP traffic.
 
-Before rollout, verify the environment's backup and restore policy. Run the exact binary or immutable image being promoted with `migrate` and a migration-capable credential, observe a zero exit, then start or promote no-argument serve mode with its least-privilege runtime credential. Do not run a different migration artifact from the runtime artifact it prepares.
+For a reviewed release, run the exact binary or immutable image being promoted with `migrate` and a migration-capable credential before starting code that depends on the new table. Normal no-argument serve mode still does not auto-migrate.
 
-Code rollback does not automatically downgrade database state. The version-1 baseline changes no product schema or data, so its metadata may remain harmlessly after a code rollback. Future failed or incompatible schema changes are corrected by reviewed roll-forward migrations and expand/contract sequencing, never an automatic production `Down`.
+BeeBox production migration policy is forward-only. Before production product data depends on `application_instances`, code can be reverted while the additive table remains harmless. Once later rows reference the root, destructive database rollback is not automatic; corrections use reviewed roll-forward migrations and expand/contract sequencing.
