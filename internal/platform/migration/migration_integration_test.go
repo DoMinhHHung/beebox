@@ -35,12 +35,12 @@ func TestMigrationFirstApplyAndRerunAreIdempotent(t *testing.T) {
 		t.Fatalf("first adapter remained open after Up: %v", err)
 	}
 
-	assertMigrationState(t, ctx, pool, 6)
+	assertMigrationState(t, ctx, pool, 7)
 
 	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
 		t.Fatalf("second Up() error = %v", err)
 	}
-	assertMigrationState(t, ctx, pool, 6)
+	assertMigrationState(t, ctx, pool, 7)
 	assertSchemaTables(t, ctx, pool)
 }
 
@@ -76,7 +76,7 @@ func TestConcurrentMigrationRunnersSerializeAndConverge(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	assertMigrationState(t, ctx, firstPool, 6)
+	assertMigrationState(t, ctx, firstPool, 7)
 	assertSchemaTables(t, ctx, firstPool)
 }
 
@@ -139,13 +139,14 @@ func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 
 	const secretMarker = "super-secret-provider-dsn"
 	failingSources := fstest.MapFS{
-		"00001_runtime_baseline.sql":      {Data: []byte(validMigration)},
-		"00002_application_instances.sql": {Data: []byte(validMigration)},
-		"00003_users.sql":                 {Data: []byte(validMigration)},
-		"00004_email_identifiers.sql":     {Data: []byte(validMigration)},
-		"00005_password_credentials.sql":  {Data: []byte(validMigration)},
-		"00006_audit_events.sql":          {Data: []byte(validMigration)},
-		"00007_failure_probe.sql": {Data: []byte(
+		"00001_runtime_baseline.sql":                 {Data: []byte(validMigration)},
+		"00002_application_instances.sql":            {Data: []byte(validMigration)},
+		"00003_users.sql":                            {Data: []byte(validMigration)},
+		"00004_email_identifiers.sql":                {Data: []byte(validMigration)},
+		"00005_password_credentials.sql":             {Data: []byte(validMigration)},
+		"00006_audit_events.sql":                     {Data: []byte(validMigration)},
+		"00007_email_verification_challenges.sql":    {Data: []byte(validMigration)},
+		"00008_failure_probe.sql": {Data: []byte(
 			"-- +goose Up\n" +
 				"-- " + secretMarker + "\n" +
 				"CREATE TABLE migration_failure_probe (id bigint PRIMARY KEY);\n" +
@@ -174,15 +175,15 @@ func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 		t.Fatalf("failing migration left probe table %q", probeTable.String)
 	}
 
-	var versionSevenCount int
+	var versionEightCount int
 	if err := db.QueryRowContext(
 		ctx,
-		"SELECT count(*) FROM goose_db_version WHERE version_id = 7 AND is_applied",
-	).Scan(&versionSevenCount); err != nil {
-		t.Fatalf("query version 7 error = %v", err)
+		"SELECT count(*) FROM goose_db_version WHERE version_id = 8 AND is_applied",
+	).Scan(&versionEightCount); err != nil {
+		t.Fatalf("query version 8 error = %v", err)
 	}
-	if versionSevenCount != 0 {
-		t.Fatalf("applied version 7 rows = %d, want 0", versionSevenCount)
+	if versionEightCount != 0 {
+		t.Fatalf("applied version 8 rows = %d, want 0", versionEightCount)
 	}
 }
 
@@ -287,7 +288,7 @@ func assertSchemaTables(t *testing.T, ctx context.Context, pool *database.Pool) 
 	if err := rows.Err(); err != nil {
 		t.Fatalf("iterate schema tables error = %v", err)
 	}
-	if want := []string{"application_instances", "audit_events", "email_identifiers", "goose_db_version", "password_credentials", "users"}; !reflect.DeepEqual(tables, want) {
+	if want := []string{"application_instances", "audit_events", "email_identifiers", "email_verification_challenges", "goose_db_version", "password_credentials", "users"}; !reflect.DeepEqual(tables, want) {
 		t.Fatalf("schema tables = %v, want %v", tables, want)
 	}
 }
