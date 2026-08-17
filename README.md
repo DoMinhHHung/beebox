@@ -2,7 +2,7 @@
 
 BeeBox is an open-source identity and access platform implemented primarily in Go.
 
-This repository currently contains the initial runtime, PostgreSQL connection, explicit migration runner, Phase 0 governance/contracts baseline, the v1 `application_instance` root isolation boundary, application-scoped internal user persistence, application-scoped internal email-identifier persistence, and an internal application-scoped password-credential foundation. Email is persisted PII and password hashes are sensitive credential-derived data, but verification, authentication, authorization, signup/signin, sessions, organizations, and public product APIs are not implemented yet.
+This repository currently contains the initial runtime, PostgreSQL connection, explicit migration runner, Phase 0 governance/contracts baseline, the v1 `application_instance` root isolation boundary, application-scoped internal user/email/password persistence, and an internal transactional email/password registration core with required success-audit persistence. Email is persisted PII and password hashes are sensitive credential-derived data, but email verification, reachable/public signup, signin, sessions, authorization, organizations, and public product APIs are not implemented yet.
 
 ## Project documentation
 
@@ -56,47 +56,23 @@ Default:
 
     :8080
 
-Example:
-
-    BEEBOX_HTTP_ADDR=127.0.0.1:9090 BEEBOX_DATABASE_URL='postgres://beebox:local-password@127.0.0.1:5432/beebox?sslmode=disable' go run ./cmd/beebox
-
-The value must contain a valid numeric TCP port.
-
 ### BEEBOX_SHUTDOWN_TIMEOUT
 
-Maximum amount of time allowed for graceful HTTP shutdown.
-
-Default:
-
-    10s
-
-The value uses Go duration syntax and must be greater than zero.
+Maximum amount of time allowed for graceful HTTP shutdown. Default: `10s`.
 
 ### BEEBOX_DATABASE_STARTUP_TIMEOUT
 
-Maximum time allowed to create the PostgreSQL pool and prove connectivity before startup fails.
-
-Default:
-
-    5s
+Maximum time allowed to create the PostgreSQL pool and prove connectivity before startup fails. Default: `5s`.
 
 ### BEEBOX_DATABASE_READINESS_TIMEOUT
 
-Maximum time allowed for each PostgreSQL readiness check.
-
-Default:
-
-    1s
+Maximum time allowed for each PostgreSQL readiness check. Default: `1s`.
 
 ### BEEBOX_DATABASE_MIGRATION_TIMEOUT
 
-Maximum total time allowed for migration lock acquisition and forward migration execution.
+Maximum total time allowed for migration lock acquisition and forward migration execution. Default: `30s`.
 
-Default:
-
-    30s
-
-The duration values use Go duration syntax and must be greater than zero.
+Duration values use Go duration syntax and must be greater than zero.
 
 ## Migration policy
 
@@ -107,19 +83,20 @@ Applied migration files are immutable. New database changes use new ordered vers
 Current migrations are:
 
 - `00001_runtime_baseline.sql` — anchors forward migration history without product schema/data;
-- `00002_application_instances.sql` — creates the `application_instances` root table with an internal generated identity and `timestamptz` creation time;
-- `00003_users.sql` — creates the minimal `users` child table with an internal generated identity, mandatory `application_instance_id` foreign key, and `timestamptz` creation time;
-- `00004_email_identifiers.sql` — adds scoped user referential integrity and creates application-scoped `email_identifiers` with per-application normalized-email uniqueness and explicit nullable verification state;
-- `00005_password_credentials.sql` — creates one internal password credential per application-scoped user, with a composite scoped user foreign key and no cascade deletion.
+- `00002_application_instances.sql` — creates the `application_instances` root table;
+- `00003_users.sql` — creates the minimal application-scoped `users` child table;
+- `00004_email_identifiers.sql` — creates application-scoped email identifiers and scoped user referential integrity;
+- `00005_password_credentials.sql` — creates one internal password credential per application-scoped user;
+- `00006_audit_events.sql` — creates the minimal internal application-scoped immutable audit-fact table required by the transactional registration core, including required resource category, source, outcome, scoped subject/actor references, and a required 16-byte internal correlation identifier.
 
-The database identities in `application_instances.id`, `users.id`, and `email_identifiers.id` are internal persistence details. Password credentials use `(application_instance_id, user_id)` as their internal primary key and do not introduce another identifier. None of these values are permanent public BeeBox resource identifiers, and no public product API exists in this slice.
+Database identities remain internal persistence details. `audit_events.id` and `correlation_id` do not ratify any public event/resource identifier encoding. No public product or audit API exists.
 
 Use separate credentials where possible:
 
 - migration mode receives a short-lived credential allowed to perform reviewed DDL;
 - serve mode receives a least-privilege runtime credential and never needs migration privileges merely to start.
 
-Migration failures, connectivity failures, lock timeouts, and cancellation exit nonzero, close acquired resources, do not open an HTTP listener, and report stable errors without SQL, provider, topology, credential, password, or password-hash details.
+Migration failures, connectivity failures, lock timeouts, and cancellation exit nonzero, close acquired resources, do not open an HTTP listener, and report stable errors without SQL, provider, topology, credential, password, password-hash, or email details.
 
 ## Health endpoints
 
@@ -165,7 +142,7 @@ Race detector:
 
     go test -race ./...
 
-PostgreSQL integration tests (require a real disposable test database and never skip when selected):
+PostgreSQL integration tests:
 
     BEEBOX_TEST_DATABASE_URL='postgres://beebox:test-password@127.0.0.1:5432/beebox_test?sslmode=disable' go test -tags=integration ./internal/platform/database ./internal/platform/migration ./internal/applicationinstance/postgres ./internal/identity/postgres ./internal/authentication/postgres
 
@@ -175,35 +152,30 @@ Regular and race tests do not require a local PostgreSQL instance. GitHub Action
 
 The repository currently contains:
 
-- one Go process;
-- startup configuration validation and structured logging;
-- explicit HTTP server timeouts and graceful shutdown;
-- one process-owned PostgreSQL pool with deterministic cleanup;
-- bounded PostgreSQL startup/readiness behavior;
+- one Go process and one process-owned PostgreSQL pool;
 - explicit embedded forward-only migrations serialized by an advisory lock;
-- the `application_instances` v1 root product-isolation table and internal persistence model;
-- concrete application-instance `Create` and exact trusted-scope `Resolve` persistence;
-- the `users` table with mandatory `application_instance_id` foreign-key scope;
-- concrete scoped user `Create` and `Resolve(applicationScope, userID)` persistence;
-- the `email_identifiers` table with explicit application/user ownership, per-application normalized-email uniqueness, nullable `verified_at`, and no public identifier contract;
-- deterministic BeeBox v1 ASCII email normalization and internal scoped email-identifier persistence;
-- an internal Argon2id password hashing primitive using version 19, time 3, 64 MiB memory, parallelism 4, a random 16-byte salt, and a 32-byte derived hash;
-- a strict BeeBox-owned internal Argon2id storage envelope and bounded parser; candidate verification uses constant-time comparison;
-- the `password_credentials` table with exactly one credential per `(application_instance_id, user_id)` in this slice and a real composite scoped user foreign key;
-- internal scoped password-credential create/resolve persistence with database-enforced duplicate and cross-application ownership behavior;
-- PostgreSQL integration evidence for credential scope isolation, no plaintext persistence, duplicate concurrency convergence, and safe persistence errors;
+- the `application_instances` v1 root product-isolation table;
+- application-scoped internal users and scoped email identifiers;
+- deterministic BeeBox v1 ASCII email normalization with no provider-specific rewriting;
+- internal Argon2id password hashing using version 19, time 3, 64 MiB memory, parallelism 4, random 16-byte salt, and 32-byte derived hash;
+- application-scoped password credentials with a composite same-application user foreign key;
+- the internal `audit_events` persistence foundation with explicit application scope, required action/resource/outcome/source/correlation fields, optional scoped actor/subject user references, server/database occurrence time, no cascade deletion, and no PII/credential payload;
+- an internal `RegisterEmailPassword` application operation that reuses the existing email normalizer and password hasher, hashes before opening the DB transaction, then atomically persists one user, one unverified email identifier, one password credential, and one successful registration audit fact;
+- rollback semantics proving registration state does not partially commit when email conflict, password persistence, audit persistence, nonexistent application, or cancellation prevents completion;
+- concurrency evidence proving same-application normalized-email races converge to one complete registration bundle with no orphan loser users/credentials/audit facts;
+- cross-application evidence proving the same normalized email may register independently in different application roots;
 - Phase 0 governance/security/contracts documentation plus ADRs 0001 and 0002.
 
-Email addresses are persisted PII. Password hashes are sensitive credential-derived data. Raw password bytes exist only transiently inside internal hash/verify calls and are never persisted by this foundation. The internal raw-password bound is a resource-safety limit, not a public password-policy contract.
+Email addresses are persisted PII. Password hashes are sensitive credential-derived data. Raw password bytes exist only transiently inside internal hash/verify calls and are never persisted. Registration audit rows contain scoped internal user identity and operation metadata, not raw email, password, or password hash.
 
-The email and password persistence surfaces are internal only. They do **not** implement email verification, OTP/link delivery, signup/signin, reachable authentication, password policy, breach screening, login attempts, rate limiting/lockout, password change/reset/history, authorization, public identifier lookup, public user/email IDs, account linking/merging, sessions/tokens, organizations, or a product audit subsystem. Email identifiers remain unverified.
+The registration capability is **internal and unreachable from HTTP/public APIs**. It does not implement email verification, OTP/link delivery, reachable/public signup, signin, public password policy, breach screening, login attempt/rate/lockout controls, password change/reset, sessions/tokens, public identifiers, account linking/merging, organizations, or audit search/export/retention APIs. Email identifiers created by registration remain unverified.
 
-User, email-identifier, and password-credential rows are durable scoped records in these persistence slices. No deletion, anonymization, export, retention, password replacement, or reset lifecycle is defined. Backup/restore must preserve scoped relationships; backups now contain both email PII and password hashes. Future credential replacement/reset and user deletion must define authorization, audit, session revocation, retention/backup handling, transaction behavior, and partial-failure semantics before claiming completion.
+A future reachable signup contract must still define server-selected application scope, public password policy, request idempotency/retry behavior, anti-enumerating safe errors, abuse/rate controls, HTTP/API compatibility, and which denied/abusive attempts require audit evidence.
 
 Phase 1 remains incomplete.
 
 ## Rollout and rollback
 
-No hosted database mutation is performed by repository changes alone. For a reviewed release, run the exact promoted binary/image with `migrate` and a migration-capable credential before starting code that depends on `password_credentials`. Normal serve mode still does not auto-migrate.
+No hosted database mutation is performed by repository changes alone. For a reviewed release, run the exact promoted binary/image with `migrate` before starting code that depends on `audit_events` or the registration transaction. Normal serve mode still does not auto-migrate.
 
-BeeBox production migration policy is forward-only. Before production data depends on the additive password-credential schema, code can be reverted while the schema remains. Once data depends on it, schema correction uses a reviewed forward migration; destructive rollback is not automatic.
+BeeBox production migration policy is forward-only. Before production data depends on the additive audit schema, code can be reverted while schema remains. Once data depends on it, schema correction uses a reviewed forward migration; destructive rollback is not automatic.
