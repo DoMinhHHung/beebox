@@ -2,13 +2,14 @@ package httpapi
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
+	"github.com/DoMinhHHung/beebox/internal/authentication"
 )
 
 type fakeApps struct {
@@ -37,11 +38,11 @@ func (f fakeOrigins) AnyAllowedOrigin(_ context.Context, origin string) (bool, e
 }
 
 type fakeSignup struct {
-	appID applicationinstance.InternalID
-	email string
+	appID    applicationinstance.InternalID
+	email    string
 	password string
-	key string
-	err error
+	key      string
+	err      error
 }
 
 func (f *fakeSignup) SignUp(_ context.Context, appID applicationinstance.InternalID, email, password, key string) error {
@@ -54,13 +55,24 @@ type fakeVerification struct {
 	confirmErr error
 }
 
-func (f fakeVerification) Request(context.Context, applicationinstance.InternalID, string) error { return f.requestErr }
-func (f fakeVerification) Confirm(context.Context, applicationinstance.InternalID, string, string) error { return f.confirmErr }
+func (f fakeVerification) Request(context.Context, applicationinstance.InternalID, string) error {
+	return f.requestErr
+}
+
+func (f fakeVerification) Confirm(context.Context, applicationinstance.InternalID, string, string) error {
+	return f.confirmErr
+}
 
 func TestSignUpBoundaryScopesApplicationOriginAndIdempotency(t *testing.T) {
 	appID := applicationinstance.InternalID(42)
 	signup := &fakeSignup{}
-	handler := New(http.NotFoundHandler(), fakeApps{key: "bb_pk_test", app: applicationinstance.Instance{InternalID: appID}}, fakeOrigins{appID: appID, origin: "https://app.example"}, signup, fakeVerification{})
+	handler := New(
+		http.NotFoundHandler(),
+		fakeApps{key: "bb_pk_test", app: applicationinstance.Instance{InternalID: appID}},
+		fakeOrigins{appID: appID, origin: "https://app.example"},
+		signup,
+		fakeVerification{},
+	)
 	req := httptest.NewRequest(http.MethodPost, "/v1/sign-ups", strings.NewReader(`{"email":"user@example.com","password":"correct horse battery staple"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(PublishableKeyHeader, "bb_pk_test")
@@ -87,7 +99,13 @@ func TestSignUpBoundaryScopesApplicationOriginAndIdempotency(t *testing.T) {
 
 func TestSignUpRejectsForeignOriginAndUnknownJSONField(t *testing.T) {
 	appID := applicationinstance.InternalID(42)
-	handler := New(http.NotFoundHandler(), fakeApps{key: "key", app: applicationinstance.Instance{InternalID: appID}}, fakeOrigins{appID: appID, origin: "https://good.example"}, &fakeSignup{}, fakeVerification{})
+	handler := New(
+		http.NotFoundHandler(),
+		fakeApps{key: "key", app: applicationinstance.Instance{InternalID: appID}},
+		fakeOrigins{appID: appID, origin: "https://good.example"},
+		&fakeSignup{},
+		fakeVerification{},
+	)
 	foreign := httptest.NewRequest(http.MethodPost, "/v1/sign-ups", strings.NewReader(`{"email":"a@example.com","password":"correct horse battery staple"}`))
 	foreign.Header.Set("Content-Type", "application/json")
 	foreign.Header.Set(PublishableKeyHeader, "key")
@@ -110,17 +128,25 @@ func TestSignUpRejectsForeignOriginAndUnknownJSONField(t *testing.T) {
 	}
 }
 
-func TestSignUpMapsIdempotencyConflictAndDeliveryFailureSafely(t *testing.T) {
+func TestSignUpMapsSecurityErrorsWithoutProviderDetails(t *testing.T) {
 	appID := applicationinstance.InternalID(42)
-	for _, tc := range []struct {
-		err error
+	tests := []struct {
+		err    error
 		status int
-		code string
+		code   string
 	}{
-		{errors.New("wrapped: "+"public idempotency conflict"), http.StatusServiceUnavailable, "service_unavailable"},
-	} {
+		{fmt.Errorf("wrapped: %w", authentication.ErrPublicIdempotencyConflict), http.StatusConflict, "idempotency_conflict"},
+		{fmt.Errorf("wrapped: %w", authentication.ErrEmailVerificationDelivery), http.StatusServiceUnavailable, "delivery_unavailable"},
+	}
+	for _, tc := range tests {
 		signup := &fakeSignup{err: tc.err}
-		handler := New(http.NotFoundHandler(), fakeApps{key: "key", app: applicationinstance.Instance{InternalID: appID}}, fakeOrigins{appID: appID}, signup, fakeVerification{})
+		handler := New(
+			http.NotFoundHandler(),
+			fakeApps{key: "key", app: applicationinstance.Instance{InternalID: appID}},
+			fakeOrigins{appID: appID},
+			signup,
+			fakeVerification{},
+		)
 		req := httptest.NewRequest(http.MethodPost, "/v1/sign-ups", strings.NewReader(`{"email":"a@example.com","password":"correct horse battery staple"}`))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set(PublishableKeyHeader, "key")
@@ -130,12 +156,21 @@ func TestSignUpMapsIdempotencyConflictAndDeliveryFailureSafely(t *testing.T) {
 		if res.Code != tc.status || !strings.Contains(res.Body.String(), tc.code) {
 			t.Fatalf("status/body = %d %s", res.Code, res.Body.String())
 		}
+		if strings.Contains(res.Body.String(), "wrapped") {
+			t.Fatal("public error leaked internal/provider detail")
+		}
 	}
 }
 
 func TestPreflightRequiresStoredExactOrigin(t *testing.T) {
 	appID := applicationinstance.InternalID(1)
-	handler := New(http.NotFoundHandler(), fakeApps{}, fakeOrigins{appID: appID, origin: "https://app.example"}, &fakeSignup{}, fakeVerification{})
+	handler := New(
+		http.NotFoundHandler(),
+		fakeApps{},
+		fakeOrigins{appID: appID, origin: "https://app.example"},
+		&fakeSignup{},
+		fakeVerification{},
+	)
 	req := httptest.NewRequest(http.MethodOptions, "/v1/sign-ups", nil)
 	req.Header.Set("Origin", "https://app.example")
 	req.Header.Set("Access-Control-Request-Method", http.MethodPost)
