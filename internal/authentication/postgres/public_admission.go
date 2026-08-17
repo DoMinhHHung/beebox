@@ -51,10 +51,13 @@ func (s *Store) AdmitPublicSignup(ctx context.Context, appID applicationinstance
 		return false, classifyPublicSignupError(ctx, err)
 	}
 
-	if err := enforcePublicRateLimit(ctx, tx, appID, "signup_pre_kdf_global", [32]byte{11}, authentication.PublicSignupGlobalLimit, authentication.PublicSignupGlobalWindow, now); err != nil {
+	if err := enforceAtomicPublicRateLimit(ctx, tx, appID, "signup_pre_kdf_global", [32]byte{11}, authentication.PublicSignupGlobalLimit, authentication.PublicSignupGlobalWindow, now, authentication.ErrPublicSignupPersistence); err != nil {
 		return false, err
 	}
-	if err := enforcePublicRateLimit(ctx, tx, appID, "signup_pre_kdf_identifier", identifierFingerprint, authentication.PublicSignupIdentifierLimit, authentication.PublicSignupIdentifierWindow, now); err != nil {
+	// The identifier row is intentionally touched only after the global admission
+	// succeeds. A globally denied unique-identifier flood therefore cannot grow
+	// attacker-controlled subject cardinality.
+	if err := enforceAtomicPublicRateLimit(ctx, tx, appID, "signup_pre_kdf_identifier", identifierFingerprint, authentication.PublicSignupIdentifierLimit, authentication.PublicSignupIdentifierWindow, now, authentication.ErrPublicSignupPersistence); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -91,13 +94,70 @@ func (s *Store) allowPublicPair(ctx context.Context, appID applicationinstance.I
 		return persistenceErr
 	}
 	now = now.UTC()
-	if err := enforcePublicRateLimit(ctx, tx, appID, globalOp, globalHash, globalLimit, globalWindow, now); err != nil {
+	if err := enforceAtomicPublicRateLimit(ctx, tx, appID, globalOp, globalHash, globalLimit, globalWindow, now, persistenceErr); err != nil {
 		return err
 	}
-	if err := enforcePublicRateLimit(ctx, tx, appID, identifierOp, identifierHash, identifierLimit, identifierWindow, now); err != nil {
+	// Keep this ordering: global denial must not create or update identifier state.
+	if err := enforceAtomicPublicRateLimit(ctx, tx, appID, identifierOp, identifierHash, identifierLimit, identifierWindow, now, persistenceErr); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
+		return persistenceErr
+	}
+	return nil
+}
+
+// enforceAtomicPublicRateLimit performs first-row creation, active-window
+// increment, and expired-window reset as one PostgreSQL UPSERT. The unique key
+// arbitrates concurrent first use; no missing-row SELECT/FOR UPDATE gap exists.
+// The conflict UPDATE is suppressed once the active window is already at its
+// limit, in which case RETURNING yields no row and admission is denied.
+func enforceAtomicPublicRateLimit(
+	ctx context.Context,
+	tx *sql.Tx,
+	appID applicationinstance.InternalID,
+	operation string,
+	subjectHash [32]byte,
+	limit int,
+	window time.Duration,
+	now time.Time,
+	persistenceErr error,
+) error {
+	var requestCount int
+	err := tx.QueryRowContext(ctx, `
+		INSERT INTO public_auth_rate_limits (
+			application_instance_id, operation, subject_hash,
+			window_started_at, request_count, expires_at
+		) VALUES ($1,$2,$3,$4,1,$5)
+		ON CONFLICT (application_instance_id, operation, subject_hash)
+		DO UPDATE SET
+			window_started_at = CASE
+				WHEN public_auth_rate_limits.expires_at <= $4 THEN $4
+				ELSE public_auth_rate_limits.window_started_at
+			END,
+			request_count = CASE
+				WHEN public_auth_rate_limits.expires_at <= $4 THEN 1
+				ELSE public_auth_rate_limits.request_count + 1
+			END,
+			expires_at = CASE
+				WHEN public_auth_rate_limits.expires_at <= $4 THEN $5
+				ELSE public_auth_rate_limits.expires_at
+			END
+		WHERE public_auth_rate_limits.expires_at <= $4
+		   OR public_auth_rate_limits.request_count < $6
+		RETURNING request_count`,
+		int64(appID), operation, subjectHash[:], now, now.Add(window), limit,
+	).Scan(&requestCount)
+	if errors.Is(err, sql.ErrNoRows) {
+		return authentication.ErrPublicRateLimited
+	}
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		return persistenceErr
+	}
+	if requestCount < 1 || requestCount > limit {
 		return persistenceErr
 	}
 	return nil
