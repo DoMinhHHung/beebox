@@ -5,8 +5,6 @@ package postgres
 import (
 	"context"
 	"errors"
-	"net/url"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -14,9 +12,7 @@ import (
 	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
 	applicationpostgres "github.com/DoMinhHHung/beebox/internal/applicationinstance/postgres"
 	"github.com/DoMinhHHung/beebox/internal/identity"
-	"github.com/DoMinhHHung/beebox/internal/platform/database"
 	"github.com/DoMinhHHung/beebox/internal/platform/migration"
-	"github.com/jackc/pgx/v5"
 )
 
 func TestEmailIdentifiersAreApplicationScopedAndUnverified(t *testing.T) {
@@ -229,58 +225,4 @@ func assertEmailIdentifier(
 	if identifier.CreatedAt.Location() != time.UTC {
 		t.Fatalf("identifier CreatedAt location = %v, want UTC", identifier.CreatedAt.Location())
 	}
-}
-
-func isolatedDatabaseURL(t *testing.T, schema string) string {
-	t.Helper()
-	databaseURL := os.Getenv("BEEBOX_TEST_DATABASE_URL")
-	if databaseURL == "" {
-		t.Fatal("BEEBOX_TEST_DATABASE_URL is required for integration tests")
-	}
-
-	adminPool := openPool(t, databaseURL)
-	adminDB := adminPool.OpenSQLDB()
-	quotedSchema := pgx.Identifier{schema}.Sanitize()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if _, err := adminDB.ExecContext(ctx, "DROP SCHEMA IF EXISTS "+quotedSchema+" CASCADE"); err != nil {
-		adminDB.Close()
-		t.Fatalf("drop test schema error = %v", err)
-	}
-	if _, err := adminDB.ExecContext(ctx, "CREATE SCHEMA "+quotedSchema); err != nil {
-		adminDB.Close()
-		t.Fatalf("create test schema error = %v", err)
-	}
-
-	t.Cleanup(func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cleanupCancel()
-		_, _ = adminDB.ExecContext(cleanupCtx, "DROP SCHEMA IF EXISTS "+quotedSchema+" CASCADE")
-		_ = adminDB.Close()
-	})
-
-	parsed, err := url.Parse(databaseURL)
-	if err != nil {
-		t.Fatal("BEEBOX_TEST_DATABASE_URL must be a valid URI")
-	}
-	query := parsed.Query()
-	query.Set("search_path", schema)
-	parsed.RawQuery = query.Encode()
-	return parsed.String()
-}
-
-func openPool(t *testing.T, databaseURL string) *database.Pool {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	pool, err := database.Open(ctx, databaseURL)
-	if err != nil {
-		t.Fatalf("database.Open() error = %v", err)
-	}
-	t.Cleanup(pool.Close)
-	if err := pool.Ping(ctx); err != nil {
-		t.Fatalf("pool.Ping() error = %v", err)
-	}
-	return pool
 }
