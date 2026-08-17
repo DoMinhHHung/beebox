@@ -2,7 +2,6 @@ package smtpdelivery
 
 import (
 	"context"
-	"errors"
 	"strconv"
 	"time"
 )
@@ -56,17 +55,14 @@ func FromLookup(lookup LookupEnv) (Sender, error) {
 		}
 	}
 	delivery, err := New(Config{
-		Address: address,
-		From: from,
+		Address:  address,
+		From:     from,
 		Username: username,
 		Password: password,
-		TLSMode: TLSMode(modeValue),
-		Timeout: timeout,
+		TLSMode:  TLSMode(modeValue),
+		Timeout:  timeout,
 	})
 	if err != nil {
-		if errors.Is(err, ErrConfig) {
-			return nil, ErrConfig
-		}
 		return nil, ErrConfig
 	}
 	return delivery, nil
