@@ -12,7 +12,7 @@ import (
 const maxEmailAddressBytes = 254
 
 var (
-	ErrInvalidEmail             = errors.New("invalid email address")
+	ErrInvalidEmail            = errors.New("invalid email address")
 	ErrEmailIdentifierNotFound = errors.New("email identifier not found")
 	ErrEmailConflict           = errors.New("email identifier conflict")
 	ErrEmailPersistence        = errors.New("email identifier persistence failure")
