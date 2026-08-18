@@ -56,7 +56,7 @@ var Providers = [...]Provider{
 }
 
 var (
-	ErrSocialInvalidRequest     = errors.New("invalid social authentication request")
+	ErrSocialInvalidRequest      = errors.New("invalid social authentication request")
 	ErrSocialUnsupportedProvider = errors.New("unsupported social provider")
 	ErrSocialUnavailable         = errors.New("social authentication unavailable")
 	ErrSocialInvalidState        = errors.New("invalid social authentication state")
@@ -122,26 +122,26 @@ type SocialAdmission interface {
 }
 
 type SocialAttemptWrite struct {
-	ApplicationInstanceID applicationinstance.InternalID
-	Provider              Provider
-	CanonicalRedirectURL  string
-	StateHash             [32]byte
-	ClientCodeChallenge   string
-	OIDCNonceHash         *[32]byte
+	ApplicationInstanceID  applicationinstance.InternalID
+	Provider               Provider
+	CanonicalRedirectURL   string
+	StateHash              [32]byte
+	ClientCodeChallenge    string
+	OIDCNonceHash          *[32]byte
 	ProviderPKCECiphertext []byte
-	ExpiresAt             time.Time
+	ExpiresAt              time.Time
 }
 
 type SocialAttemptSnapshot struct {
-	ApplicationInstanceID applicationinstance.InternalID
-	ApplicationPublicID  applicationinstance.PublicID
-	Provider             Provider
-	CanonicalRedirectURL string
-	StateHash            [32]byte
-	ClientCodeChallenge  string
-	OIDCNonceHash        *[32]byte
+	ApplicationInstanceID  applicationinstance.InternalID
+	ApplicationPublicID    applicationinstance.PublicID
+	Provider               Provider
+	CanonicalRedirectURL   string
+	StateHash              [32]byte
+	ClientCodeChallenge    string
+	OIDCNonceHash          *[32]byte
 	ProviderPKCECiphertext []byte
-	ExpiresAt            time.Time
+	ExpiresAt              time.Time
 }
 
 type SocialProofFinalize struct {
@@ -183,11 +183,11 @@ type SocialService struct {
 func NewSocialService(persistence SocialPersistence, redirects SocialRedirectPolicy, admission SocialAdmission, providers SocialProviderRegistry, protector *SocialStateProtector) *SocialService {
 	return &SocialService{
 		persistence: persistence,
-		redirects: redirects,
-		admission: admission,
-		providers: providers,
-		protector: protector,
-		now: time.Now,
+		redirects:   redirects,
+		admission:   admission,
+		providers:   providers,
+		protector:   protector,
+		now:         time.Now,
 	}
 }
 
@@ -258,14 +258,14 @@ func (s *SocialService) CreateAttempt(ctx context.Context, app applicationinstan
 	}
 	now := s.now().UTC()
 	if err := s.persistence.CreateSocialAttempt(ctx, SocialAttemptWrite{
-		ApplicationInstanceID: app.InternalID,
-		Provider: provider,
-		CanonicalRedirectURL: canonicalRedirect,
-		StateHash: stateHash,
-		ClientCodeChallenge: clientChallenge,
-		OIDCNonceHash: nonceHash,
+		ApplicationInstanceID:  app.InternalID,
+		Provider:               provider,
+		CanonicalRedirectURL:   canonicalRedirect,
+		StateHash:              stateHash,
+		ClientCodeChallenge:    clientChallenge,
+		OIDCNonceHash:          nonceHash,
 		ProviderPKCECiphertext: providerCiphertext,
-		ExpiresAt: now.Add(SocialAttemptTTL),
+		ExpiresAt:              now.Add(SocialAttemptTTL),
 	}); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return SocialAttemptResult{}, ctxErr
@@ -327,12 +327,12 @@ func (s *SocialService) CompleteCallback(ctx context.Context, callbackProvider P
 	now := s.now().UTC()
 	if err := s.persistence.FinalizeSocialProof(ctx, SocialProofFinalize{
 		ApplicationInstanceID: attempt.ApplicationInstanceID,
-		Provider: attempt.Provider,
-		ProviderSubject: proof.Subject,
-		ClientCodeChallenge: attempt.ClientCodeChallenge,
-		CompletionCodeHash: completionHash,
-		CompletionExpiresAt: now.Add(SocialCompletionTTL),
-		CorrelationID: correlationID,
+		Provider:              attempt.Provider,
+		ProviderSubject:       proof.Subject,
+		ClientCodeChallenge:   attempt.ClientCodeChallenge,
+		CompletionCodeHash:    completionHash,
+		CompletionExpiresAt:   now.Add(SocialCompletionTTL),
+		CorrelationID:         correlationID,
 	}); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return SocialCallbackResult{}, ctxErr
