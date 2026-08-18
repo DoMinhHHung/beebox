@@ -1,6 +1,7 @@
 package socialprovider
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -26,8 +27,9 @@ type subjectMode uint8
 
 const (
 	subjectOIDC subjectMode = iota + 1
-	subjectTopLevelID
-	subjectNestedDataID
+	subjectTopLevelNumericID
+	subjectTopLevelStringID
+	subjectNestedStringID
 	subjectTikTokOpenID
 )
 
@@ -171,7 +173,7 @@ func (a *adapter) ExchangeIdentity(ctx context.Context, code, providerVerifier s
 		switch a.mode {
 		case subjectOIDC:
 			subject, err = a.subjectFromIDToken(ctx, token, expectedNonce)
-		case subjectTopLevelID, subjectNestedDataID:
+		case subjectTopLevelNumericID, subjectTopLevelStringID, subjectNestedStringID:
 			subject, err = a.subjectFromUserInfo(ctx, token.AccessToken)
 		default:
 			err = authentication.ErrSocialProviderProof
@@ -272,22 +274,22 @@ func (a *adapter) subjectFromUserInfo(ctx context.Context, accessToken string) (
 	if err := decoder.Decode(&payload); err != nil {
 		return "", authentication.ErrSocialProviderProof
 	}
-	if a.mode == subjectNestedDataID {
-		return rawID(payload.Data.ID)
-	}
-	return rawID(payload.ID)
-}
-
-func rawID(raw json.RawMessage) (string, error) {
-	if len(raw) == 0 {
+	switch a.mode {
+	case subjectTopLevelNumericID:
+		return rawNumericID(payload.ID)
+	case subjectTopLevelStringID:
+		return rawStringID(payload.ID)
+	case subjectNestedStringID:
+		return rawStringID(payload.Data.ID)
+	default:
 		return "", authentication.ErrSocialProviderProof
 	}
-	var s string
-	if err := json.Unmarshal(raw, &s); err == nil {
-		if s == "" {
-			return "", authentication.ErrSocialProviderProof
-		}
-		return s, nil
+}
+
+func rawNumericID(raw json.RawMessage) (string, error) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || raw[0] == '"' {
+		return "", authentication.ErrSocialProviderProof
 	}
 	var number json.Number
 	if err := json.Unmarshal(raw, &number); err != nil {
@@ -295,6 +297,17 @@ func rawID(raw json.RawMessage) (string, error) {
 	}
 	value := number.String()
 	if _, err := strconv.ParseUint(value, 10, 64); err != nil {
+		return "", authentication.ErrSocialProviderProof
+	}
+	return value, nil
+}
+
+func rawStringID(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 {
+		return "", authentication.ErrSocialProviderProof
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil || value == "" {
 		return "", authentication.ErrSocialProviderProof
 	}
 	return value, nil
@@ -368,7 +381,7 @@ func specFor(provider authentication.Provider, microsoftTenant string) (provider
 		return providerSpec{
 			authURL:   "https://accounts.google.com/o/oauth2/v2/auth",
 			tokenURL:  "https://oauth2.googleapis.com/token",
-			scopes:    []string{"openid"},
+			scopes:    []string{"openid", "profile"},
 			authStyle: oauth2.AuthStyleInParams,
 			usePKCE:   true,
 			useNonce:  true,
@@ -407,7 +420,7 @@ func specFor(provider authentication.Provider, microsoftTenant string) (provider
 			userInfoURL: "https://api.github.com/user",
 			authStyle:   oauth2.AuthStyleInParams,
 			usePKCE:     true,
-			mode:        subjectTopLevelID,
+			mode:        subjectTopLevelNumericID,
 		}, nil
 	case authentication.ProviderGitLab:
 		return providerSpec{
@@ -417,7 +430,7 @@ func specFor(provider authentication.Provider, microsoftTenant string) (provider
 			scopes:      []string{"read_user"},
 			authStyle:   oauth2.AuthStyleInParams,
 			usePKCE:     true,
-			mode:        subjectTopLevelID,
+			mode:        subjectTopLevelNumericID,
 		}, nil
 	case authentication.ProviderFacebook:
 		return providerSpec{
@@ -425,7 +438,7 @@ func specFor(provider authentication.Provider, microsoftTenant string) (provider
 			tokenURL:    "https://graph.facebook.com/oauth/access_token",
 			userInfoURL: "https://graph.facebook.com/me?fields=id",
 			authStyle:   oauth2.AuthStyleInParams,
-			mode:        subjectTopLevelID,
+			mode:        subjectTopLevelStringID,
 		}, nil
 	case authentication.ProviderDiscord:
 		return providerSpec{
@@ -434,7 +447,7 @@ func specFor(provider authentication.Provider, microsoftTenant string) (provider
 			userInfoURL: "https://discord.com/api/v10/users/@me",
 			scopes:      []string{"identify"},
 			authStyle:   oauth2.AuthStyleInParams,
-			mode:        subjectTopLevelID,
+			mode:        subjectTopLevelStringID,
 		}, nil
 	case authentication.ProviderLinkedIn:
 		return providerSpec{
@@ -452,10 +465,10 @@ func specFor(provider authentication.Provider, microsoftTenant string) (provider
 			authURL:     "https://x.com/i/oauth2/authorize",
 			tokenURL:    "https://api.x.com/2/oauth2/token",
 			userInfoURL: "https://api.x.com/2/users/me",
-			scopes:      []string{"users.read"},
+			scopes:      []string{"tweet.read", "users.read"},
 			authStyle:   oauth2.AuthStyleInHeader,
 			usePKCE:     true,
-			mode:        subjectNestedDataID,
+			mode:        subjectNestedStringID,
 		}, nil
 	case authentication.ProviderTikTok:
 		return providerSpec{
