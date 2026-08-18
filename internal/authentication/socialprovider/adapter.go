@@ -199,7 +199,8 @@ func (a *adapter) exchangeStandard(ctx context.Context, code, providerVerifier s
 	if a.usePKCE {
 		opts = append(opts, oauth2.VerifierOption(providerVerifier))
 	}
-	token, err := a.oauthConfig().Exchange(exchangeCtx, code, opts...)
+	oauthCfg := a.oauthConfig()
+	token, err := oauthCfg.Exchange(exchangeCtx, code, opts...)
 	if err != nil || token == nil || token.AccessToken == "" {
 		return nil, authentication.ErrSocialProviderProof
 	}
