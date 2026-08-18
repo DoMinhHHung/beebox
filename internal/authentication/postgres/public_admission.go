@@ -54,9 +54,6 @@ func (s *Store) AdmitPublicSignup(ctx context.Context, appID applicationinstance
 	if err := enforceAtomicPublicRateLimit(ctx, tx, appID, "signup_pre_kdf_global", [32]byte{11}, authentication.PublicSignupGlobalLimit, authentication.PublicSignupGlobalWindow, now, authentication.ErrPublicSignupPersistence); err != nil {
 		return false, err
 	}
-	// The identifier row is intentionally touched only after the global admission
-	// succeeds. A globally denied unique-identifier flood therefore cannot grow
-	// attacker-controlled subject cardinality.
 	if err := enforceAtomicPublicRateLimit(ctx, tx, appID, "signup_pre_kdf_identifier", identifierFingerprint, authentication.PublicSignupIdentifierLimit, authentication.PublicSignupIdentifierWindow, now, authentication.ErrPublicSignupPersistence); err != nil {
 		return false, err
 	}
@@ -84,6 +81,22 @@ func (s *Store) AllowEmailOTPIssue(ctx context.Context, appID applicationinstanc
 
 func (s *Store) AllowEmailOTPConfirm(ctx context.Context, appID applicationinstance.InternalID, fingerprint [32]byte) error {
 	return s.allowPublicPair(ctx, appID, "email_otp_confirm_global", [32]byte{16}, 100, time.Minute, "email_otp_confirm_identifier", fingerprint, 5, 15*time.Minute, authentication.ErrEmailOTPPersistence)
+}
+
+func (s *Store) AllowPhoneSignupIssue(ctx context.Context, appID applicationinstance.InternalID, fingerprint [32]byte) error {
+	return s.allowPublicPair(ctx, appID, "phone_signup_issue_global", [32]byte{17}, 100, time.Minute, "phone_signup_issue_identifier", fingerprint, 5, 15*time.Minute, authentication.ErrPhoneSignupPersistence)
+}
+
+func (s *Store) AllowPhoneSignupConfirm(ctx context.Context, appID applicationinstance.InternalID, fingerprint [32]byte) error {
+	return s.allowPublicPair(ctx, appID, "phone_signup_confirm_global", [32]byte{18}, 100, time.Minute, "phone_signup_confirm_identifier", fingerprint, 5, 15*time.Minute, authentication.ErrPhoneSignupPersistence)
+}
+
+func (s *Store) AllowPhoneOTPIssue(ctx context.Context, appID applicationinstance.InternalID, fingerprint [32]byte) error {
+	return s.allowPublicPair(ctx, appID, "phone_otp_issue_global", [32]byte{19}, 100, time.Minute, "phone_otp_issue_identifier", fingerprint, 5, 15*time.Minute, authentication.ErrPhoneOTPPersistence)
+}
+
+func (s *Store) AllowPhoneOTPConfirm(ctx context.Context, appID applicationinstance.InternalID, fingerprint [32]byte) error {
+	return s.allowPublicPair(ctx, appID, "phone_otp_confirm_global", [32]byte{20}, 100, time.Minute, "phone_otp_confirm_identifier", fingerprint, 5, 15*time.Minute, authentication.ErrPhoneOTPPersistence)
 }
 
 func (s *Store) allowPublicPair(ctx context.Context, appID applicationinstance.InternalID, globalOp string, globalHash [32]byte, globalLimit int, globalWindow time.Duration, identifierOp string, identifierHash [32]byte, identifierLimit int, identifierWindow time.Duration, persistenceErr error) error {
@@ -118,8 +131,6 @@ func (s *Store) allowPublicPair(ctx context.Context, appID applicationinstance.I
 // enforceAtomicPublicRateLimit performs first-row creation, active-window
 // increment, and expired-window reset as one PostgreSQL UPSERT. The unique key
 // arbitrates concurrent first use; no missing-row SELECT/FOR UPDATE gap exists.
-// The conflict UPDATE is suppressed once the active window is already at its
-// limit, in which case RETURNING yields no row and admission is denied.
 func enforceAtomicPublicRateLimit(
 	ctx context.Context,
 	tx *sql.Tx,
