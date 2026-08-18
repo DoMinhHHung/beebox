@@ -1,4 +1,9 @@
 -- +goose Up
+ALTER TABLE audit_events
+    ADD COLUMN resource_reference TEXT,
+    ADD CONSTRAINT audit_events_resource_reference_check
+        CHECK (resource_reference IS NULL OR char_length(resource_reference) BETWEEN 1 AND 256);
+
 CREATE TABLE application_redirect_urls (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     application_instance_id BIGINT NOT NULL REFERENCES application_instances(id),
