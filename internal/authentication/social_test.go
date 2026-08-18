@@ -95,12 +95,12 @@ func TestSocialAttemptAndCallbackUseTrustedStoredState(t *testing.T) {
 	}
 	store.snapshot = SocialAttemptSnapshot{
 		ApplicationInstanceID: app.InternalID,
-		ApplicationPublicID: app.PublicID,
-		Provider: ProviderGitHub,
-		CanonicalRedirectURL: "https://app.example.test/auth/callback",
-		StateHash: store.write.StateHash,
-		ClientCodeChallenge: challenge,
-		ExpiresAt: service.now().Add(SocialAttemptTTL),
+		ApplicationPublicID:   app.PublicID,
+		Provider:              ProviderGitHub,
+		CanonicalRedirectURL:  "https://app.example.test/auth/callback",
+		StateHash:             store.write.StateHash,
+		ClientCodeChallenge:   challenge,
+		ExpiresAt:             service.now().Add(SocialAttemptTTL),
 	}
 	provider.assertConsumed = func() bool { return store.consumed }
 	callback, err := service.CompleteCallback(context.Background(), ProviderGitHub, store.stateFromAuthorizationURL(attempt.AuthorizationURL), "fake-provider-code", false, correlation)
@@ -131,11 +131,11 @@ func TestSocialCallbackProviderDenialDoesNotCallBackchannel(t *testing.T) {
 	provider := &fakeSocialProvider{provider: ProviderGoogle}
 	store := &fakeSocialStore{snapshot: SocialAttemptSnapshot{
 		ApplicationInstanceID: 1,
-		ApplicationPublicID: appPublicID,
-		Provider: ProviderGoogle,
-		CanonicalRedirectURL: "https://app.example.test/callback",
-		StateHash: hash,
-		ExpiresAt: time.Now().Add(time.Minute),
+		ApplicationPublicID:   appPublicID,
+		Provider:              ProviderGoogle,
+		CanonicalRedirectURL:  "https://app.example.test/callback",
+		StateHash:             hash,
+		ExpiresAt:             time.Now().Add(time.Minute),
 	}}
 	service := NewSocialService(store, fakeRedirectPolicy(true), fakeSocialAdmission{}, fakeSocialRegistry{appID: appPublicID, provider: provider}, nil)
 	correlation, _ := audit.NewCorrelationID()
@@ -199,11 +199,11 @@ func (p *fakeSocialProvider) ExchangeIdentity(context.Context, string, string, [
 }
 
 type fakeSocialStore struct {
-	write     SocialAttemptWrite
-	snapshot  SocialAttemptSnapshot
-	final     SocialProofFinalize
-	consumed  bool
-	rawState  string
+	write    SocialAttemptWrite
+	snapshot SocialAttemptSnapshot
+	final    SocialProofFinalize
+	consumed bool
+	rawState string
 }
 
 func (s *fakeSocialStore) CreateSocialAttempt(_ context.Context, write SocialAttemptWrite) error {
