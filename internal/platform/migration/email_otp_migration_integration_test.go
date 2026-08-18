@@ -31,10 +31,10 @@ func TestEmailOTPMigrationUpgradesExisting00012Schema(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if entry.Name() != "00014_phone_sms.sql" {
+		if entry.Name() != "00014_phone_sms.sql" && entry.Name() != "00015_social_oauth.sql" {
 			throughThirteen[entry.Name()] = &fstest.MapFile{Data: content}
 		}
-		if entry.Name() != "00013_email_otp_signin.sql" && entry.Name() != "00014_phone_sms.sql" {
+		if entry.Name() != "00013_email_otp_signin.sql" && entry.Name() != "00014_phone_sms.sql" && entry.Name() != "00015_social_oauth.sql" {
 			throughTwelve[entry.Name()] = &fstest.MapFile{Data: content}
 		}
 	}
