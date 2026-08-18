@@ -10,6 +10,7 @@ import (
 type Delivery interface {
 	DeliverVerificationCode(context.Context, string, string, time.Time) error
 	DeliverPasswordResetCode(context.Context, string, string, time.Time) error
+	DeliverSignInCode(context.Context, string, string, time.Time) error
 }
 
 type Instrumented struct {
@@ -29,6 +30,12 @@ func (d *Instrumented) DeliverVerificationCode(ctx context.Context, destination,
 
 func (d *Instrumented) DeliverPasswordResetCode(ctx context.Context, destination, code string, expiresAt time.Time) error {
 	err := d.inner.DeliverPasswordResetCode(ctx, destination, code, expiresAt)
+	d.observe(err)
+	return err
+}
+
+func (d *Instrumented) DeliverSignInCode(ctx context.Context, destination, code string, expiresAt time.Time) error {
+	err := d.inner.DeliverSignInCode(ctx, destination, code, expiresAt)
 	d.observe(err)
 	return err
 }
