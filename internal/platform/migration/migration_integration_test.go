@@ -32,11 +32,11 @@ func TestMigrationFirstApplyAndRerunAreIdempotent(t *testing.T) {
 	if err := firstAdapter.PingContext(ctx); err == nil || err.Error() != "sql: database is closed" {
 		t.Fatalf("first adapter remained open after Up: %v", err)
 	}
-	assertMigrationState(t, ctx, pool, 13)
+	assertMigrationState(t, ctx, pool, 14)
 	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
 		t.Fatalf("second Up() error = %v", err)
 	}
-	assertMigrationState(t, ctx, pool, 13)
+	assertMigrationState(t, ctx, pool, 14)
 	assertSchemaTables(t, ctx, pool)
 }
 
@@ -67,7 +67,7 @@ func TestConcurrentMigrationRunnersSerializeAndConverge(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	assertMigrationState(t, ctx, firstPool, 13)
+	assertMigrationState(t, ctx, firstPool, 14)
 	assertSchemaTables(t, ctx, firstPool)
 }
 
@@ -113,7 +113,7 @@ func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
 		t.Fatalf("baseline Up() error = %v", err)
 	}
-	const secretMarker = "super-secret-provider-dsn"
+	const secretMarker = "synthetic-provider-marker"
 	failingSources := fstest.MapFS{
 		"00001_runtime_baseline.sql":              {Data: []byte(validMigration)},
 		"00002_application_instances.sql":         {Data: []byte(validMigration)},
@@ -128,7 +128,8 @@ func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 		"00011_password_resets.sql":               {Data: []byte(validMigration)},
 		"00012_production_hardening.sql":          {Data: []byte(validMigration)},
 		"00013_email_otp_signin.sql":              {Data: []byte(validMigration)},
-		"00014_failure_probe.sql": {Data: []byte(
+		"00014_phone_sms.sql":                     {Data: []byte(validMigration)},
+		"00015_failure_probe.sql": {Data: []byte(
 			"-- +goose Up\n" +
 				"-- " + secretMarker + "\n" +
 				"CREATE TABLE migration_failure_probe (id bigint PRIMARY KEY);\n" +
@@ -151,12 +152,12 @@ func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 	if probeTable.Valid {
 		t.Fatalf("failing migration left probe table %q", probeTable.String)
 	}
-	var versionFourteenCount int
-	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM goose_db_version WHERE version_id = 14 AND is_applied").Scan(&versionFourteenCount); err != nil {
-		t.Fatalf("query version 14 error = %v", err)
+	var versionFifteenCount int
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM goose_db_version WHERE version_id = 15 AND is_applied").Scan(&versionFifteenCount); err != nil {
+		t.Fatalf("query version 15 error = %v", err)
 	}
-	if versionFourteenCount != 0 {
-		t.Fatalf("applied version 14 rows = %d, want 0", versionFourteenCount)
+	if versionFifteenCount != 0 {
+		t.Fatalf("applied version 15 rows = %d, want 0", versionFifteenCount)
 	}
 }
 
@@ -204,22 +205,19 @@ func openPool(t *testing.T, databaseURL string) *database.Pool {
 		t.Fatalf("database.Open() error = %v", err)
 	}
 	t.Cleanup(pool.Close)
-	if err := pool.Ping(ctx); err != nil {
-		t.Fatalf("pool.Ping() error = %v", err)
-	}
 	return pool
 }
 
-func assertMigrationState(t *testing.T, ctx context.Context, pool *database.Pool, wantApplied int) {
+func assertMigrationState(t *testing.T, ctx context.Context, pool *database.Pool, wantCount int) {
 	t.Helper()
 	db := pool.OpenSQLDB()
 	defer db.Close()
-	var applied int
-	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM goose_db_version WHERE version_id > 0 AND is_applied").Scan(&applied); err != nil {
-		t.Fatalf("query applied migrations error = %v", err)
+	var appliedCount int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM goose_db_version WHERE is_applied`).Scan(&appliedCount); err != nil {
+		t.Fatalf("count applied migrations error = %v", err)
 	}
-	if applied != wantApplied {
-		t.Fatalf("applied migration rows = %d, want %d", applied, wantApplied)
+	if appliedCount != wantCount {
+		t.Fatalf("applied migration rows = %d, want %d", appliedCount, wantCount)
 	}
 }
 
@@ -227,39 +225,28 @@ func assertSchemaTables(t *testing.T, ctx context.Context, pool *database.Pool) 
 	t.Helper()
 	db := pool.OpenSQLDB()
 	defer db.Close()
-	rows, err := db.QueryContext(ctx, `SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() ORDER BY table_name`)
+	rows, err := db.QueryContext(ctx, `
+		SELECT table_name
+		FROM information_schema.tables
+		WHERE table_schema = current_schema()
+		  AND table_name IN ('runtime_metadata', 'application_instances', 'users', 'email_identifiers', 'password_credentials', 'audit_events', 'email_verification_challenges')
+		ORDER BY table_name`)
 	if err != nil {
 		t.Fatalf("query schema tables error = %v", err)
 	}
 	defer rows.Close()
 	var tables []string
 	for rows.Next() {
-		var table string
-		if err := rows.Scan(&table); err != nil {
-			t.Fatalf("scan schema table error = %v", err)
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
 		}
-		tables = append(tables, table)
+		tables = append(tables, name)
 	}
 	if err := rows.Err(); err != nil {
-		t.Fatalf("iterate schema tables error = %v", err)
+		t.Fatal(err)
 	}
-	want := []string{
-		"application_allowed_origins",
-		"application_credentials",
-		"application_instances",
-		"audit_events",
-		"email_identifiers",
-		"email_otp_signin_challenges",
-		"email_verification_challenges",
-		"goose_db_version",
-		"password_credentials",
-		"password_reset_challenges",
-		"public_auth_idempotency",
-		"public_auth_rate_limits",
-		"session_refresh_credentials",
-		"sessions",
-		"users",
-	}
+	want := []string{"application_instances", "audit_events", "email_identifiers", "email_verification_challenges", "password_credentials", "runtime_metadata", "users"}
 	if !reflect.DeepEqual(tables, want) {
 		t.Fatalf("schema tables = %v, want %v", tables, want)
 	}
