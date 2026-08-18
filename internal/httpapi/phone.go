@@ -32,11 +32,21 @@ type phoneHTTP struct {
 	signinConfirmer PhoneConfirmService
 }
 
-type phoneRequest struct { Phone string `json:"phone"` }
-type phoneConfirmRequest struct { Phone string `json:"phone"`; Code string `json:"code"` }
+type phoneRequest struct {
+	Phone string `json:"phone"`
+}
+
+type phoneConfirmRequest struct {
+	Phone string `json:"phone"`
+	Code  string `json:"code"`
+}
 
 func WithPhoneSMS(base http.Handler, applications ApplicationResolver, origins OriginPolicy, signupIssuer PhoneIssueService, signupConfirmer PhoneConfirmService, signinIssuer PhoneIssueService, signinConfirmer PhoneConfirmService) http.Handler {
-	return &phoneHTTP{base: base, applications: applications, origins: origins, signupIssuer: signupIssuer, signupConfirmer: signupConfirmer, signinIssuer: signinIssuer, signinConfirmer: signinConfirmer}
+	return &phoneHTTP{
+		base: base, applications: applications, origins: origins,
+		signupIssuer: signupIssuer, signupConfirmer: signupConfirmer,
+		signinIssuer: signinIssuer, signinConfirmer: signinConfirmer,
+	}
 }
 
 func (h *phoneHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -78,29 +88,56 @@ func (h *phoneHTTP) withPhoneSecurityContext(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *phoneHTTP) handlePhoneIssue(w http.ResponseWriter, r *http.Request, requestID string, correlationID audit.CorrelationID, issuer PhoneIssueService) {
-	if r.Method != http.MethodPost { methodNotAllowed(w, requestID); return }
-	app, ok := h.authorizePhoneApplication(w, r, requestID); if !ok { return }
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, requestID)
+		return
+	}
+	app, ok := h.authorizePhoneApplication(w, r, requestID)
+	if !ok {
+		return
+	}
 	var input phoneRequest
-	if decodeJSON(w, r, &input) != nil { writeError(w, http.StatusBadRequest, "invalid_request", "The request body is invalid.", requestID); return }
+	if decodeJSON(w, r, &input) != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "The request body is invalid.", requestID)
+		return
+	}
 	if issuer == nil {
+		// SMS-disabled mode stops here before any phone/account/challenge lookup.
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "SMS authentication is unavailable.", requestID)
 		return
 	}
 	err := issuer.RequestWithCorrelation(r.Context(), app.InternalID, input.Phone, correlationID)
-	if errors.Is(err, identity.ErrInvalidPhone) { writeError(w, http.StatusUnprocessableEntity, "invalid_input", "The supplied input is invalid.", requestID); return }
+	if errors.Is(err, identity.ErrInvalidPhone) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_input", "The supplied input is invalid.", requestID)
+		return
+	}
 	if err != nil && !errors.Is(err, authentication.ErrPhoneSignupDelivery) && !errors.Is(err, authentication.ErrPhoneOTPDelivery) && !errors.Is(err, authentication.ErrPhoneSignupInvalid) && !errors.Is(err, authentication.ErrPhoneOTPInvalid) && !errors.Is(err, authentication.ErrPhoneSignupRateLimited) && !errors.Is(err, authentication.ErrPhoneOTPRateLimited) {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Authentication is temporarily unavailable.", requestID)
 		return
 	}
+	// Eligible delivery, protected account state, cooldown/window suppression,
+	// and provider failure deliberately converge on the same accepted response.
 	writeJSON(w, http.StatusAccepted, statusEnvelope{Status: "accepted"})
 }
 
 func (h *phoneHTTP) handlePhoneConfirm(w http.ResponseWriter, r *http.Request, requestID string, correlationID audit.CorrelationID, confirmer PhoneConfirmService) {
-	if r.Method != http.MethodPost { methodNotAllowed(w, requestID); return }
-	app, ok := h.authorizePhoneApplication(w, r, requestID); if !ok { return }
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, requestID)
+		return
+	}
+	app, ok := h.authorizePhoneApplication(w, r, requestID)
+	if !ok {
+		return
+	}
 	var input phoneConfirmRequest
-	if decodeJSON(w, r, &input) != nil { writeError(w, http.StatusBadRequest, "invalid_request", "The request body is invalid.", requestID); return }
-	if confirmer == nil { writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Authentication is temporarily unavailable.", requestID); return }
+	if decodeJSON(w, r, &input) != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "The request body is invalid.", requestID)
+		return
+	}
+	if confirmer == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Authentication is temporarily unavailable.", requestID)
+		return
+	}
 	pair, err := confirmer.Confirm(r.Context(), app.InternalID, input.Phone, input.Code, correlationID)
 	if err != nil {
 		switch {
@@ -146,10 +183,19 @@ func (h *phoneHTTP) authorizePhoneApplication(w http.ResponseWriter, r *http.Req
 
 func (h *phoneHTTP) handlePhonePreflight(w http.ResponseWriter, r *http.Request, requestID string) {
 	origin := r.Header.Get("Origin")
-	if h.origins == nil || origin == "" { writeError(w, http.StatusForbidden, "origin_not_allowed", "The request origin is not allowed.", requestID); return }
+	if h.origins == nil || origin == "" {
+		writeError(w, http.StatusForbidden, "origin_not_allowed", "The request origin is not allowed.", requestID)
+		return
+	}
 	allowed, err := h.origins.AnyAllowedOrigin(r.Context(), origin)
-	if err != nil || !allowed { writeError(w, http.StatusForbidden, "origin_not_allowed", "The request origin is not allowed.", requestID); return }
-	if r.Header.Get("Access-Control-Request-Method") != http.MethodPost { methodNotAllowed(w, requestID); return }
+	if err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "origin_not_allowed", "The request origin is not allowed.", requestID)
+		return
+	}
+	if r.Header.Get("Access-Control-Request-Method") != http.MethodPost {
+		methodNotAllowed(w, requestID)
+		return
+	}
 	setCORSHeaders(w, origin)
 	w.Header().Set("Access-Control-Allow-Methods", http.MethodPost)
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-BeeBox-Publishable-Key")
@@ -160,7 +206,11 @@ func (h *phoneHTTP) handlePhonePreflight(w http.ResponseWriter, r *http.Request,
 func writePhoneTokenPair(w http.ResponseWriter, r *http.Request, pair session.TokenPair, appPublicID applicationinstance.PublicID) {
 	response := tokenResponse{AccessToken: pair.AccessToken, TokenType: "Bearer", ExpiresIn: pair.ExpiresIn, SessionID: pair.SessionID}
 	if r.Header.Get("Origin") != "" {
-		http.SetCookie(w, &http.Cookie{Name: refreshCookieName(appPublicID), Value: pair.RefreshToken, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: int(session.AbsoluteLifetime / time.Second)})
+		http.SetCookie(w, &http.Cookie{
+			Name: refreshCookieName(appPublicID), Value: pair.RefreshToken, Path: "/",
+			Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode,
+			MaxAge: int(session.AbsoluteLifetime / time.Second),
+		})
 	} else {
 		response.RefreshToken = pair.RefreshToken
 	}
