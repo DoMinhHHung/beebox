@@ -63,14 +63,14 @@ func TestOIDCProviderWireContracts(t *testing.T) {
 				tokenCalls.Add(1)
 				assertContractTokenRequest(t, r, server.URL+"/callback", oauth2.AuthStyleInParams, contract.pkce)
 				claims := map[string]any{
-					"iss": server.URL,
-					"aud": clientID,
-					"sub": "stable-" + contract.name + "-subject",
-					"nonce": nonce,
-					"iat": time.Now().Add(-time.Minute).Unix(),
-					"exp": time.Now().Add(5 * time.Minute).Unix(),
-					"email": "ignored@example.test",
-					"name": "Ignored",
+					"iss":     server.URL,
+					"aud":     clientID,
+					"sub":     "stable-" + contract.name + "-subject",
+					"nonce":   nonce,
+					"iat":     time.Now().Add(-time.Minute).Unix(),
+					"exp":     time.Now().Add(5 * time.Minute).Unix(),
+					"email":   "ignored@example.test",
+					"name":    "Ignored",
 					"picture": "https://ignored.example.test/avatar",
 				}
 				raw, signErr := signContractJWT(key, "key-a", claims)
@@ -82,17 +82,17 @@ func TestOIDCProviderWireContracts(t *testing.T) {
 			})
 			client := server.Client()
 			a := &adapter{
-				provider: contract.provider,
-				clientID: clientID,
+				provider:     contract.provider,
+				clientID:     clientID,
 				clientSecret: "fake-client-secret-jwt",
-				redirectURL: server.URL + "/callback",
-				tokenURL: server.URL + "/token",
-				authStyle: oauth2.AuthStyleInParams,
-				usePKCE: contract.pkce,
-				useNonce: true,
-				mode: subjectOIDC,
-				verifier: oidc.NewVerifier(server.URL, oidc.NewRemoteKeySet(oidc.ClientContext(context.Background(), client), server.URL+"/jwks"), &oidc.Config{ClientID: clientID, SupportedSigningAlgs: []string{"RS256"}}),
-				httpClient: client,
+				redirectURL:  server.URL + "/callback",
+				tokenURL:     server.URL + "/token",
+				authStyle:    oauth2.AuthStyleInParams,
+				usePKCE:      contract.pkce,
+				useNonce:     true,
+				mode:         subjectOIDC,
+				verifier:     oidc.NewVerifier(server.URL, oidc.NewRemoteKeySet(oidc.ClientContext(context.Background(), client), server.URL+"/jwks"), &oidc.Config{ClientID: clientID, SupportedSigningAlgs: []string{"RS256"}}),
+				httpClient:   client,
 			}
 			verifier := ""
 			if contract.pkce {
