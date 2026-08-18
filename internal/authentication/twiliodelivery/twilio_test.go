@@ -16,23 +16,25 @@ import (
 func fixtureAccountSID() string { return "AC" + strings.Repeat("0", 32) }
 func fixtureAuthValue() string  { return strings.Repeat("fixture_", 4) }
 
-func TestFromLookupDefaultsDisabledAndRejectsPartialTwilio(t *testing.T) {
-	lookup := func(string) (string, bool) { return "", false }
-	if sender, enabled, err := FromLookup(lookup); err != nil || enabled || sender != nil {
-		t.Fatalf("disabled = sender=%v enabled=%v err=%v", sender, enabled, err)
-	}
+func TestFromLookupValidatesConfigTimeoutAndProductionHTTPS(t *testing.T) {
 	authValue := fixtureAuthValue()
 	values := map[string]string{
-		"BEEBOX_SMS_MODE":           "twilio",
 		"BEEBOX_TWILIO_ACCOUNT_SID": fixtureAccountSID(),
 		"BEEBOX_TWILIO_AUTH_TOKEN":  authValue,
+		"BEEBOX_TWILIO_FROM":        "+15551234567",
+		"BEEBOX_TWILIO_TIMEOUT":     "3s",
 	}
-	lookup = func(key string) (string, bool) {
-		value, ok := values[key]
-		return value, ok
+	lookup := func(key string) (string, bool) { value, ok := values[key]; return value, ok }
+	delivery, err := FromLookup(lookup)
+	if err != nil || delivery == nil || delivery.client.Timeout != 3*time.Second {
+		t.Fatalf("FromLookup() delivery=%v err=%v", delivery, err)
 	}
-	if _, _, err := FromLookup(lookup); !errors.Is(err, ErrConfig) || strings.Contains(err.Error(), authValue) {
+	delete(values, "BEEBOX_TWILIO_FROM")
+	if _, err := FromLookup(lookup); !errors.Is(err, ErrConfig) || strings.Contains(err.Error(), authValue) {
 		t.Fatalf("partial config error = %q", err)
+	}
+	if _, err := newDelivery(fixtureAccountSID(), authValue, "+15551234567", &http.Client{Timeout: time.Second}, "http://provider.example", false); !errors.Is(err, ErrConfig) {
+		t.Fatalf("plaintext production endpoint error = %v", err)
 	}
 }
 
@@ -66,7 +68,7 @@ func TestDeliverySendsExactlyOnePurposeSpecificRequest(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 	}))
 	defer server.Close()
-	delivery, err := newDelivery(account, authValue, "+15551234567", server.Client(), server.URL)
+	delivery, err := newDelivery(account, authValue, "+15551234567", server.Client(), server.URL, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +95,7 @@ func TestDeliverySignInPurposeAndSafeFailures(t *testing.T) {
 	}))
 	defer server.Close()
 	authValue := fixtureAuthValue()
-	delivery, err := newDelivery(fixtureAccountSID(), authValue, "+15551234567", server.Client(), server.URL)
+	delivery, err := newDelivery(fixtureAccountSID(), authValue, "+15551234567", server.Client(), server.URL, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +114,7 @@ func TestDeliveryHonorsContextCancellationAndDoesNotRetry(t *testing.T) {
 	defer server.Close()
 	client := server.Client()
 	client.Timeout = time.Second
-	delivery, err := newDelivery(fixtureAccountSID(), fixtureAuthValue(), "+15551234567", client, server.URL)
+	delivery, err := newDelivery(fixtureAccountSID(), fixtureAuthValue(), "+15551234567", client, server.URL, true)
 	if err != nil {
 		t.Fatal(err)
 	}

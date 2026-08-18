@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/DoMinhHHung/beebox/internal/authentication"
 )
 
 const (
@@ -33,41 +35,36 @@ type Delivery struct {
 	baseURL    string
 }
 
-func FromLookup(lookup LookupEnv) (*Delivery, bool, error) {
-	mode, ok := lookup("BEEBOX_SMS_MODE")
-	if !ok || mode == "" || mode == "disabled" {
-		return nil, false, nil
-	}
-	if mode != "twilio" {
-		return nil, false, ErrConfig
-	}
+var _ authentication.PhoneOTPDelivery = (*Delivery)(nil)
+
+func FromLookup(lookup LookupEnv) (*Delivery, error) {
 	account, okAccount := lookup("BEEBOX_TWILIO_ACCOUNT_SID")
 	token, okToken := lookup("BEEBOX_TWILIO_AUTH_TOKEN")
 	from, okFrom := lookup("BEEBOX_TWILIO_FROM")
 	if !okAccount || !okToken || !okFrom || account == "" || token == "" || from == "" || !accountSID.MatchString(account) || len(from) > 64 {
-		return nil, false, ErrConfig
+		return nil, ErrConfig
 	}
 	timeout := defaultTimeout
 	if raw, ok := lookup("BEEBOX_TWILIO_TIMEOUT"); ok {
 		parsed, err := time.ParseDuration(raw)
 		if err != nil || parsed <= 0 || parsed > 30*time.Second {
-			return nil, false, ErrConfig
+			return nil, ErrConfig
 		}
 		timeout = parsed
 	}
-	delivery, err := newDelivery(account, token, from, &http.Client{Timeout: timeout}, productionBaseURL)
+	delivery, err := newDelivery(account, token, from, &http.Client{Timeout: timeout}, productionBaseURL, false)
 	if err != nil {
-		return nil, false, ErrConfig
+		return nil, ErrConfig
 	}
-	return delivery, true, nil
+	return delivery, nil
 }
 
-func newDelivery(account, token, from string, client *http.Client, baseURL string) (*Delivery, error) {
+func newDelivery(account, token, from string, client *http.Client, baseURL string, allowHTTP bool) (*Delivery, error) {
 	if !accountSID.MatchString(account) || token == "" || from == "" || client == nil || baseURL == "" {
 		return nil, ErrConfig
 	}
 	parsed, err := url.Parse(baseURL)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && !(allowHTTP && parsed.Scheme == "http")) {
 		return nil, ErrConfig
 	}
 	return &Delivery{accountSID: account, authToken: token, from: from, client: client, baseURL: strings.TrimRight(baseURL, "/")}, nil

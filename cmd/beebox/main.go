@@ -19,7 +19,6 @@ import (
 	"github.com/DoMinhHHung/beebox/internal/authentication/metricsdelivery"
 	authpostgres "github.com/DoMinhHHung/beebox/internal/authentication/postgres"
 	"github.com/DoMinhHHung/beebox/internal/authentication/smtpdelivery"
-	"github.com/DoMinhHHung/beebox/internal/authentication/twiliodelivery"
 	"github.com/DoMinhHHung/beebox/internal/httpapi"
 	identitypostgres "github.com/DoMinhHHung/beebox/internal/identity/postgres"
 	"github.com/DoMinhHHung/beebox/internal/metrics"
@@ -92,9 +91,9 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 	if err != nil {
 		return nil, errors.New("load SMTP delivery configuration")
 	}
-	smsSender, smsEnabled, err := twiliodelivery.FromLookup(twiliodelivery.LookupEnv(lookup))
+	smsSender, smsEnabled, err := buildSMSDelivery(lookup)
 	if err != nil {
-		return nil, errors.New("load SMS delivery configuration")
+		return nil, err
 	}
 	recorder := metrics.New()
 	recorder.SetDatabaseStatsProvider(func() metrics.DatabaseStats {

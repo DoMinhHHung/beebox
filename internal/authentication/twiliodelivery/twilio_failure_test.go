@@ -21,7 +21,7 @@ func TestDeliveryClassifies4xxAndLargeProviderBodySafelyWithoutRetry(t *testing.
 				_, _ = w.Write([]byte(strings.Repeat("provider-body", 20_000)))
 			}))
 			defer server.Close()
-			delivery, err := newDelivery(fixtureAccountSID(), fixtureAuthValue(), "+15551234567", &http.Client{Timeout: time.Second}, server.URL)
+			delivery, err := newDelivery(fixtureAccountSID(), fixtureAuthValue(), "+15551234567", &http.Client{Timeout: time.Second}, server.URL, true)
 			if err != nil {
 				t.Fatal(err)
 			}
