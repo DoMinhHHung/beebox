@@ -4,18 +4,16 @@ package postgres
 
 import (
 	"context"
-	"crypto/sha256"
+	cryptosha256 "crypto/sha256"
 	"errors"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
 	applicationpostgres "github.com/DoMinhHHung/beebox/internal/applicationinstance/postgres"
 	"github.com/DoMinhHHung/beebox/internal/audit"
 	"github.com/DoMinhHHung/beebox/internal/authentication"
-	"github.com/DoMinhHHung/beebox/internal/identity"
 	identitypostgres "github.com/DoMinhHHung/beebox/internal/identity/postgres"
 	"github.com/DoMinhHHung/beebox/internal/platform/migration"
 	"github.com/DoMinhHHung/beebox/internal/session"
@@ -66,7 +64,7 @@ func TestSocialExternalIdentityConvergesPerApplicationAndIgnoresEmailCollision(t
 		Provider:              authentication.ProviderGitHub,
 		ProviderSubject:       "stable-provider-subject",
 		ClientCodeChallenge:   challenge,
-		CompletionCodeHash:    sha256.Sum256([]byte("fake-completion-a")),
+		CompletionCodeHash:    cryptosha256.Sum256([]byte("fake-completion-a")),
 		CompletionExpiresAt:   time.Now().UTC().Add(5 * time.Minute),
 		CorrelationID:         correlation,
 	}
@@ -98,7 +96,7 @@ func TestSocialExternalIdentityConvergesPerApplicationAndIgnoresEmailCollision(t
 
 	secondCorrelation, _ := audit.NewCorrelationID()
 	second := final
-	second.CompletionCodeHash = sha256.Sum256([]byte("fake-completion-b"))
+	second.CompletionCodeHash = cryptosha256.Sum256([]byte("fake-completion-b"))
 	second.CorrelationID = secondCorrelation
 	if err := store.FinalizeSocialProof(ctx, second); err != nil {
 		t.Fatalf("existing subject finalize error = %v", err)
@@ -114,7 +112,7 @@ func TestSocialExternalIdentityConvergesPerApplicationAndIgnoresEmailCollision(t
 	crossCorrelation, _ := audit.NewCorrelationID()
 	cross := final
 	cross.ApplicationInstanceID = appB.InternalID
-	cross.CompletionCodeHash = sha256.Sum256([]byte("fake-completion-cross-app"))
+	cross.CompletionCodeHash = cryptosha256.Sum256([]byte("fake-completion-cross-app"))
 	cross.CorrelationID = crossCorrelation
 	if err := store.FinalizeSocialProof(ctx, cross); err != nil {
 		t.Fatalf("cross-app finalize error = %v", err)
@@ -162,7 +160,7 @@ func TestConcurrentFirstSocialProofCreatesOnePrincipalAndNoOrphan(t *testing.T) 
 				Provider:              authentication.ProviderGoogle,
 				ProviderSubject:       "same-concurrent-subject",
 				ClientCodeChallenge:   challenge,
-				CompletionCodeHash:    sha256.Sum256([]byte{byte(i + 1)}),
+				CompletionCodeHash:    cryptosha256.Sum256([]byte{byte(i + 1)}),
 				CompletionExpiresAt:   time.Now().UTC().Add(5 * time.Minute),
 				CorrelationID:         correlation,
 			})
@@ -213,7 +211,7 @@ func TestSocialAttemptAndCompletionAreOneTimeAndApplicationScoped(t *testing.T) 
 	}
 	store := New(pool)
 	challenge, _ := authentication.S256Challenge(strings.Repeat("p", 43))
-	stateHash := sha256.Sum256([]byte("fake-state-material"))
+	stateHash := cryptosha256.Sum256([]byte("fake-state-material"))
 	if err := store.CreateSocialAttempt(ctx, authentication.SocialAttemptWrite{
 		ApplicationInstanceID: appA.InternalID,
 		Provider:              authentication.ProviderDiscord,
@@ -235,7 +233,7 @@ func TestSocialAttemptAndCompletionAreOneTimeAndApplicationScoped(t *testing.T) 
 	}
 
 	correlation, _ := audit.NewCorrelationID()
-	completionHash := sha256.Sum256([]byte("fake-one-time-completion"))
+	completionHash := cryptosha256.Sum256([]byte("fake-one-time-completion"))
 	if err := store.FinalizeSocialProof(ctx, authentication.SocialProofFinalize{
 		ApplicationInstanceID: appA.InternalID,
 		Provider:              authentication.ProviderDiscord,
@@ -254,7 +252,7 @@ func TestSocialAttemptAndCompletionAreOneTimeAndApplicationScoped(t *testing.T) 
 		CompletionCodeHash:    completionHash,
 		ClientCodeChallenge:   challenge,
 		SessionPublicID:       wrongAppSession,
-		RefreshVerifier:       sha256.Sum256([]byte("fake-refresh-wrong-app")),
+		RefreshVerifier:       cryptosha256.Sum256([]byte("fake-refresh-wrong-app")),
 		IdleExpiresAt:         time.Now().UTC().Add(time.Hour),
 		ExpiresAt:             time.Now().UTC().Add(24 * time.Hour),
 		CorrelationID:         wrongAppCorrelation,
@@ -270,7 +268,7 @@ func TestSocialAttemptAndCompletionAreOneTimeAndApplicationScoped(t *testing.T) 
 		CompletionCodeHash:    completionHash,
 		ClientCodeChallenge:   challenge,
 		SessionPublicID:       sessionID,
-		RefreshVerifier:       sha256.Sum256([]byte("fake-refresh")),
+		RefreshVerifier:       cryptosha256.Sum256([]byte("fake-refresh")),
 		IdleExpiresAt:         time.Now().UTC().Add(time.Hour),
 		ExpiresAt:             time.Now().UTC().Add(24 * time.Hour),
 		CorrelationID:         exchangeCorrelation,
@@ -288,7 +286,7 @@ func TestSocialAttemptAndCompletionAreOneTimeAndApplicationScoped(t *testing.T) 
 		CompletionCodeHash:    completionHash,
 		ClientCodeChallenge:   challenge,
 		SessionPublicID:       replaySession,
-		RefreshVerifier:       sha256.Sum256([]byte("fake-refresh-replay")),
+		RefreshVerifier:       cryptosha256.Sum256([]byte("fake-refresh-replay")),
 		IdleExpiresAt:         time.Now().UTC().Add(time.Hour),
 		ExpiresAt:             time.Now().UTC().Add(24 * time.Hour),
 		CorrelationID:         replayCorrelation,
@@ -328,7 +326,7 @@ func TestSocialCompletionAuditFailureRollsBackSessionAndGrantConsumption(t *test
 	}
 	store := New(pool)
 	challenge, _ := authentication.S256Challenge(strings.Repeat("r", 43))
-	completionHash := sha256.Sum256([]byte("fake-rollback-completion"))
+	completionHash := cryptosha256.Sum256([]byte("fake-rollback-completion"))
 	correlation, _ := audit.NewCorrelationID()
 	if err := store.FinalizeSocialProof(ctx, authentication.SocialProofFinalize{
 		ApplicationInstanceID: app.InternalID,
@@ -353,7 +351,7 @@ func TestSocialCompletionAuditFailureRollsBackSessionAndGrantConsumption(t *test
 		CompletionCodeHash:    completionHash,
 		ClientCodeChallenge:   challenge,
 		SessionPublicID:       sessionID,
-		RefreshVerifier:       sha256.Sum256([]byte("fake-refresh-rollback")),
+		RefreshVerifier:       cryptosha256.Sum256([]byte("fake-refresh-rollback")),
 		IdleExpiresAt:         time.Now().UTC().Add(time.Hour),
 		ExpiresAt:             time.Now().UTC().Add(24 * time.Hour),
 		CorrelationID:         exchangeCorrelation,
@@ -372,5 +370,3 @@ func TestSocialCompletionAuditFailureRollsBackSessionAndGrantConsumption(t *test
 		t.Fatalf("rollback sessions=%d consumed=%d, want 0/0", sessions, consumed)
 	}
 }
-
-var _ identity.InternalID
