@@ -1,12 +1,14 @@
 # ADR 0004 — Phase 2 identity linking and external identity trust
 
-Status: **proposed**
+Status: **accepted**
 
 Date: 2026-08-18
 
 Decision owner: Human maintainer
 
-Authority: This ADR is not accepted architecture until the Human maintainer explicitly ratifies it. It preserves accepted ADRs 0001–0003 and does not itself create runtime behavior.
+Acceptance record: Human maintainer explicitly ratified this ADR on 2026-08-18 against PR #19 technical head `0a42a1883c098eac96338ea5bf74fa5214d2db8f`. The same Draft PR was authorized to record accepted status. This ratification did not authorize merge, marking the PR Ready, deployment, or P2.1 implementation.
+
+Authority: This is an accepted architecture/security decision. It preserves accepted ADRs 0001–0003 and does not itself create runtime behavior.
 
 ## Context
 
@@ -14,7 +16,7 @@ Phase 1 deliberately excludes social authentication, phone identity, passkeys an
 
 `application_instance` remains the root isolation resource. Organization scope is additional only where applicable.
 
-## Proposed decision
+## Decision
 
 ### Application-scoped external identity
 
@@ -46,7 +48,7 @@ At initiation, the transaction must bind or securely reference at least:
 - the external/provider proof attempt being started;
 - the applicable recent-reverification evidence/context required by ADR 0005.
 
-The proposed v1 linking flow is:
+The v1 linking flow is:
 
 1. resolve the target user and authenticated context from trusted server-side state;
 2. require recent reverification under ADR 0005 and bind the applicable evidence/context to the link transaction;
@@ -73,7 +75,7 @@ Future implementations must define and enforce deterministic behavior for:
 - two BeeBox users claiming related provider/email state: no implicit merge;
 - concurrent claims for one provider subject: one owner at most, enforced by PostgreSQL uniqueness in the application scope rather than by application pre-check only.
 
-No path in this ADR permits principal merge. A future account-merge capability would require its own Human-ratified trust decision.
+No path in this ADR permits principal merge. A future account-merge capability requires its own Human-ratified trust decision.
 
 ### Unlink and last-method protection
 
@@ -142,14 +144,15 @@ No schema is added by this ADR. Later storage must enforce at least:
 - concurrency-safe attach/detach transitions;
 - non-substitutable link transaction/context semantics sufficient to preserve the initiation bindings above.
 
-## Human decision required
+## Accepted decision summary
 
-Decision 1 — ratify or reject this identity-linking baseline:
+The Human maintainer accepted:
 
 - no email-based automatic account linking;
-- provider subject is the stable social identity authority;
-- linking requires an authenticated current user plus recent reverification;
-- the explicit-link transaction remains bound to its initiating principal/session-equivalent context across the provider round-trip;
+- provider subject as the stable social identity authority;
+- linking only for an authenticated current user with recent reverification;
+- explicit-link transaction binding to its initiating application, principal, session/equivalent authenticated context, purpose, provider attempt and applicable reverification authority across the provider round-trip;
+- fail-closed behavior for invalid, revoked, substituted or cross-application context;
 - conflicts never merge principals implicitly.
 
 ## Consequences
