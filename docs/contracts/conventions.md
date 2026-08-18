@@ -1,6 +1,6 @@
 # BeeBox Contract and Tenancy Conventions
 
-> Status: Phase 0 repository baseline plus references to proposed Phase 2 trust decisions. Proposed ADRs do not create runtime behavior, public API, schema or SDK contracts until Human-ratified.
+> Status: Phase 0 repository baseline plus references to accepted Phase 2 trust decisions. ADRs 0004–0006 are accepted architecture/security contracts but do not by themselves create runtime behavior, public API, schema or SDK implementations.
 
 This document refines `Instruction.md` without overriding it. If a future public contract or trust-boundary decision conflicts with these semantics, the change requires the repository's normal ADR/maintainer process rather than a silent reinterpretation.
 
@@ -71,7 +71,7 @@ Idempotency is required where safe client retry could otherwise duplicate resour
 - Existing fields/events are never silently reused with a new semantic meaning.
 - This baseline does not promise Clerk endpoint compatibility or vendor-compatible wire contracts.
 
-The proposed Phase 2 ADRs add no route, OpenAPI operation, SDK method or provider wire model. Any externally binding Phase 2 API shape must be reviewed in the implementing slice.
+Accepted ADRs 0004–0006 add no route, OpenAPI operation, SDK method or provider wire model. Any externally binding Phase 2 API shape must still be reviewed in the implementing slice.
 
 ## 7. Audit-event semantics
 
@@ -107,24 +107,23 @@ BeeBox's root isolation invariant is explicit application/instance scope.
 - Cross-application negative tests are required for product slices that introduce new identity/credential state.
 - Deletion, retention, backup/restore, import/export and migration must preserve scope.
 
-## 9. Proposed Phase 2 trust decisions
+## 9. Accepted Phase 2 trust baseline
 
-ADRs 0004–0006 are **proposed** and require explicit Human maintainer ratification before an implementation may treat them as accepted architecture.
+ADRs 0004–0006 were explicitly Human-ratified on 2026-08-18 against PR #19 technical head `0a42a1883c098eac96338ea5bf74fa5214d2db8f`. Future Phase 2 implementation may rely on these accepted trust contracts, but each later slice must still implement and test its concrete lifecycle, API, persistence, failure, audit and migration requirements.
 
-Future Phase 2 implementation must read the applicable ADR rather than inventing policy locally:
+- `docs/adr/0004-phase2-identity-linking-external-trust.md` — external/provider subject ownership, no email-equality auto-link, authenticated explicit link/unlink, initiation-bound principal/session-equivalent state, conflict/last-method rules, primary identifiers, phone and passkey ownership;
+- `docs/adr/0005-phase2-authentication-assurance-recovery.md` — primary proof versus full assurance, MFA downgrade resistance, pending authentication, accepted 10-minute reverification freshness and recovery;
+- `docs/adr/0006-phase2-device-privacy-hosted-auth.md` — device metadata minimization/retention, application-scoped hosted redirects and generic/link-specific state binding.
 
-- `docs/adr/0004-phase2-identity-linking-external-trust.md` — external/provider subject ownership, no email-equality auto-link, authenticated explicit link/unlink, conflict/last-method rules, primary identifiers, phone and passkey ownership;
-- `docs/adr/0005-phase2-authentication-assurance-recovery.md` — primary proof versus full assurance, MFA downgrade resistance, pending authentication, reverification freshness and recovery;
-- `docs/adr/0006-phase2-device-privacy-hosted-auth.md` — device metadata minimization/retention and application-scoped hosted redirect/state binding.
+Accepted architecture is not runtime implementation. BeeBox must not claim social linking, MFA, passkeys, generic recovery, hosted authentication or device-management mitigations are deployed until code/tests for the applicable slice actually exist.
 
-While those ADRs remain proposed, accepted ADRs 0001–0003 continue to govern existing behavior. In particular ADR 0002's prohibition on email-equality account linking remains accepted and binding. No runtime mitigation described only in a proposed ADR may be claimed as implemented.
+ADR 0002's prohibition on email-equality account linking remains accepted and is preserved by ADR 0004.
 
 ## 10. Decisions still intentionally open
 
 This baseline does not decide:
 
-- acceptance of ADRs 0004–0006;
-- any account-merge lifecycle beyond the proposed explicit-link model;
+- any account-merge lifecycle beyond the accepted explicit-link model;
 - concrete OAuth/OIDC provider adapter or token-storage lifecycle;
 - concrete WebAuthn, MFA, recovery-code or pending-auth transaction representation;
 - concrete device PII retention because new device PII storage is deferred by default;
@@ -145,5 +144,5 @@ A future public/product PR touching these conventions should demonstrate:
 - explicit API/event compatibility impact;
 - required audit evidence;
 - negative authorization/cross-tenant tests;
-- for Phase 2 identity/security work, traceability to the applicable **accepted** trust ADR and no reliance on a merely proposed decision;
+- for Phase 2 identity/security work, traceability to the applicable accepted trust ADR;
 - no vendor-model leakage or implicit trust-boundary expansion.
