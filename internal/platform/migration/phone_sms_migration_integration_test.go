@@ -64,7 +64,8 @@ func TestPhoneSMSMigrationUpgradesExisting00013SchemaAndPreservesLimiterVocabula
 		"email_otp_issue_global", "email_otp_issue_identifier", "email_otp_confirm_global", "email_otp_confirm_identifier",
 		"phone_signup_issue_global", "phone_signup_issue_identifier", "phone_signup_confirm_global", "phone_signup_confirm_identifier",
 		"phone_otp_issue_global", "phone_otp_issue_identifier", "phone_otp_confirm_global", "phone_otp_confirm_identifier",
-	} {
+	}
+	for _, operation := range operations {
 		if _, err := db.ExecContext(ctx, `
 			INSERT INTO public_auth_rate_limits(application_instance_id,operation,subject_hash,window_started_at,request_count,expires_at)
 			VALUES($1,$2,decode(repeat('ab',32),'hex'),CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP+INTERVAL '1 minute')`, appID, operation); err != nil {
