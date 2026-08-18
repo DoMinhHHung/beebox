@@ -3,6 +3,7 @@ package authentication
 import (
 	"context"
 	"errors"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -35,6 +36,17 @@ func TestKDFGateBoundsConcurrencyAndWaiting(t *testing.T) {
 	}
 	<-started
 	<-started
+
+	// Wait for both remaining callers to actually occupy the bounded waiting
+	// set before probing the fifth caller. Merely observing two running workers
+	// does not guarantee the scheduler has run the other goroutines yet.
+	deadline := time.Now().Add(time.Second)
+	for len(gate.waiting) < gate.Limit() {
+		if time.Now().After(deadline) {
+			t.Fatalf("waiting admissions = %d, want %d", len(gate.waiting), gate.Limit())
+		}
+		runtime.Gosched()
+	}
 
 	// Two callers are running and two are in the bounded waiting set. A fifth
 	// caller is rejected rather than extending an unbounded queue.
