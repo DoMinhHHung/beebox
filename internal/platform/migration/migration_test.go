@@ -142,5 +142,5 @@ type testConn struct {
 }
 
 func (testConn) Prepare(string) (driver.Stmt, error) { return nil, errors.New("not implemented") }
-func (c testConn) Close() error                            { c.closed.Add(1); return nil }
-func (testConn) Begin() (driver.Tx, error)                 { return nil, errors.New("not implemented") }
+func (c testConn) Close() error                      { c.closed.Add(1); return nil }
+func (testConn) Begin() (driver.Tx, error)           { return nil, errors.New("not implemented") }
