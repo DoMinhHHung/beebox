@@ -46,6 +46,9 @@ func (g *KDFGate) Do(ctx context.Context, fn func() error) error {
 	if g == nil || g.Limit() <= 0 || fn == nil {
 		return ErrKDFAdmissionLimited
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	select {
 	case g.waiting <- struct{}{}:
@@ -53,6 +56,10 @@ func (g *KDFGate) Do(ctx context.Context, fn func() error) error {
 		return ErrKDFAdmissionLimited
 	}
 
+	if err := ctx.Err(); err != nil {
+		<-g.waiting
+		return err
+	}
 	select {
 	case g.running <- struct{}{}:
 		<-g.waiting
