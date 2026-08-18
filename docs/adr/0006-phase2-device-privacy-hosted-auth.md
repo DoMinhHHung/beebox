@@ -1,18 +1,20 @@
 # ADR 0006 — Phase 2 device privacy and hosted authentication trust
 
-Status: **proposed**
+Status: **accepted**
 
 Date: 2026-08-18
 
 Decision owner: Human maintainer
 
-Authority: This ADR is not accepted architecture until the Human maintainer explicitly ratifies it. It introduces no hosted UI, database column or runtime redirect endpoint.
+Acceptance record: Human maintainer explicitly ratified this ADR on 2026-08-18 against PR #19 technical head `0a42a1883c098eac96338ea5bf74fa5214d2db8f`. The same Draft PR was authorized to record accepted status. This ratification did not authorize merge, marking the PR Ready, deployment, or P2.1 implementation.
+
+Authority: This is an accepted architecture/security decision. It introduces no hosted UI, database column or runtime redirect endpoint.
 
 ## Context
 
 Phase 2 plans device/session UX and hosted authentication. Both can quietly expand the privacy and phishing trust boundary if metadata or redirect semantics are left to feature implementation. BeeBox therefore needs a conservative contract before those features exist.
 
-## Proposed decision
+## Decision
 
 ### Device/session metadata minimization
 
@@ -93,21 +95,22 @@ Future hosted-auth UI must not create a generic arbitrary redirector. Invalid, c
 
 An explicit-link callback must also reject account-link CSRF/session-switch substitution: a provider proof initiated while authenticated as principal A cannot be redeemed as authority to attach that provider credential to principal B merely because B is the browser's current authenticated user when the callback arrives. Cross-application substitution fails identically.
 
-### Retention proposal
+### Device PII retention boundary
 
-No new device PII persistence should be introduced until a concrete P2.9 feature defines its purpose and retention. This ADR therefore proposes **defer-by-default** for IP/user-agent/location storage rather than inventing an indefinite retention period.
+No new device PII persistence should be introduced until a concrete P2.9 feature defines its purpose and retention. The accepted baseline is **defer-by-default** for IP/user-agent/location storage rather than inventing an indefinite retention period.
 
 When later persistence is justified, that PR must define deletion/retention/user visibility and demonstrate that incident/audit needs cannot be met with less data.
 
-## Human decision required
+## Accepted decision summary
 
-Decision 3 — ratify or change the device metadata/hosted-auth baseline:
+The Human maintainer accepted:
 
 - minimal collection only for defined security/user purpose;
 - no precise location or fingerprinting by default;
 - defer new IP/user-agent/location persistence until a concrete bounded retention lifecycle is reviewed;
-- hosted redirects are exact application-scoped allowlisted destinations with the same boundary for success and error flows;
-- explicit account-link state remains bound to its initiating principal/session-equivalent and reverification context across the provider round-trip.
+- hosted redirects as exact application-scoped allowlisted destinations with the same boundary for success and error flows;
+- explicit account-link state binding to its initiating principal/session-equivalent and reverification context across the provider round-trip;
+- fail-closed account-link CSRF/session-switch and cross-application substitution behavior.
 
 ## Consequences
 
