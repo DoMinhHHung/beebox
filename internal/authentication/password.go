@@ -35,56 +35,95 @@ var (
 	ErrPasswordHashing      = errors.New("password hashing failure")
 )
 
-type PasswordHash struct { encoded string }
-func (h PasswordHash) StorageEncoding() string { return h.encoded }
-func (h PasswordHash) Valid() bool { _, _, err := parsePasswordHash(h.encoded); return err == nil }
+type PasswordHash struct {
+	encoded string
+}
+
+func (h PasswordHash) StorageEncoding() string {
+	return h.encoded
+}
+
+func (h PasswordHash) Valid() bool {
+	_, _, err := parsePasswordHash(h.encoded)
+	return err == nil
+}
 
 func ParsePasswordHash(encoded string) (PasswordHash, error) {
-	if _, _, err := parsePasswordHash(encoded); err != nil { return PasswordHash{}, ErrInvalidPasswordHash }
+	if _, _, err := parsePasswordHash(encoded); err != nil {
+		return PasswordHash{}, ErrInvalidPasswordHash
+	}
 	return PasswordHash{encoded: encoded}, nil
 }
 
-func HashPassword(raw []byte) (PasswordHash, error) { return HashPasswordContext(context.Background(), raw) }
+func HashPassword(raw []byte) (PasswordHash, error) {
+	return HashPasswordContext(context.Background(), raw)
+}
 
 func HashPasswordContext(ctx context.Context, raw []byte) (PasswordHash, error) {
-	if len(raw) == 0 || len(raw) > maxPasswordBytes { return PasswordHash{}, ErrInvalidPasswordInput }
+	if len(raw) == 0 || len(raw) > maxPasswordBytes {
+		return PasswordHash{}, ErrInvalidPasswordInput
+	}
 	var result PasswordHash
 	err := withProcessKDF(ctx, func() error {
 		salt := make([]byte, argon2SaltBytes)
-		if _, err := rand.Read(salt); err != nil { return ErrPasswordHashing }
+		if _, err := rand.Read(salt); err != nil {
+			return ErrPasswordHashing
+		}
 		hash := argon2.IDKey(raw, salt, argon2Time, argon2MemoryKiB, argon2Parallelism, argon2HashBytes)
-		result = PasswordHash{encoded: "$" + argon2AlgorithmField + "$" + argon2VersionField + "$" + argon2ParamsField + "$" + base64.RawStdEncoding.EncodeToString(salt) + "$" + base64.RawStdEncoding.EncodeToString(hash)}
+		result = PasswordHash{
+			encoded: "$" + argon2AlgorithmField + "$" + argon2VersionField + "$" + argon2ParamsField + "$" + base64.RawStdEncoding.EncodeToString(salt) + "$" + base64.RawStdEncoding.EncodeToString(hash),
+		}
 		return nil
 	})
-	if err != nil { return PasswordHash{}, err }
+	if err != nil {
+		return PasswordHash{}, err
+	}
 	return result, nil
 }
 
-func VerifyPassword(stored PasswordHash, candidate []byte) error { return VerifyPasswordContext(context.Background(), stored, candidate) }
+func VerifyPassword(stored PasswordHash, candidate []byte) error {
+	return VerifyPasswordContext(context.Background(), stored, candidate)
+}
 
 func VerifyPasswordContext(ctx context.Context, stored PasswordHash, candidate []byte) error {
-	if len(candidate) == 0 || len(candidate) > maxPasswordBytes { return ErrInvalidPasswordInput }
+	if len(candidate) == 0 || len(candidate) > maxPasswordBytes {
+		return ErrInvalidPasswordInput
+	}
 	salt, expected, err := parsePasswordHash(stored.encoded)
-	if err != nil { return ErrInvalidPasswordHash }
+	if err != nil {
+		return ErrInvalidPasswordHash
+	}
 	matched := false
 	err = withProcessKDF(ctx, func() error {
 		actual := argon2.IDKey(candidate, salt, argon2Time, argon2MemoryKiB, argon2Parallelism, argon2HashBytes)
 		matched = subtle.ConstantTimeCompare(actual, expected) == 1
 		return nil
 	})
-	if err != nil { return err }
-	if !matched { return ErrPasswordMismatch }
+	if err != nil {
+		return err
+	}
+	if !matched {
+		return ErrPasswordMismatch
+	}
 	return nil
 }
 
 func parsePasswordHash(encoded string) ([]byte, []byte, error) {
 	parts := strings.Split(encoded, "$")
-	if len(parts) != 6 || parts[0] != "" || parts[1] != argon2AlgorithmField || parts[2] != argon2VersionField || parts[3] != argon2ParamsField { return nil, nil, ErrInvalidPasswordHash }
-	if len(parts[4]) != encodedSaltLength || len(parts[5]) != encodedHashLength { return nil, nil, ErrInvalidPasswordHash }
+	if len(parts) != 6 || parts[0] != "" || parts[1] != argon2AlgorithmField || parts[2] != argon2VersionField || parts[3] != argon2ParamsField {
+		return nil, nil, ErrInvalidPasswordHash
+	}
+	if len(parts[4]) != encodedSaltLength || len(parts[5]) != encodedHashLength {
+		return nil, nil, ErrInvalidPasswordHash
+	}
 	encoding := base64.RawStdEncoding.Strict()
 	salt, err := encoding.DecodeString(parts[4])
-	if err != nil || len(salt) != argon2SaltBytes { return nil, nil, ErrInvalidPasswordHash }
+	if err != nil || len(salt) != argon2SaltBytes {
+		return nil, nil, ErrInvalidPasswordHash
+	}
 	hash, err := encoding.DecodeString(parts[5])
-	if err != nil || len(hash) != int(argon2HashBytes) { return nil, nil, ErrInvalidPasswordHash }
+	if err != nil || len(hash) != int(argon2HashBytes) {
+		return nil, nil, ErrInvalidPasswordHash
+	}
 	return salt, hash, nil
 }
