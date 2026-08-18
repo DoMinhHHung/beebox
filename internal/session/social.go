@@ -56,13 +56,13 @@ func (s *SocialCompletionService) Exchange(ctx context.Context, appID applicatio
 	issuedAt := s.now().UTC()
 	result, err := s.persistence.ExchangeSocialCompletion(ctx, authentication.SocialCompletionFinalize{
 		ApplicationInstanceID: appID,
-		CompletionCodeHash: codeHash,
-		ClientCodeChallenge: challenge,
-		SessionPublicID: sessionID,
-		RefreshVerifier: refreshVerifier,
-		IdleExpiresAt: issuedAt.Add(InactivityLifetime),
-		ExpiresAt: issuedAt.Add(AbsoluteLifetime),
-		CorrelationID: correlationID,
+		CompletionCodeHash:    codeHash,
+		ClientCodeChallenge:   challenge,
+		SessionPublicID:       sessionID,
+		RefreshVerifier:       refreshVerifier,
+		IdleExpiresAt:         issuedAt.Add(InactivityLifetime),
+		ExpiresAt:             issuedAt.Add(AbsoluteLifetime),
+		CorrelationID:         correlationID,
 	})
 	if err != nil {
 		if errors.Is(err, authentication.ErrSocialCompletionInvalid) {
