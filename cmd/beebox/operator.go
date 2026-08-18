@@ -13,14 +13,14 @@ import (
 	"github.com/DoMinhHHung/beebox/internal/platform/signingkey"
 )
 
-var errOperatorUsage = errors.New("usage: beebox [migrate|cleanup-security-state|generate-signing-key|bootstrap-application [origin...]|add-origin <app_id> <origin>|rotate-credential <app_id> <publishable|secret> <old_credential_id>|revoke-credential <app_id> <credential_id>]")
+var errOperatorUsage = errors.New("usage: beebox [migrate|cleanup-security-state|generate-signing-key|bootstrap-application [origin...]|add-origin <app_id> <origin>|add-redirect <app_id> <redirect_url>|rotate-credential <app_id> <publishable|secret> <old_credential_id>|revoke-credential <app_id> <credential_id>]")
 
 func isOperatorCommand(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
 	switch args[0] {
-	case "cleanup-security-state", "generate-signing-key", "bootstrap-application", "add-origin", "rotate-credential", "revoke-credential":
+	case "cleanup-security-state", "generate-signing-key", "bootstrap-application", "add-origin", "add-redirect", "rotate-credential", "revoke-credential":
 		return true
 	default:
 		return false
@@ -104,6 +104,20 @@ func runOperator(ctx context.Context, lookup config.LookupEnv, output io.Writer,
 			return err
 		}
 		_, err = fmt.Fprintf(output, "origin=%s\n", origin.CanonicalOrigin)
+		return err
+	case "add-redirect":
+		if len(args) != 3 {
+			return errOperatorUsage
+		}
+		app, err := apps.ResolveByPublicID(operatorCtx, applicationinstance.PublicID(args[1]))
+		if err != nil {
+			return err
+		}
+		redirect, err := service.AddAllowedRedirectURL(operatorCtx, app.InternalID, args[2])
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(output, "redirect_url=%s\n", redirect.CanonicalURL)
 		return err
 	case "rotate-credential":
 		if len(args) != 4 {
