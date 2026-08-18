@@ -105,8 +105,6 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 	base = httpapi.WithPasswordReset(base, integrationService, integrationStore, reset)
 	ring, err := session.KeyRingFromLookup(session.LookupEnv(lookup))
 	if errors.Is(err, session.ErrTokenDisabled) {
-		// The route remains explicit but authentication cannot issue a session
-		// while access-token signing is intentionally disabled.
 		base = httpapi.WithEmailOTP(base, integrationService, integrationStore, nil, nil)
 		return httpapi.WithMetrics(base, recorder), nil
 	}
@@ -143,14 +141,7 @@ func parseMode(args []string) (processMode, error) {
 	}
 }
 
-func runServeMode(ctx context.Context, logger *slog.Logger, lookup config.LookupEnv, dependencies runtimeDependencies, args []string) error {
-	mode, err := parseMode(args)
-	if err != nil || mode != serveMode {
-		if err != nil {
-			return err
-		}
-		return errUsage
-	}
+func runServeMode(ctx context.Context, logger *slog.Logger, lookup config.LookupEnv, dependencies runtimeDependencies) error {
 	cfg, err := config.Load(lookup)
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
@@ -195,7 +186,7 @@ func runServeMode(ctx context.Context, logger *slog.Logger, lookup config.Lookup
 func runMigrationMode(ctx context.Context, logger *slog.Logger, lookup config.LookupEnv, dependencies runtimeDependencies) error {
 	cfg, err := config.LoadMigration(lookup)
 	if err != nil {
-		return fmt.Errorf("load migration configuration: %w", err)
+		return fmt.Errorf("load configuration: %w", err)
 	}
 	startupCtx, cancelStartup := context.WithTimeout(ctx, cfg.DatabaseStartupTimeout)
 	pool, err := dependencies.openDatabase(startupCtx, cfg.DatabaseURL)
