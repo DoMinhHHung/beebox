@@ -32,32 +32,18 @@ const (
 )
 
 type adapterConfig struct {
-	provider         authentication.Provider
-	clientID         string
-	clientSecret     string
-	microsoftTenant  string
-	redirectURL      string
+	provider        authentication.Provider
+	clientID        string
+	clientSecret    string
+	microsoftTenant string
+	redirectURL     string
 }
 
 type adapter struct {
-	provider       authentication.Provider
-	clientID       string
-	clientSecret   string
-	redirectURL    string
-	authURL        string
-	tokenURL       string
-	userInfoURL    string
-	scopes         []string
-	authStyle      oauth2.AuthStyle
-	usePKCE        bool
-	useNonce       bool
-	mode           subjectMode
-	verifier       *oidc.IDTokenVerifier
-	httpClient     *http.Client
-	tikTok         bool
-}
-
-type providerSpec struct {
+	provider     authentication.Provider
+	clientID     string
+	clientSecret string
+	redirectURL  string
 	authURL      string
 	tokenURL     string
 	userInfoURL  string
@@ -66,8 +52,22 @@ type providerSpec struct {
 	usePKCE      bool
 	useNonce     bool
 	mode         subjectMode
-	issuer       string
-	jwksURL      string
+	verifier     *oidc.IDTokenVerifier
+	httpClient   *http.Client
+	tikTok       bool
+}
+
+type providerSpec struct {
+	authURL     string
+	tokenURL    string
+	userInfoURL string
+	scopes      []string
+	authStyle   oauth2.AuthStyle
+	usePKCE     bool
+	useNonce    bool
+	mode        subjectMode
+	issuer      string
+	jwksURL     string
 }
 
 func newAdapter(cfg adapterConfig) (*adapter, error) {
@@ -76,31 +76,31 @@ func newAdapter(cfg adapterConfig) (*adapter, error) {
 		return nil, ErrConfig
 	}
 	client := &http.Client{
-		Timeout: providerHTTPTimeout,
-		Transport: &boundedTransport{base: http.DefaultTransport, max: providerBodyLimit},
+		Timeout:       providerHTTPTimeout,
+		Transport:     &boundedTransport{base: http.DefaultTransport, max: providerBodyLimit},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	a := &adapter{
-		provider: cfg.provider,
-		clientID: cfg.clientID,
+		provider:     cfg.provider,
+		clientID:     cfg.clientID,
 		clientSecret: cfg.clientSecret,
-		redirectURL: cfg.redirectURL,
-		authURL: spec.authURL,
-		tokenURL: spec.tokenURL,
-		userInfoURL: spec.userInfoURL,
-		scopes: append([]string(nil), spec.scopes...),
-		authStyle: spec.authStyle,
-		usePKCE: spec.usePKCE,
-		useNonce: spec.useNonce,
-		mode: spec.mode,
-		httpClient: client,
-		tikTok: cfg.provider == authentication.ProviderTikTok,
+		redirectURL:  cfg.redirectURL,
+		authURL:      spec.authURL,
+		tokenURL:     spec.tokenURL,
+		userInfoURL:  spec.userInfoURL,
+		scopes:       append([]string(nil), spec.scopes...),
+		authStyle:    spec.authStyle,
+		usePKCE:      spec.usePKCE,
+		useNonce:     spec.useNonce,
+		mode:         spec.mode,
+		httpClient:   client,
+		tikTok:       cfg.provider == authentication.ProviderTikTok,
 	}
 	if spec.mode == subjectOIDC {
 		keyCtx := oidc.ClientContext(context.Background(), client)
 		keySet := oidc.NewRemoteKeySet(keyCtx, spec.jwksURL)
 		a.verifier = oidc.NewVerifier(spec.issuer, keySet, &oidc.Config{
-			ClientID: cfg.clientID,
+			ClientID:             cfg.clientID,
 			SupportedSigningAlgs: []string{"RS256"},
 		})
 	}
@@ -185,11 +185,11 @@ func (a *adapter) ExchangeIdentity(ctx context.Context, code, providerVerifier s
 
 func (a *adapter) oauthConfig() oauth2.Config {
 	return oauth2.Config{
-		ClientID: a.clientID,
+		ClientID:     a.clientID,
 		ClientSecret: a.clientSecret,
-		RedirectURL: a.redirectURL,
-		Scopes: append([]string(nil), a.scopes...),
-		Endpoint: oauth2.Endpoint{AuthURL: a.authURL, TokenURL: a.tokenURL, AuthStyle: a.authStyle},
+		RedirectURL:  a.redirectURL,
+		Scopes:       append([]string(nil), a.scopes...),
+		Endpoint:     oauth2.Endpoint{AuthURL: a.authURL, TokenURL: a.tokenURL, AuthStyle: a.authStyle},
 	}
 }
 
@@ -220,12 +220,12 @@ func (a *adapter) subjectFromIDToken(ctx context.Context, token *oauth2.Token, e
 		return "", authentication.ErrSocialProviderProof
 	}
 	var claims struct {
-		Subject string `json:"sub"`
-		Nonce   string `json:"nonce"`
-		NotBefore int64 `json:"nbf"`
-		Email json.RawMessage `json:"email"`
-		Name json.RawMessage `json:"name"`
-		Picture json.RawMessage `json:"picture"`
+		Subject   string          `json:"sub"`
+		Nonce     string          `json:"nonce"`
+		NotBefore int64           `json:"nbf"`
+		Email     json.RawMessage `json:"email"`
+		Name      json.RawMessage `json:"name"`
+		Picture   json.RawMessage `json:"picture"`
 	}
 	if err := idToken.Claims(&claims); err != nil || claims.Subject == "" {
 		return "", authentication.ErrSocialProviderProof
@@ -264,8 +264,8 @@ func (a *adapter) subjectFromUserInfo(ctx context.Context, accessToken string) (
 		Data struct {
 			ID json.RawMessage `json:"id"`
 		} `json:"data"`
-		Email json.RawMessage `json:"email"`
-		Name json.RawMessage `json:"name"`
+		Email  json.RawMessage `json:"email"`
+		Name   json.RawMessage `json:"name"`
 		Avatar json.RawMessage `json:"avatar"`
 	}
 	if err := decoder.Decode(&payload); err != nil {
@@ -321,8 +321,8 @@ func (a *adapter) exchangeTikTok(ctx context.Context, code string) (string, erro
 		return "", authentication.ErrSocialProviderProof
 	}
 	var payload struct {
-		AccessToken string `json:"access_token"`
-		OpenID      string `json:"open_id"`
+		AccessToken  string          `json:"access_token"`
+		OpenID       string          `json:"open_id"`
 		RefreshToken json.RawMessage `json:"refresh_token"`
 	}
 	decoder := json.NewDecoder(io.LimitReader(resp.Body, providerBodyLimit+1))
@@ -365,70 +365,103 @@ func specFor(provider authentication.Provider, microsoftTenant string) (provider
 	switch provider {
 	case authentication.ProviderGoogle:
 		return providerSpec{
-			authURL: "https://accounts.google.com/o/oauth2/v2/auth",
-			tokenURL: "https://oauth2.googleapis.com/token",
-			scopes: []string{"openid"}, authStyle: oauth2.AuthStyleInParams,
-			usePKCE: true, useNonce: true, mode: subjectOIDC,
-			issuer: "https://accounts.google.com", jwksURL: "https://www.googleapis.com/oauth2/v3/certs",
+			authURL:   "https://accounts.google.com/o/oauth2/v2/auth",
+			tokenURL:  "https://oauth2.googleapis.com/token",
+			scopes:    []string{"openid"},
+			authStyle: oauth2.AuthStyleInParams,
+			usePKCE:   true,
+			useNonce:  true,
+			mode:      subjectOIDC,
+			issuer:    "https://accounts.google.com",
+			jwksURL:   "https://www.googleapis.com/oauth2/v3/certs",
 		}, nil
 	case authentication.ProviderApple:
 		return providerSpec{
-			authURL: "https://appleid.apple.com/auth/authorize",
-			tokenURL: "https://appleid.apple.com/auth/token",
+			authURL:   "https://appleid.apple.com/auth/authorize",
+			tokenURL:  "https://appleid.apple.com/auth/token",
 			authStyle: oauth2.AuthStyleInParams,
-			useNonce: true, mode: subjectOIDC,
-			issuer: "https://appleid.apple.com", jwksURL: "https://appleid.apple.com/auth/keys",
+			useNonce:  true,
+			mode:      subjectOIDC,
+			issuer:    "https://appleid.apple.com",
+			jwksURL:   "https://appleid.apple.com/auth/keys",
 		}, nil
 	case authentication.ProviderMicrosoft:
-		issuer := "https://login.microsoftonline.com/" + microsoftTenant + "/v2.0"
+		base := "https://login.microsoftonline.com/" + microsoftTenant
+		issuer := base + "/v2.0"
 		return providerSpec{
-			authURL: issuer + "/oauth2/v2.0/authorize",
-			tokenURL: issuer + "/oauth2/v2.0/token",
-			scopes: []string{"openid"}, authStyle: oauth2.AuthStyleInParams,
-			usePKCE: true, useNonce: true, mode: subjectOIDC,
-			issuer: issuer, jwksURL: "https://login.microsoftonline.com/" + microsoftTenant + "/discovery/v2.0/keys",
+			authURL:   base + "/oauth2/v2.0/authorize",
+			tokenURL:  base + "/oauth2/v2.0/token",
+			scopes:    []string{"openid"},
+			authStyle: oauth2.AuthStyleInParams,
+			usePKCE:   true,
+			useNonce:  true,
+			mode:      subjectOIDC,
+			issuer:    issuer,
+			jwksURL:   base + "/discovery/v2.0/keys",
 		}, nil
 	case authentication.ProviderGitHub:
 		return providerSpec{
-			authURL: "https://github.com/login/oauth/authorize", tokenURL: "https://github.com/login/oauth/access_token",
-			userInfoURL: "https://api.github.com/user", authStyle: oauth2.AuthStyleInParams,
-			usePKCE: true, mode: subjectTopLevelID,
+			authURL:     "https://github.com/login/oauth/authorize",
+			tokenURL:    "https://github.com/login/oauth/access_token",
+			userInfoURL: "https://api.github.com/user",
+			authStyle:   oauth2.AuthStyleInParams,
+			usePKCE:     true,
+			mode:        subjectTopLevelID,
 		}, nil
 	case authentication.ProviderGitLab:
 		return providerSpec{
-			authURL: "https://gitlab.com/oauth/authorize", tokenURL: "https://gitlab.com/oauth/token",
-			userInfoURL: "https://gitlab.com/api/v4/user", scopes: []string{"read_user"}, authStyle: oauth2.AuthStyleInParams,
-			usePKCE: true, mode: subjectTopLevelID,
+			authURL:     "https://gitlab.com/oauth/authorize",
+			tokenURL:    "https://gitlab.com/oauth/token",
+			userInfoURL: "https://gitlab.com/api/v4/user",
+			scopes:      []string{"read_user"},
+			authStyle:   oauth2.AuthStyleInParams,
+			usePKCE:     true,
+			mode:        subjectTopLevelID,
 		}, nil
 	case authentication.ProviderFacebook:
 		return providerSpec{
-			authURL: "https://www.facebook.com/dialog/oauth", tokenURL: "https://graph.facebook.com/oauth/access_token",
-			userInfoURL: "https://graph.facebook.com/me?fields=id", authStyle: oauth2.AuthStyleInParams,
-			mode: subjectTopLevelID,
+			authURL:     "https://www.facebook.com/dialog/oauth",
+			tokenURL:    "https://graph.facebook.com/oauth/access_token",
+			userInfoURL: "https://graph.facebook.com/me?fields=id",
+			authStyle:   oauth2.AuthStyleInParams,
+			mode:        subjectTopLevelID,
 		}, nil
 	case authentication.ProviderDiscord:
 		return providerSpec{
-			authURL: "https://discord.com/oauth2/authorize", tokenURL: "https://discord.com/api/v10/oauth2/token",
-			userInfoURL: "https://discord.com/api/v10/users/@me", scopes: []string{"identify"}, authStyle: oauth2.AuthStyleInParams,
-			mode: subjectTopLevelID,
+			authURL:     "https://discord.com/oauth2/authorize",
+			tokenURL:    "https://discord.com/api/v10/oauth2/token",
+			userInfoURL: "https://discord.com/api/v10/users/@me",
+			scopes:      []string{"identify"},
+			authStyle:   oauth2.AuthStyleInParams,
+			mode:        subjectTopLevelID,
 		}, nil
 	case authentication.ProviderLinkedIn:
 		return providerSpec{
-			authURL: "https://www.linkedin.com/oauth/v2/authorization", tokenURL: "https://www.linkedin.com/oauth/v2/accessToken",
-			scopes: []string{"openid"}, authStyle: oauth2.AuthStyleInParams,
-			useNonce: true, mode: subjectOIDC,
-			issuer: "https://www.linkedin.com", jwksURL: "https://www.linkedin.com/oauth/openid/jwks",
+			authURL:   "https://www.linkedin.com/oauth/v2/authorization",
+			tokenURL:  "https://www.linkedin.com/oauth/v2/accessToken",
+			scopes:    []string{"openid"},
+			authStyle: oauth2.AuthStyleInParams,
+			useNonce:  true,
+			mode:      subjectOIDC,
+			issuer:    "https://www.linkedin.com",
+			jwksURL:   "https://www.linkedin.com/oauth/openid/jwks",
 		}, nil
 	case authentication.ProviderX:
 		return providerSpec{
-			authURL: "https://x.com/i/oauth2/authorize", tokenURL: "https://api.x.com/2/oauth2/token",
-			userInfoURL: "https://api.x.com/2/users/me", scopes: []string{"users.read"}, authStyle: oauth2.AuthStyleInHeader,
-			usePKCE: true, mode: subjectNestedDataID,
+			authURL:     "https://x.com/i/oauth2/authorize",
+			tokenURL:    "https://api.x.com/2/oauth2/token",
+			userInfoURL: "https://api.x.com/2/users/me",
+			scopes:      []string{"users.read"},
+			authStyle:   oauth2.AuthStyleInHeader,
+			usePKCE:     true,
+			mode:        subjectNestedDataID,
 		}, nil
 	case authentication.ProviderTikTok:
 		return providerSpec{
-			authURL: "https://www.tiktok.com/v2/auth/authorize/", tokenURL: "https://open.tiktokapis.com/v2/oauth/token/",
-			scopes: []string{"user.info.basic"}, mode: subjectTikTokOpenID,
+			authURL:  "https://www.tiktok.com/v2/auth/authorize/",
+			tokenURL: "https://open.tiktokapis.com/v2/oauth/token/",
+			scopes:   []string{"user.info.basic"},
+			mode:     subjectTikTokOpenID,
 		}, nil
 	default:
 		return providerSpec{}, fmt.Errorf("%w: provider", ErrConfig)
