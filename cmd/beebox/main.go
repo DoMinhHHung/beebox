@@ -100,10 +100,14 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 	verification := authentication.NewPublicVerificationService(identitypostgres.New(concretePool), authStore, verificationCore)
 	signup := authentication.NewPublicSignupService(authStore, delivery)
 	reset := authentication.NewPasswordResetService(authStore, delivery)
+	emailOTP := authentication.NewEmailOTPService(authStore, delivery)
 	base := httpapi.New(health, integrationService, integrationStore, signup, verification)
 	base = httpapi.WithPasswordReset(base, integrationService, integrationStore, reset)
 	ring, err := session.KeyRingFromLookup(session.LookupEnv(lookup))
 	if errors.Is(err, session.ErrTokenDisabled) {
+		// The route remains explicit but authentication cannot issue a session
+		// while access-token signing is intentionally disabled.
+		base = httpapi.WithEmailOTP(base, integrationService, integrationStore, nil, nil)
 		return httpapi.WithMetrics(base, recorder), nil
 	}
 	if err != nil {
@@ -111,7 +115,9 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 	}
 	sessionStore := sessionpostgres.New(concretePool)
 	sessionService := session.NewService(sessionStore, sessionStore, ring)
+	emailOTPSession := session.NewEmailOTPService(authStore, ring)
 	base = httpapi.WithSessions(base, integrationService, integrationStore, sessionService, ring)
+	base = httpapi.WithEmailOTP(base, integrationService, integrationStore, emailOTP, emailOTPSession)
 	base = httpapi.WithSessionManagement(base, integrationService, integrationService, sessionService)
 	return httpapi.WithMetrics(base, recorder), nil
 }
@@ -137,7 +143,14 @@ func parseMode(args []string) (processMode, error) {
 	}
 }
 
-func runServeMode(ctx context.Context, logger *slog.Logger, lookup config.LookupEnv, dependencies runtimeDependencies) error {
+func runServeMode(ctx context.Context, logger *slog.Logger, lookup config.LookupEnv, dependencies runtimeDependencies, args []string) error {
+	mode, err := parseMode(args)
+	if err != nil || mode != serveMode {
+		if err != nil {
+			return err
+		}
+		return errUsage
+	}
 	cfg, err := config.Load(lookup)
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
