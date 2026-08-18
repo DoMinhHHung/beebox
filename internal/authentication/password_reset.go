@@ -15,20 +15,20 @@ import (
 )
 
 const (
-	PasswordResetCodeTTL		= 10 * time.Minute
-	PasswordResetIssueWindow	= 15 * time.Minute
-	PasswordResetResendCooldown	= time.Minute
-	PasswordResetMaxIssues		= 3
-	PasswordResetMaxAttempts	= 5
+	PasswordResetCodeTTL        = 10 * time.Minute
+	PasswordResetIssueWindow    = 15 * time.Minute
+	PasswordResetResendCooldown = time.Minute
+	PasswordResetMaxIssues      = 3
+	PasswordResetMaxAttempts    = 5
 )
 
 var (
-	ErrInvalidPasswordResetCode	= errors.New("invalid password reset code")
-	ErrPasswordResetFailed		= errors.New("password reset failed")
-	ErrPasswordResetRateLimited	= errors.New("password reset rate limited")
-	ErrPasswordResetDelivery	= errors.New("password reset delivery failure")
-	ErrPasswordResetPersistence	= errors.New("password reset persistence failure")
-	ErrPasswordResetStale		= errors.New("stale password reset challenge")
+	ErrInvalidPasswordResetCode = errors.New("invalid password reset code")
+	ErrPasswordResetFailed      = errors.New("password reset failed")
+	ErrPasswordResetRateLimited = errors.New("password reset rate limited")
+	ErrPasswordResetDelivery    = errors.New("password reset delivery failure")
+	ErrPasswordResetPersistence = errors.New("password reset persistence failure")
+	ErrPasswordResetStale       = errors.New("stale password reset challenge")
 )
 
 type PasswordResetCodeHash struct {
@@ -116,37 +116,37 @@ type PasswordResetDelivery interface {
 }
 
 type PasswordResetIssue struct {
-	ApplicationInstanceID	applicationinstance.InternalID
-	NormalizedEmail		string
-	CodeHash		PasswordResetCodeHash
-	CorrelationID		audit.CorrelationID
+	ApplicationInstanceID applicationinstance.InternalID
+	NormalizedEmail       string
+	CodeHash              PasswordResetCodeHash
+	CorrelationID         audit.CorrelationID
 }
 
 type PasswordResetIssueResult struct {
-	ShouldSend	bool
-	Destination	string
-	ExpiresAt	time.Time
+	ShouldSend  bool
+	Destination string
+	ExpiresAt   time.Time
 }
 
 type PasswordResetSnapshot struct {
-	UserID			identity.InternalID
-	EmailIdentifierID	identity.EmailIdentifierInternalID
-	ChallengeGeneration	int64
-	CredentialGeneration	int64
-	CodeHash		PasswordResetCodeHash
-	ExpiresAt		time.Time
-	FailedAttempts		int
+	UserID               identity.InternalID
+	EmailIdentifierID    identity.EmailIdentifierInternalID
+	ChallengeGeneration  int64
+	CredentialGeneration int64
+	CodeHash              PasswordResetCodeHash
+	ExpiresAt             time.Time
+	FailedAttempts        int
 }
 
 type PasswordResetFinalize struct {
-	ApplicationInstanceID	applicationinstance.InternalID
-	EmailIdentifierID	identity.EmailIdentifierInternalID
-	UserID			identity.InternalID
-	ChallengeGeneration	int64
-	CredentialGeneration	int64
-	Matched			bool
-	NewPasswordHash		PasswordHash
-	CorrelationID		audit.CorrelationID
+	ApplicationInstanceID applicationinstance.InternalID
+	EmailIdentifierID     identity.EmailIdentifierInternalID
+	UserID                identity.InternalID
+	ChallengeGeneration   int64
+	CredentialGeneration  int64
+	Matched               bool
+	NewPasswordHash       PasswordHash
+	CorrelationID         audit.CorrelationID
 }
 
 type PasswordResetPersistence interface {
@@ -156,8 +156,8 @@ type PasswordResetPersistence interface {
 }
 
 type PasswordResetService struct {
-	persistence	PasswordResetPersistence
-	delivery	PasswordResetDelivery
+	persistence PasswordResetPersistence
+	delivery    PasswordResetDelivery
 }
 
 func NewPasswordResetService(persistence PasswordResetPersistence, delivery PasswordResetDelivery) *PasswordResetService {
