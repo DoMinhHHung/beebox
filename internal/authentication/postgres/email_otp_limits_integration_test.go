@@ -25,7 +25,8 @@ func TestEmailOTPIssueWindowAllowsThreeAndSuppressesFourth(t *testing.T) {
 		if issue < authentication.EmailOTPMaxIssues {
 			db := pool.OpenSQLDB()
 			_, err := db.ExecContext(ctx, `UPDATE email_otp_signin_challenges
-				SET last_issued_at=CURRENT_TIMESTAMP-INTERVAL '61 seconds'
+				SET issue_window_started_at=LEAST(issue_window_started_at,CURRENT_TIMESTAMP-INTERVAL '61 seconds'),
+				    last_issued_at=CURRENT_TIMESTAMP-INTERVAL '61 seconds'
 				WHERE application_instance_id=$1`, int64(app.InternalID))
 			_ = db.Close()
 			if err != nil {
@@ -39,7 +40,8 @@ func TestEmailOTPIssueWindowAllowsThreeAndSuppressesFourth(t *testing.T) {
 
 	db := pool.OpenSQLDB()
 	if _, err := db.ExecContext(ctx, `UPDATE email_otp_signin_challenges
-		SET last_issued_at=CURRENT_TIMESTAMP-INTERVAL '61 seconds'
+		SET issue_window_started_at=LEAST(issue_window_started_at,CURRENT_TIMESTAMP-INTERVAL '61 seconds'),
+		    last_issued_at=CURRENT_TIMESTAMP-INTERVAL '61 seconds'
 		WHERE application_instance_id=$1`, int64(app.InternalID)); err != nil {
 		db.Close()
 		t.Fatal(err)
@@ -67,7 +69,9 @@ func TestEmailOTPExpiredChallengeFailsWithoutSession(t *testing.T) {
 
 	db := pool.OpenSQLDB()
 	if _, err := db.ExecContext(ctx, `UPDATE email_otp_signin_challenges
-		SET expires_at=CURRENT_TIMESTAMP-INTERVAL '1 second'
+		SET issue_window_started_at=LEAST(issue_window_started_at,CURRENT_TIMESTAMP-INTERVAL '2 minutes'),
+		    last_issued_at=CURRENT_TIMESTAMP-INTERVAL '2 minutes',
+		    expires_at=CURRENT_TIMESTAMP-INTERVAL '1 second'
 		WHERE application_instance_id=$1`, int64(app.InternalID)); err != nil {
 		db.Close()
 		t.Fatal(err)
