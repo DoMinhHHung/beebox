@@ -21,25 +21,28 @@ func TestEmailOTPMigrationUpgradesExisting00012Schema(t *testing.T) {
 		t.Fatal(err)
 	}
 	throughTwelve := fstest.MapFS{}
+	throughThirteen := fstest.MapFS{}
 	entries, err := fs.ReadDir(sources, ".")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, entry := range entries {
-		if entry.Name() == "00013_email_otp_signin.sql" {
-			continue
-		}
 		content, err := fs.ReadFile(sources, entry.Name())
 		if err != nil {
 			t.Fatal(err)
 		}
-		throughTwelve[entry.Name()] = &fstest.MapFile{Data: content}
+		if entry.Name() != "00014_phone_sms.sql" {
+			throughThirteen[entry.Name()] = &fstest.MapFile{Data: content}
+		}
+		if entry.Name() != "00013_email_otp_signin.sql" && entry.Name() != "00014_phone_sms.sql" {
+			throughTwelve[entry.Name()] = &fstest.MapFile{Data: content}
+		}
 	}
 	if err := upWithSources(ctx, pool.OpenSQLDB(), throughTwelve); err != nil {
 		t.Fatalf("migrate through 00012 error = %v", err)
 	}
 	assertMigrationState(t, ctx, pool, 12)
-	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
+	if err := upWithSources(ctx, pool.OpenSQLDB(), throughThirteen); err != nil {
 		t.Fatalf("upgrade to 00013 error = %v", err)
 	}
 	assertMigrationState(t, ctx, pool, 13)
