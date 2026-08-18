@@ -182,8 +182,8 @@ type fakeSocialProvider struct {
 }
 
 func (p *fakeSocialProvider) Provider() Provider { return p.provider }
-func (*fakeSocialProvider) UsesPKCE() bool        { return false }
-func (*fakeSocialProvider) UsesNonce() bool       { return false }
+func (*fakeSocialProvider) UsesPKCE() bool       { return false }
+func (*fakeSocialProvider) UsesNonce() bool      { return false }
 func (p *fakeSocialProvider) AuthorizationURL(state, _, _ string) (string, error) {
 	if state == "" {
 		return "", errors.New("state missing")
