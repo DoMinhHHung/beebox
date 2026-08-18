@@ -11,9 +11,9 @@ const DefaultBatchSize = 500
 var ErrInvalidBatchSize = errors.New("invalid cleanup batch size")
 
 type Result struct {
-	RateLimits             int64
-	Idempotency            int64
-	EmailChallenges        int64
+	RateLimits              int64
+	Idempotency             int64
+	EmailChallenges         int64
 	PasswordResetChallenges int64
 }
 
