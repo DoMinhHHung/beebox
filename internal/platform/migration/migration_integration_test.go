@@ -32,11 +32,11 @@ func TestMigrationFirstApplyAndRerunAreIdempotent(t *testing.T) {
 	if err := firstAdapter.PingContext(ctx); err == nil || err.Error() != "sql: database is closed" {
 		t.Fatalf("first adapter remained open after Up: %v", err)
 	}
-	assertMigrationState(t, ctx, pool, 13)
+	assertMigrationState(t, ctx, pool, 14)
 	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
 		t.Fatalf("second Up() error = %v", err)
 	}
-	assertMigrationState(t, ctx, pool, 13)
+	assertMigrationState(t, ctx, pool, 14)
 	assertSchemaTables(t, ctx, pool)
 }
 
@@ -67,7 +67,7 @@ func TestConcurrentMigrationRunnersSerializeAndConverge(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	assertMigrationState(t, ctx, firstPool, 13)
+	assertMigrationState(t, ctx, firstPool, 14)
 	assertSchemaTables(t, ctx, firstPool)
 }
 
@@ -113,7 +113,7 @@ func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
 		t.Fatalf("baseline Up() error = %v", err)
 	}
-	const secretMarker = "super-secret-provider-dsn"
+	const secretMarker = "synthetic-provider-marker"
 	failingSources := fstest.MapFS{
 		"00001_runtime_baseline.sql":              {Data: []byte(validMigration)},
 		"00002_application_instances.sql":         {Data: []byte(validMigration)},
@@ -128,7 +128,8 @@ func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 		"00011_password_resets.sql":               {Data: []byte(validMigration)},
 		"00012_production_hardening.sql":          {Data: []byte(validMigration)},
 		"00013_email_otp_signin.sql":              {Data: []byte(validMigration)},
-		"00014_failure_probe.sql": {Data: []byte(
+		"00014_phone_sms.sql":                     {Data: []byte(validMigration)},
+		"00015_failure_probe.sql": {Data: []byte(
 			"-- +goose Up\n" +
 				"-- " + secretMarker + "\n" +
 				"CREATE TABLE migration_failure_probe (id bigint PRIMARY KEY);\n" +
@@ -151,12 +152,12 @@ func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 	if probeTable.Valid {
 		t.Fatalf("failing migration left probe table %q", probeTable.String)
 	}
-	var versionFourteenCount int
-	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM goose_db_version WHERE version_id = 14 AND is_applied").Scan(&versionFourteenCount); err != nil {
-		t.Fatalf("query version 14 error = %v", err)
+	var versionFifteenCount int
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM goose_db_version WHERE version_id = 15 AND is_applied").Scan(&versionFifteenCount); err != nil {
+		t.Fatalf("query version 15 error = %v", err)
 	}
-	if versionFourteenCount != 0 {
-		t.Fatalf("applied version 14 rows = %d, want 0", versionFourteenCount)
+	if versionFifteenCount != 0 {
+		t.Fatalf("applied version 15 rows = %d, want 0", versionFifteenCount)
 	}
 }
 
@@ -254,6 +255,9 @@ func assertSchemaTables(t *testing.T, ctx context.Context, pool *database.Pool) 
 		"goose_db_version",
 		"password_credentials",
 		"password_reset_challenges",
+		"phone_identifiers",
+		"phone_otp_signin_challenges",
+		"phone_signup_challenges",
 		"public_auth_idempotency",
 		"public_auth_rate_limits",
 		"session_refresh_credentials",

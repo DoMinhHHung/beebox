@@ -46,6 +46,7 @@ type databasePool interface {
 	OpenSQLDB() *sql.DB
 	Close()
 }
+
 type runtimeDependencies struct {
 	openDatabase func(context.Context, string) (databasePool, error)
 	listen       func(string, string) (net.Listener, error)
@@ -72,8 +73,11 @@ func run(ctx context.Context, logger *slog.Logger, lookup config.LookupEnv, args
 		openDatabase: func(ctx context.Context, databaseURL string) (databasePool, error) {
 			return database.Open(ctx, databaseURL)
 		},
-		listen: net.Listen, serveHTTP: httpserver.Run,
-		migrate:   func(ctx context.Context, pool databasePool) error { return migration.Up(ctx, pool.OpenSQLDB()) },
+		listen:    net.Listen,
+		serveHTTP: httpserver.Run,
+		migrate: func(ctx context.Context, pool databasePool) error {
+			return migration.Up(ctx, pool.OpenSQLDB())
+		},
 		buildHTTP: buildProductHTTP,
 	}, args)
 }
@@ -86,6 +90,10 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 	sender, err := smtpdelivery.FromLookup(smtpdelivery.LookupEnv(lookup))
 	if err != nil {
 		return nil, errors.New("load SMTP delivery configuration")
+	}
+	smsSender, smsEnabled, err := buildSMSDelivery(lookup)
+	if err != nil {
+		return nil, err
 	}
 	recorder := metrics.New()
 	recorder.SetDatabaseStatsProvider(func() metrics.DatabaseStats {
@@ -103,9 +111,19 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 	emailOTP := authentication.NewEmailOTPService(authStore, delivery)
 	base := httpapi.New(health, integrationService, integrationStore, signup, verification)
 	base = httpapi.WithPasswordReset(base, integrationService, integrationStore, reset)
+
+	var phoneSignupIssuer httpapi.PhoneIssueService
+	var phoneSigninIssuer httpapi.PhoneIssueService
+	if smsEnabled {
+		phoneDelivery := metricsdelivery.NewPhone(smsSender, recorder)
+		phoneSignupIssuer = authentication.NewPhoneSignupService(authStore, phoneDelivery)
+		phoneSigninIssuer = authentication.NewPhoneOTPService(authStore, phoneDelivery)
+	}
+
 	ring, err := session.KeyRingFromLookup(session.LookupEnv(lookup))
 	if errors.Is(err, session.ErrTokenDisabled) {
 		base = httpapi.WithEmailOTP(base, integrationService, integrationStore, nil, nil)
+		base = httpapi.WithPhoneSMS(base, integrationService, integrationStore, nil, nil, nil, nil)
 		return httpapi.WithMetrics(base, recorder), nil
 	}
 	if err != nil {
@@ -114,8 +132,11 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 	sessionStore := sessionpostgres.New(concretePool)
 	sessionService := session.NewService(sessionStore, sessionStore, ring)
 	emailOTPSession := session.NewEmailOTPService(authStore, ring)
+	phoneSignupSession := session.NewPhoneSignupService(authStore, ring)
+	phoneOTPSession := session.NewPhoneOTPService(authStore, ring)
 	base = httpapi.WithSessions(base, integrationService, integrationStore, sessionService, ring)
 	base = httpapi.WithEmailOTP(base, integrationService, integrationStore, emailOTP, emailOTPSession)
+	base = httpapi.WithPhoneSMS(base, integrationService, integrationStore, phoneSignupIssuer, phoneSignupSession, phoneSigninIssuer, phoneOTPSession)
 	base = httpapi.WithSessionManagement(base, integrationService, integrationService, sessionService)
 	return httpapi.WithMetrics(base, recorder), nil
 }
@@ -130,6 +151,7 @@ func runWithDependencies(ctx context.Context, logger *slog.Logger, lookup config
 	}
 	return runServeMode(ctx, logger, lookup, dependencies)
 }
+
 func parseMode(args []string) (processMode, error) {
 	switch {
 	case len(args) == 0:

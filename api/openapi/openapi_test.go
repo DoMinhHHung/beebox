@@ -21,13 +21,22 @@ func TestPublicOpenAPIContract(t *testing.T) {
 	for _, required := range []string{
 		"  /.well-known/jwks.json:",
 		"  /v1/sign-ups:",
+		"  /v1/sign-ups/phone:",
+		"  /v1/sign-ups/phone/confirm:",
 		"  /v1/email-verifications:",
 		"  /v1/email-verifications/confirm:",
 		"  /v1/sign-ins:",
 		"  /v1/sign-ins/email-otp:",
 		"  /v1/sign-ins/email-otp/confirm:",
+		"  /v1/sign-ins/phone-otp:",
+		"  /v1/sign-ins/phone-otp/confirm:",
 		"operationId: requestEmailOTPSignIn",
 		"operationId: confirmEmailOTPSignIn",
+		"operationId: requestPhoneSignUpOTP",
+		"operationId: confirmPhoneSignUpOTP",
+		"operationId: requestPhoneOTPSignIn",
+		"operationId: confirmPhoneOTPSignIn",
+		"pattern: '^\\+[1-9][0-9]{1,14}$'",
 		"pattern: '^[0-9]{6}$'",
 		"  /v1/sessions/refresh:",
 		"  /v1/sessions/current:",
@@ -48,15 +57,22 @@ func TestPublicOpenAPIContract(t *testing.T) {
 		"response is intentionally generic",
 		"one-time and replay-safe",
 		"primary authentication method",
+		"strict international e.164",
+		"no default region",
+		"no user is created before successful possession proof",
+		"must not be blindly retried",
 		"invalid_credentials",
 	} {
 		if !strings.Contains(strings.ToLower(text), strings.ToLower(requiredSemantics)) {
-			t.Fatalf("v1 spec missing email OTP semantic %q", requiredSemantics)
+			t.Fatalf("v1 spec missing authentication semantic %q", requiredSemantics)
 		}
 	}
-	for _, forbidden := range []string{"application_instance_id", "password_hash", "refresh_verifier", "challenge_id", "BIGINT"} {
+	for _, forbidden := range []string{
+		"application_instance_id", "password_hash", "refresh_verifier", "challenge_id", "BIGINT",
+		"phone_identifier_id", "twilio_sid", "message_sid",
+	} {
 		if strings.Contains(text, forbidden) {
-			t.Fatalf("v1 spec leaks internal contract term %q", forbidden)
+			t.Fatalf("v1 spec leaks internal/provider contract term %q", forbidden)
 		}
 	}
 }
