@@ -2,7 +2,7 @@
 
 BeeBox is an open-source identity and access platform implemented primarily in Go. Clerk's public product capabilities are a benchmark only; BeeBox owns its contracts, implementation, identifiers, persistence and security decisions.
 
-BeeBox's merged Phase 1 B2C foundation provides application-scoped email/password signup and verification, signin, rotating sessions/refresh credentials, Ed25519 access JWTs/JWKS, password reset, backend session management, a minimal Go SDK, operational metrics and reproducible local dependencies. This branch adds the P2.1 passwordless email OTP primary-authentication slice for existing verified email identifiers. It does **not** claim the rest of Phase 2 is implemented.
+BeeBox's merged Phase 1 B2C foundation provides application-scoped email/password signup and verification, signin, rotating sessions/refresh credentials, Ed25519 access JWTs/JWKS, password reset, backend session management, a minimal Go SDK, operational metrics and reproducible local dependencies. P2.1 added passwordless email OTP primary authentication for existing verified email identifiers. This branch adds the P2.2 phone-first signup and verified-phone SMS OTP primary-authentication slice. It does **not** claim the rest of Phase 2 is implemented.
 
 ## Project documentation
 
@@ -92,6 +92,44 @@ For an already verified email identifier, the P2.1 passwordless flow is:
 
 The request endpoint intentionally returns the same generic accepted behavior for eligible delivery and protected account-dependent states such as unknown/unverified identifiers or resend suppression. Email verification and email OTP authentication are different purposes: OTP signin never creates a user and never changes `verified_at`.
 
+### P2.2 phone-first flow
+
+P2.2 accepts phone input only in strict international E.164 canonical form: `+` followed by 2–15 ASCII decimal digits, first digit non-zero. Surrounding ordinary whitespace may be trimmed. BeeBox does not infer a default region and does not accept national formatting, embedded spaces, dashes, parentheses, `00` prefixes, `tel:` URIs, extensions or alphabetic digits.
+
+SMS is optional and disabled by default:
+
+```sh
+export BEEBOX_SMS_MODE='twilio'
+export BEEBOX_TWILIO_ACCOUNT_SID='<account-sid>'
+export BEEBOX_TWILIO_AUTH_TOKEN='<auth-token>'
+export BEEBOX_TWILIO_FROM='<configured-sender>'
+# Optional, bounded to at most 30 seconds:
+export BEEBOX_TWILIO_TIMEOUT='5s'
+```
+
+Twilio Programmable Messaging is the current internal production SMS adapter, not part of the public BeeBox API contract. BeeBox does not persist provider response models or expose provider identifiers/errors publicly. The adapter performs one bounded provider request per BeeBox send attempt and does not automatically retry an ambiguous provider POST; a later explicit user request, subject to cooldown/rate controls, is the retry boundary.
+
+When `BEEBOX_SMS_MODE` is absent or `disabled`, BeeBox still starts normally and existing email/password/P2.1 functionality remains available. Phone **issue** endpoints return a uniform `service_unavailable` before phone ownership/challenge state is inspected. Confirmation itself does not require provider I/O, so an already committed valid challenge can still be confirmed when session signing capability remains configured.
+
+Phone-first signup is deliberately no-account-before-proof:
+
+1. `POST /v1/sign-ups/phone` with `{"phone":"+84901234567"}`;
+2. BeeBox stores only a domain-separated SHA-256 phone fingerprint plus an Argon2 verifier for the pending signup challenge; no user or `phone_identifiers` row exists yet;
+3. receive the purpose-specific SMS code through the configured provider;
+4. `POST /v1/sign-ups/phone/confirm` with the same phone and six-digit code;
+5. only successful possession proof atomically creates the user, verified phone identifier, ordinary BeeBox session, refresh verifier and required audit evidence.
+
+Phone signup confirmation is one-time and must not be blindly retried after an ambiguous client response. If the database commit succeeded but the response was lost, a retry may safely fail as replay; the newly created principal can use phone OTP sign-in.
+
+After a phone identifier is verified, primary authentication is:
+
+1. `POST /v1/sign-ins/phone-otp` with the canonical E.164 phone;
+2. receive the purpose-specific BeeBox sign-in SMS code;
+3. `POST /v1/sign-ins/phone-otp/confirm` with the same phone and code;
+4. use the returned ordinary access/session/refresh behavior exactly like the other primary methods.
+
+Phone equality never links, merges or adopts principals. P2.2 intentionally exposes no endpoint to add, change, remove or switch a phone on an already-existing account; those sensitive account-management operations require later accepted reverification/last-method semantics.
+
 The SDK offline verifier intentionally requires the configured HTTPS issuer. For local plaintext HTTP development, use the local JWKS endpoint for inspection/testing or place BeeBox behind a local TLS endpoint rather than weakening production issuer semantics.
 
 Serve mode never auto-migrates.
@@ -103,11 +141,15 @@ Application context for frontend/auth flows comes from `X-BeeBox-Publishable-Key
 Reachable endpoints include:
 
 - `POST /v1/sign-ups` — signup with shared public password policy and idempotency;
+- `POST /v1/sign-ups/phone` — generic bounded request for phone-first SMS possession proof without pre-creating an account;
+- `POST /v1/sign-ups/phone/confirm` — one-time proof that atomically creates a new phone-first principal and ordinary session;
 - `POST /v1/email-verifications` — generic bounded verification issue/resend;
 - `POST /v1/email-verifications/confirm` — email ownership confirmation only;
 - `POST /v1/sign-ins` — verified email/password signin with anti-enumerating failures and PostgreSQL attempt limits;
 - `POST /v1/sign-ins/email-otp` — generic bounded request for a passwordless sign-in code for an existing verified identifier;
 - `POST /v1/sign-ins/email-otp/confirm` — one-time email OTP primary proof producing the normal BeeBox session/access/refresh transport;
+- `POST /v1/sign-ins/phone-otp` — generic bounded SMS OTP request for an existing verified phone identifier;
+- `POST /v1/sign-ins/phone-otp/confirm` — one-time verified-phone primary proof producing the normal BeeBox session/access/refresh transport;
 - `POST /v1/sessions/refresh` — one-time refresh rotation; replay revokes the session;
 - `GET /v1/sessions/current` — access JWT plus current database session-state validation;
 - `POST /v1/sessions/sign-out` — current-session revoke/signout;
@@ -131,6 +173,16 @@ P2.1 email OTP is a separate authentication-purpose challenge for an **existing 
 
 Unknown and unverified identifiers do not become eligible, do not become verified, and do not create users. Public request behavior is anti-enumerating. Email OTP is an ADR 0005 **primary authentication method**; it does not encode a future MFA bypass. Because no additional-assurance runtime is configured in P2.1, successful OTP proof currently creates the same ordinary session class as password signin.
 
+### Phone identity and SMS OTP
+
+P2.2 phone identity is explicitly `application_instance` scoped. The same canonical E.164 value may exist independently in different applications. PostgreSQL enforces uniqueness of a **verified** phone inside one application, but equality is never account-link, merge or adoption authority.
+
+Phone signup challenges are purpose-separated from phone sign-in challenges. Pending signup stores a 32-byte domain-separated SHA-256 fingerprint instead of raw phone PII. Sign-in challenges reference the existing phone identifier rather than duplicate the phone. Raw canonical phone is persisted only where it is the actual product identity (`phone_identifiers.phone_e164`) and is otherwise excluded from challenge rows, rate-limit subjects, audit facts, metric labels and logs.
+
+Both phone signup and phone sign-in OTPs reuse the reviewed six-digit `crypto/rand` verification-code primitive and persist only Argon2 verifier material. They use a 10-minute TTL, one-minute resend cooldown, at most three successful issues per 15-minute window, five failed confirmations, generation rotation, previous-code invalidation, one-time consumption and replay denial. Persistent public-auth admission uses operation-separated global-first and per-phone fingerprint namespaces to bound SMS cost/cardinality and pre-KDF confirmation work without making Redis part of correctness.
+
+Successful phone signup confirmation commits new user + verified phone + ordinary session + refresh verifier + required audit evidence in one PostgreSQL transaction. Successful phone OTP sign-in similarly commits challenge consumption + session + refresh verifier + audit atomically. Neither path creates a password credential. Phone OTP is an ADR 0005 **primary authentication method**; it does not encode a future MFA bypass or a permanent factor-strength ordering.
+
 ### Sessions and tokens
 
 Sessions use a 30-day absolute lifetime and seven-day inactivity lifetime. Refresh credentials are random opaque secrets stored only as verifier hashes and rotate on every successful refresh. Reuse of a consumed refresh credential revokes its owning session. SDK methods do not blindly retry refresh operations; an ambiguous lost refresh response can require reauthentication.
@@ -144,20 +196,22 @@ Password reset revokes all current sessions for the application-scoped user. Alr
 `sdk/go` provides a small HTTP client for:
 
 - signup;
+- phone-first SMS OTP request/confirm;
 - request/resend/confirm email verification;
 - password signin;
 - request/confirm passwordless email OTP signin;
+- request/confirm verified-phone SMS OTP signin;
 - current session;
 - refresh;
 - signout;
 - request/confirm password reset;
 - backend get/revoke session.
 
-It also provides a concurrency-safe offline Ed25519 JWT verifier with bounded HTTP access, JWKS caching, one controlled refresh on unknown `kid`, strict EdDSA/public-JWK validation and issuer/audience/time checks. The SDK does not log OTPs/credentials/tokens, persist browser credentials, automatically resend OTPs, automatically retry OTP confirmation, automatically retry signin, or blindly replay refresh credentials.
+It also provides a concurrency-safe offline Ed25519 JWT verifier with bounded HTTP access, JWKS caching, one controlled refresh on unknown `kid`, strict EdDSA/public-JWK validation and issuer/audience/time checks. The SDK does not log OTPs/credentials/tokens, persist browser credentials, automatically resend email/SMS OTPs, automatically retry OTP confirmation, automatically retry signin, or blindly replay refresh credentials.
 
 ## Operational metrics
 
-`GET /metrics` emits bounded OpenMetrics/Prometheus text without high-cardinality identity labels. Current metrics include authentication operation outcomes, SMTP delivery outcome and PostgreSQL pool acquired/idle/total/max connection gauges. Email, user/session/application IDs, OTP/challenge IDs, tokens/JTI, credential IDs, IP addresses and raw errors are not metric labels.
+`GET /metrics` emits bounded OpenMetrics/Prometheus text without high-cardinality identity labels. Current metrics include authentication operation outcomes, SMTP delivery outcome, SMS delivery purpose/outcome and PostgreSQL pool acquired/idle/total/max connection gauges. Email/phone, user/session/application IDs, OTP/challenge IDs, provider identifiers/error codes, tokens/JTI, credential IDs, IP addresses and raw errors are not metric labels.
 
 ## Configuration
 
@@ -170,13 +224,14 @@ Core runtime values include:
 - `BEEBOX_DATABASE_READINESS_TIMEOUT`
 - `BEEBOX_DATABASE_MIGRATION_TIMEOUT`
 - SMTP settings (`BEEBOX_SMTP_ADDR`, `BEEBOX_SMTP_FROM`, TLS/auth/timeout settings)
+- optional SMS settings (`BEEBOX_SMS_MODE=disabled|twilio`, Twilio Account SID/Auth Token/sender, bounded timeout)
 - signing settings (`BEEBOX_ISSUER`, `BEEBOX_SIGNING_KID`, `BEEBOX_SIGNING_PRIVATE_KEY`, `BEEBOX_SIGNING_PUBLIC_KEY`, optional retiring public keys).
 
-Production credential-bearing SMTP requires secure transport. `insecure_localhost` is explicit local/test behavior only. Signing private material is configuration-only and is not stored in PostgreSQL or published through JWKS.
+Production credential-bearing SMTP requires secure transport. `insecure_localhost` is explicit local/test behavior only. Signing private material and Twilio authentication material are configuration-only and are not stored in PostgreSQL or exposed through metrics/public errors.
 
 ## Migration policy
 
-Migrations `00001` through `00013` are embedded, forward-only and explicitly invoked. Migration `00013_email_otp_signin.sql` additively introduces the purpose-separated OTP sign-in challenge table and OTP-specific public-auth admission vocabulary. Applied migrations are immutable. Serve mode does not auto-migrate. Schema corrections after dependent data exists use a reviewed forward migration; no destructive automatic rollback is claimed.
+Migrations `00001` through `00014` are embedded, forward-only and explicitly invoked. Migration `00013_email_otp_signin.sql` additively introduced the purpose-separated email OTP sign-in challenge table and OTP-specific public-auth admission vocabulary. Migration `00014_phone_sms.sql` additively introduces application-scoped phone identifiers, purpose-separated phone signup and phone sign-in challenges, bounded cleanup indexes and phone-specific public-auth admission vocabulary while preserving every earlier limiter operation. Applied migrations are immutable. Serve mode does not auto-migrate. Schema corrections after dependent data exists use a reviewed forward migration; no destructive automatic rollback is claimed.
 
 ## Verification
 
@@ -200,7 +255,7 @@ BEEBOX_TEST_DATABASE_URL='postgres://beebox:test-password@127.0.0.1:5432/beebox_
 go test -race ./...
 ```
 
-GitHub Actions runs the same gates on pull-request heads. P2.1 integration coverage exercises application-scoped OTP issue, verifier-only storage, cooldown/rotation/attempt/replay behavior, concurrent one-time redemption, ordinary session/refresh issuance, and successful audit persistence while preserving the existing Phase 1 password/session tests.
+GitHub Actions runs the same gates on pull-request heads. P2.2 integration coverage adds no-account-before-proof phone signup, strict application/phone ownership, fingerprint/verifier-only challenge state, cooldown/rotation/attempt/expiry/replay behavior, concurrent one-time account/session creation, verified-only phone sign-in, ordinary session/refresh lifecycle and migration/provider-boundary evidence while preserving Phase 1 and P2.1 regression suites.
 
 ## Health endpoints
 
@@ -209,4 +264,4 @@ GitHub Actions runs the same gates on pull-request heads. P2.1 integration cover
 
 ## Phase boundary
 
-`docs/phase1-exit.md` remains the evidence matrix for the completed Phase 1 baseline. This P2.1 slice adds passwordless email OTP only. It does not claim phone/SMS, social OAuth/OIDC, account-linking runtime, passkeys/WebAuthn, MFA/TOTP, recovery codes, step-up/reverification runtime, device management, hosted authentication, organizations, machine authentication, webhooks, billing, OAuth/OIDC authorization-server behavior or compliance certification.
+`docs/phase1-exit.md` remains the evidence matrix for the completed Phase 1 baseline. P2.1 email OTP and this P2.2 phone-first/SMS OTP slice are the implemented Phase 2 runtime increments. Existing-account phone add/change/remove/switch, social OAuth/OIDC, account-linking runtime, passkeys/WebAuthn, MFA/TOTP, recovery codes, step-up/reverification runtime, device management, hosted authentication, organizations, machine authentication, webhooks, billing, OAuth/OIDC authorization-server behavior and compliance certification remain unimplemented.
