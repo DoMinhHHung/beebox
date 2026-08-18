@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"errors"
+	"strconv"
 	"time"
 
 	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
@@ -128,21 +129,21 @@ func (s *Store) FinalizeSocialProof(ctx context.Context, final authentication.So
 	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, lockKey); err != nil {
 		return classifySocialError(ctx, err)
 	}
-	var userID int64
+	var externalIdentityID, userID int64
 	err = tx.QueryRowContext(ctx, `
-		SELECT user_id FROM external_identities
+		SELECT id,user_id FROM external_identities
 		WHERE application_instance_id=$1 AND provider=$2 AND provider_subject=$3`,
 		int64(final.ApplicationInstanceID), string(final.Provider), final.ProviderSubject,
-	).Scan(&userID)
+	).Scan(&externalIdentityID, &userID)
 	created := false
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		if err := tx.QueryRowContext(ctx, `INSERT INTO users(application_instance_id) VALUES($1) RETURNING id`, int64(final.ApplicationInstanceID)).Scan(&userID); err != nil {
 			return classifySocialError(ctx, err)
 		}
-		if _, err := tx.ExecContext(ctx, `
+		if err := tx.QueryRowContext(ctx, `
 			INSERT INTO external_identities(application_instance_id,user_id,provider,provider_subject)
-			VALUES($1,$2,$3,$4)`, int64(final.ApplicationInstanceID), userID, string(final.Provider), final.ProviderSubject); err != nil {
+			VALUES($1,$2,$3,$4) RETURNING id`, int64(final.ApplicationInstanceID), userID, string(final.Provider), final.ProviderSubject).Scan(&externalIdentityID); err != nil {
 			return classifySocialError(ctx, err)
 		}
 		created = true
@@ -166,11 +167,12 @@ func (s *Store) FinalizeSocialProof(ctx context.Context, final authentication.So
 		return classifySocialError(ctx, err)
 	}
 	if created {
+		resourceReference := "external_identity:" + strconv.FormatInt(externalIdentityID, 10)
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO audit_events(application_instance_id,actor_kind,subject_user_id,action,resource_category,outcome,correlation_id,source)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+			INSERT INTO audit_events(application_instance_id,actor_kind,subject_user_id,action,resource_category,resource_reference,outcome,correlation_id,source)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
 			int64(final.ApplicationInstanceID), audit.ActorKindAnonymousSocial, userID,
-			audit.ActionSocialIdentityCreated, audit.ResourceCategoryExternalIdentity,
+			audit.ActionSocialIdentityCreated, audit.ResourceCategoryExternalIdentity, resourceReference,
 			audit.OutcomeSuccess, final.CorrelationID[:], audit.SourceInternalSocial,
 		); err != nil {
 			return classifySocialError(ctx, err)
@@ -216,11 +218,12 @@ func (s *Store) ExchangeSocialCompletion(ctx context.Context, final authenticati
 	}
 	now = now.UTC()
 	if consumedAt.Valid || !now.Before(expiresAt.UTC()) || storedChallenge != final.ClientCodeChallenge {
+		resourceReference := "social_completion:" + strconv.FormatInt(grantID, 10)
 		if _, auditErr := tx.ExecContext(ctx, `
-			INSERT INTO audit_events(application_instance_id,actor_kind,subject_user_id,action,resource_category,outcome,correlation_id,source)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+			INSERT INTO audit_events(application_instance_id,actor_kind,subject_user_id,action,resource_category,resource_reference,outcome,correlation_id,source)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
 			int64(final.ApplicationInstanceID), audit.ActorKindSocialUser, userID,
-			audit.ActionSocialCompletionDenied, audit.ResourceCategorySocialCompletion,
+			audit.ActionSocialCompletionDenied, audit.ResourceCategorySocialCompletion, resourceReference,
 			audit.OutcomeDenied, final.CorrelationID[:], audit.SourceInternalSocial,
 		); auditErr != nil {
 			return authentication.SocialCompletionResult{}, classifySocialError(ctx, auditErr)
@@ -258,11 +261,12 @@ func (s *Store) ExchangeSocialCompletion(ctx context.Context, final authenticati
 	if _, err := tx.ExecContext(ctx, `INSERT INTO session_refresh_credentials(session_id,verifier_hash) VALUES($1,$2)`, sessionID, final.RefreshVerifier[:]); err != nil {
 		return authentication.SocialCompletionResult{}, classifySocialError(ctx, err)
 	}
+	resourceReference := "session:" + final.SessionPublicID
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO audit_events(application_instance_id,actor_kind,subject_user_id,action,resource_category,outcome,correlation_id,source)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+		INSERT INTO audit_events(application_instance_id,actor_kind,subject_user_id,action,resource_category,resource_reference,outcome,correlation_id,source)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
 		int64(final.ApplicationInstanceID), audit.ActorKindSocialUser, userID,
-		audit.ActionSocialSessionIssued, audit.ResourceCategorySession,
+		audit.ActionSocialSessionIssued, audit.ResourceCategorySession, resourceReference,
 		audit.OutcomeSuccess, final.CorrelationID[:], audit.SourceInternalSocial,
 	); err != nil {
 		return authentication.SocialCompletionResult{}, classifySocialError(ctx, err)
