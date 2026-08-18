@@ -12,10 +12,10 @@ import (
 )
 
 const (
-	PublicVerificationGlobalLimit       = 200
-	PublicVerificationGlobalWindow      = time.Minute
-	PublicVerificationIdentifierLimit   = 5
-	PublicVerificationIdentifierWindow  = 15 * time.Minute
+	PublicVerificationGlobalLimit		= 200
+	PublicVerificationGlobalWindow		= time.Minute
+	PublicVerificationIdentifierLimit	= 5
+	PublicVerificationIdentifierWindow	= 15 * time.Minute
 )
 
 type PublicEmailIdentifierResolver interface {
@@ -28,9 +28,9 @@ type PublicVerificationRateLimiter interface {
 }
 
 type PublicVerificationService struct {
-	resolver     PublicEmailIdentifierResolver
-	limiter      PublicVerificationRateLimiter
-	verification *EmailVerificationService
+	resolver	PublicEmailIdentifierResolver
+	limiter		PublicVerificationRateLimiter
+	verification	*EmailVerificationService
 }
 
 func NewPublicVerificationService(resolver PublicEmailIdentifierResolver, limiter PublicVerificationRateLimiter, verification *EmailVerificationService) *PublicVerificationService {
