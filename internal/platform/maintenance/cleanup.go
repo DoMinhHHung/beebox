@@ -16,11 +16,13 @@ type Result struct {
 	EmailChallenges         int64
 	EmailOTPChallenges      int64
 	PasswordResetChallenges int64
+	PhoneSignupChallenges   int64
+	PhoneOTPChallenges      int64
 }
 
 // CleanupSecurityState removes only operational rows whose security lifetime
-// has ended. Each table is bounded by batchSize. Audit events, sessions, and
-// refresh credentials are deliberately outside this primitive.
+// has ended. Each table is bounded by batchSize. Audit events, sessions, phone
+// identifiers, and refresh credentials are deliberately outside this primitive.
 func CleanupSecurityState(ctx context.Context, db *sql.DB, batchSize int) (Result, error) {
 	if db == nil || batchSize <= 0 || batchSize > 10_000 {
 		return Result{}, ErrInvalidBatchSize
@@ -64,6 +66,18 @@ func CleanupSecurityState(ctx context.Context, db *sql.DB, batchSize int) (Resul
 			ORDER BY expires_at
 			LIMIT $1
 		) DELETE FROM password_reset_challenges p USING doomed d WHERE p.ctid = d.ctid`},
+		{&result.PhoneSignupChallenges, `WITH doomed AS (
+			SELECT ctid FROM phone_signup_challenges
+			WHERE consumed_at IS NOT NULL OR expires_at <= CURRENT_TIMESTAMP
+			ORDER BY expires_at
+			LIMIT $1
+		) DELETE FROM phone_signup_challenges p USING doomed d WHERE p.ctid = d.ctid`},
+		{&result.PhoneOTPChallenges, `WITH doomed AS (
+			SELECT ctid FROM phone_otp_signin_challenges
+			WHERE consumed_at IS NOT NULL OR expires_at <= CURRENT_TIMESTAMP
+			ORDER BY expires_at
+			LIMIT $1
+		) DELETE FROM phone_otp_signin_challenges p USING doomed d WHERE p.ctid = d.ctid`},
 	}
 	for _, cleanup := range queries {
 		if err := ctx.Err(); err != nil {
