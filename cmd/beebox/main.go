@@ -186,7 +186,7 @@ func runServeMode(ctx context.Context, logger *slog.Logger, lookup config.Lookup
 func runMigrationMode(ctx context.Context, logger *slog.Logger, lookup config.LookupEnv, dependencies runtimeDependencies) error {
 	cfg, err := config.LoadMigration(lookup)
 	if err != nil {
-		return fmt.Errorf("load configuration: %w", err)
+		return fmt.Errorf("load migration configuration: %w", err)
 	}
 	startupCtx, cancelStartup := context.WithTimeout(ctx, cfg.DatabaseStartupTimeout)
 	pool, err := dependencies.openDatabase(startupCtx, cfg.DatabaseURL)
