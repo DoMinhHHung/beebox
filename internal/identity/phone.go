@@ -9,7 +9,7 @@ import (
 )
 
 var (
-	ErrInvalidPhone             = errors.New("invalid phone number")
+	ErrInvalidPhone            = errors.New("invalid phone number")
 	ErrPhoneIdentifierNotFound = errors.New("phone identifier not found")
 	ErrPhoneConflict           = errors.New("phone identifier conflict")
 	ErrPhonePersistence        = errors.New("phone identifier persistence failure")
