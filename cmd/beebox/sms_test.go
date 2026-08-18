@@ -27,11 +27,11 @@ func TestBuildSMSDeliveryDefaultsDisabledAndSelectsExactlyOneProvider(t *testing
 		{
 			name: "twilio",
 			values: map[string]string{
-				"BEEBOX_SMS_MODE":                  "twilio",
-				"BEEBOX_TWILIO_ACCOUNT_SID":       "AC" + strings.Repeat("0", 32),
-				"BEEBOX_TWILIO_API_KEY_SID":       "SK" + strings.Repeat("1", 32),
-				"BEEBOX_TWILIO_API_KEY_SECRET":    "fixture-twilio-secret",
-				"BEEBOX_TWILIO_FROM":              "+15551234567",
+				"BEEBOX_SMS_MODE":              "twilio",
+				"BEEBOX_TWILIO_ACCOUNT_SID":    "AC" + strings.Repeat("0", 32),
+				"BEEBOX_TWILIO_API_KEY_SID":    "SK" + strings.Repeat("1", 32),
+				"BEEBOX_TWILIO_API_KEY_SECRET": "fixture-twilio-secret",
+				"BEEBOX_TWILIO_FROM":           "+15551234567",
 			},
 			assert: func(value any) bool { _, ok := value.(*twiliodelivery.Delivery); return ok },
 		},
