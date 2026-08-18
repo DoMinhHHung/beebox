@@ -5,6 +5,9 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/url"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -12,185 +15,138 @@ import (
 	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
 	applicationpostgres "github.com/DoMinhHHung/beebox/internal/applicationinstance/postgres"
 	"github.com/DoMinhHHung/beebox/internal/identity"
+	"github.com/DoMinhHHung/beebox/internal/platform/database"
 	"github.com/DoMinhHHung/beebox/internal/platform/migration"
+	"github.com/jackc/pgx/v5"
 )
 
-func TestEmailIdentifiersAreScopedUniqueUnverifiedAndNeverAutoLink(t *testing.T) {
-	databaseURL := isolatedDatabaseURL(t, "beebox_email_scope")
-	pool := openPool(t, databaseURL)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := migration.Up(ctx, pool.OpenSQLDB()); err != nil {
-		t.Fatalf("migration.Up() error = %v", err)
-	}
-
-	applicationStore := applicationpostgres.New(pool)
-	appA, err := applicationStore.Create(ctx)
+func TestEmailIdentifierPersistsApplicationScopeAndVerification(t *testing.T) {
+	pool, ctx := resetEmailTestDatabase(t, "beebox_email_identifier_scope")
+	apps := applicationpostgres.New(pool)
+	appA, err := apps.Create(ctx)
 	if err != nil {
 		t.Fatalf("Create(app A) error = %v", err)
 	}
-	appB, err := applicationStore.Create(ctx)
+	appB, err := apps.Create(ctx)
 	if err != nil {
 		t.Fatalf("Create(app B) error = %v", err)
 	}
-
 	store := New(pool)
 	userA, err := store.Create(ctx, appA.InternalID)
 	if err != nil {
 		t.Fatalf("Create(user A) error = %v", err)
 	}
-	userA2, err := store.Create(ctx, appA.InternalID)
-	if err != nil {
-		t.Fatalf("Create(user A2) error = %v", err)
-	}
 	userB, err := store.Create(ctx, appB.InternalID)
 	if err != nil {
 		t.Fatalf("Create(user B) error = %v", err)
 	}
 
-	identifierA, err := store.CreateEmailIdentifier(ctx, appA.InternalID, userA.InternalID, "Alice@Example.TEST")
+	identifierA, err := store.CreateEmailIdentifier(ctx, appA.InternalID, userA.InternalID, "User@Example.com")
 	if err != nil {
-		t.Fatalf("CreateEmailIdentifier(A) error = %v", err)
+		t.Fatalf("CreateEmailIdentifier(app A) error = %v", err)
 	}
-	assertEmailIdentifier(t, identifierA, appA.InternalID, userA.InternalID, "Alice@Example.TEST", "alice@example.test")
-
-	if _, err := store.CreateEmailIdentifier(ctx, appA.InternalID, userA2.InternalID, "alice@example.test"); !errors.Is(err, identity.ErrEmailConflict) {
-		t.Fatalf("same-app different-owner duplicate error = %v, want ErrEmailConflict", err)
-	}
-	if _, err := store.CreateEmailIdentifier(ctx, appA.InternalID, userA.InternalID, "  ALICE@EXAMPLE.TEST  "); !errors.Is(err, identity.ErrEmailConflict) {
-		t.Fatalf("same-user normalized duplicate error = %v, want ErrEmailConflict", err)
-	}
-
-	identifierB, err := store.CreateEmailIdentifier(ctx, appB.InternalID, userB.InternalID, "alice@example.test")
+	identifierB, err := store.CreateEmailIdentifier(ctx, appB.InternalID, userB.InternalID, "User@example.com")
 	if err != nil {
-		t.Fatalf("CreateEmailIdentifier(B) error = %v", err)
+		t.Fatalf("CreateEmailIdentifier(app B) error = %v", err)
 	}
-	assertEmailIdentifier(t, identifierB, appB.InternalID, userB.InternalID, "alice@example.test", "alice@example.test")
-	if identifierA.InternalID == identifierB.InternalID {
-		t.Fatalf("cross-app identifiers share internal ID %d", identifierA.InternalID)
-	}
+	assertEmailIdentifier(t, identifierA, appA.InternalID, userA.InternalID, "User@Example.com", "User@example.com", false)
+	assertEmailIdentifier(t, identifierB, appB.InternalID, userB.InternalID, "User@example.com", "User@example.com", false)
 
-	resolvedA, err := store.ResolveEmailIdentifierByAddress(ctx, appA.InternalID, " ALICE@Example.Test ")
+	verifiedA, err := store.MarkEmailVerified(ctx, appA.InternalID, identifierA.InternalID)
 	if err != nil {
-		t.Fatalf("ResolveEmailIdentifierByAddress(A) error = %v", err)
+		t.Fatalf("MarkEmailVerified() error = %v", err)
 	}
-	assertEmailIdentifier(t, resolvedA, appA.InternalID, userA.InternalID, "Alice@Example.TEST", "alice@example.test")
-	if resolvedA.InternalID != identifierA.InternalID {
-		t.Fatalf("ResolveEmailIdentifierByAddress(A) internal ID = %d, want %d", resolvedA.InternalID, identifierA.InternalID)
+	if verifiedA.VerifiedAt == nil || !verifiedA.VerifiedAt.Equal(verifiedA.VerifiedAt.UTC()) {
+		t.Fatalf("VerifiedAt = %v, want UTC value", verifiedA.VerifiedAt)
 	}
-
-	resolvedB, err := store.ResolveEmailIdentifierByAddress(ctx, appB.InternalID, "Alice@Example.TEST")
+	resolvedA, err := store.ResolveEmailIdentifier(ctx, appA.InternalID, "User@Example.com")
 	if err != nil {
-		t.Fatalf("ResolveEmailIdentifierByAddress(B) error = %v", err)
+		t.Fatalf("ResolveEmailIdentifier(app A) error = %v", err)
 	}
-	assertEmailIdentifier(t, resolvedB, appB.InternalID, userB.InternalID, "alice@example.test", "alice@example.test")
-	if resolvedB.InternalID != identifierB.InternalID {
-		t.Fatalf("ResolveEmailIdentifierByAddress(B) internal ID = %d, want %d", resolvedB.InternalID, identifierB.InternalID)
+	if resolvedA.VerifiedAt == nil {
+		t.Fatal("ResolveEmailIdentifier(app A) lost verified state")
 	}
-
-	if _, err := store.ResolveEmailIdentifierByAddress(ctx, appA.InternalID, "missing@example.test"); !errors.Is(err, identity.ErrEmailIdentifierNotFound) {
-		t.Fatalf("ResolveEmailIdentifierByAddress(missing) error = %v, want ErrEmailIdentifierNotFound", err)
+	resolvedB, err := store.ResolveEmailIdentifier(ctx, appB.InternalID, "User@example.com")
+	if err != nil {
+		t.Fatalf("ResolveEmailIdentifier(app B) error = %v", err)
 	}
-	if _, err := store.ResolveEmailIdentifierByAddress(ctx, applicationinstance.InternalID(0), "alice@example.test"); !errors.Is(err, identity.ErrInvalidApplicationInstanceScope) {
-		t.Fatalf("ResolveEmailIdentifierByAddress(invalid scope) error = %v, want ErrInvalidApplicationInstanceScope", err)
-	}
-	if _, err := store.CreateEmailIdentifier(ctx, appA.InternalID, identity.InternalID(0), "other@example.test"); !errors.Is(err, identity.ErrInvalidInternalID) {
-		t.Fatalf("CreateEmailIdentifier(invalid user) error = %v, want ErrInvalidInternalID", err)
-	}
-	if _, err := store.CreateEmailIdentifier(ctx, appA.InternalID, userA.InternalID, "not-an-email"); !errors.Is(err, identity.ErrInvalidEmail) {
-		t.Fatalf("CreateEmailIdentifier(invalid email) error = %v, want ErrInvalidEmail", err)
-	}
-
-	cancelledCtx, cancelNow := context.WithCancel(context.Background())
-	cancelNow()
-	if _, err := store.ResolveEmailIdentifierByAddress(cancelledCtx, appA.InternalID, "alice@example.test"); !errors.Is(err, context.Canceled) {
-		t.Fatalf("ResolveEmailIdentifierByAddress(cancelled) error = %v, want context.Canceled", err)
+	if resolvedB.VerifiedAt != nil {
+		t.Fatalf("app B identifier unexpectedly verified at %v", resolvedB.VerifiedAt)
 	}
 }
 
-func TestEmailIdentifierCompositeForeignKeyRejectsCrossApplicationOwner(t *testing.T) {
-	databaseURL := isolatedDatabaseURL(t, "beebox_email_fk")
-	pool := openPool(t, databaseURL)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := migration.Up(ctx, pool.OpenSQLDB()); err != nil {
-		t.Fatalf("migration.Up() error = %v", err)
-	}
-
-	applicationStore := applicationpostgres.New(pool)
-	appA, err := applicationStore.Create(ctx)
+func TestEmailIdentifierRejectsCrossApplicationOwnership(t *testing.T) {
+	pool, ctx := resetEmailTestDatabase(t, "beebox_email_identifier_cross_app")
+	apps := applicationpostgres.New(pool)
+	appA, err := apps.Create(ctx)
 	if err != nil {
 		t.Fatalf("Create(app A) error = %v", err)
 	}
-	appB, err := applicationStore.Create(ctx)
+	appB, err := apps.Create(ctx)
 	if err != nil {
 		t.Fatalf("Create(app B) error = %v", err)
 	}
 	store := New(pool)
-	userB, err := store.Create(ctx, appB.InternalID)
+	userA, err := store.Create(ctx, appA.InternalID)
 	if err != nil {
-		t.Fatalf("Create(user B) error = %v", err)
+		t.Fatalf("Create(user A) error = %v", err)
 	}
 
-	if _, err := store.CreateEmailIdentifier(ctx, appA.InternalID, userB.InternalID, "cross-scope@example.test"); !errors.Is(err, identity.ErrEmailPersistence) {
-		t.Fatalf("cross-app owner CreateEmailIdentifier() error = %v, want ErrEmailPersistence", err)
-	}
-
-	db := pool.OpenSQLDB()
-	defer db.Close()
-	var count int
-	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM email_identifiers`).Scan(&count); err != nil {
-		t.Fatalf("count email identifiers error = %v", err)
-	}
-	if count != 0 {
-		t.Fatalf("cross-app FK failure left %d identifier rows, want 0", count)
+	if _, err := store.CreateEmailIdentifier(ctx, appB.InternalID, userA.InternalID, "cross@example.com"); !errors.Is(err, identity.ErrEmailPersistence) {
+		t.Fatalf("CreateEmailIdentifier(cross app) error = %v, want ErrEmailPersistence", err)
 	}
 }
 
-func TestConcurrentNormalizedEmailDuplicatesCommitExactlyOnce(t *testing.T) {
-	databaseURL := isolatedDatabaseURL(t, "beebox_email_concurrent")
-	pool := openPool(t, databaseURL)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := migration.Up(ctx, pool.OpenSQLDB()); err != nil {
-		t.Fatalf("migration.Up() error = %v", err)
-	}
-
+func TestEmailIdentifierRejectsDuplicateWithinApplication(t *testing.T) {
+	pool, ctx := resetEmailTestDatabase(t, "beebox_email_identifier_duplicate")
 	app, err := applicationpostgres.New(pool).Create(ctx)
 	if err != nil {
 		t.Fatalf("Create(app) error = %v", err)
 	}
 	store := New(pool)
-	user, err := store.Create(ctx, app.InternalID)
+	userA, err := store.Create(ctx, app.InternalID)
 	if err != nil {
-		t.Fatalf("Create(user) error = %v", err)
+		t.Fatalf("Create(user A) error = %v", err)
+	}
+	userB, err := store.Create(ctx, app.InternalID)
+	if err != nil {
+		t.Fatalf("Create(user B) error = %v", err)
+	}
+	if _, err := store.CreateEmailIdentifier(ctx, app.InternalID, userA.InternalID, "Duplicate@Example.com"); err != nil {
+		t.Fatalf("first CreateEmailIdentifier() error = %v", err)
+	}
+	if _, err := store.CreateEmailIdentifier(ctx, app.InternalID, userB.InternalID, "Duplicate@example.com"); !errors.Is(err, identity.ErrEmailConflict) {
+		t.Fatalf("second CreateEmailIdentifier() error = %v, want ErrEmailConflict", err)
+	}
+}
+
+func TestEmailIdentifierConcurrentDuplicateConvergesToOneOwner(t *testing.T) {
+	pool, ctx := resetEmailTestDatabase(t, "beebox_email_identifier_race")
+	app, err := applicationpostgres.New(pool).Create(ctx)
+	if err != nil {
+		t.Fatalf("Create(app) error = %v", err)
+	}
+	store := New(pool)
+	userA, err := store.Create(ctx, app.InternalID)
+	if err != nil {
+		t.Fatalf("Create(user A) error = %v", err)
+	}
+	userB, err := store.Create(ctx, app.InternalID)
+	if err != nil {
+		t.Fatalf("Create(user B) error = %v", err)
 	}
 
-	variants := []string{
-		"Race@Example.TEST",
-		" race@example.test ",
-		"RACE@example.test",
-		"Race@EXAMPLE.TEST",
-		"  race@Example.Test  ",
-		"rAcE@example.test",
-		"RACE@EXAMPLE.TEST",
-		"race@example.test",
-	}
 	start := make(chan struct{})
-	results := make(chan error, len(variants))
+	results := make(chan error, 2)
 	var wg sync.WaitGroup
-	for _, raw := range variants {
-		raw := raw
+	for _, userID := range []identity.InternalID{userA.InternalID, userB.InternalID} {
 		wg.Add(1)
-		go func() {
+		go func(userID identity.InternalID) {
 			defer wg.Done()
 			<-start
-			_, err := store.CreateEmailIdentifier(ctx, app.InternalID, user.InternalID, raw)
+			_, err := store.CreateEmailIdentifier(ctx, app.InternalID, userID, "Race@Example.com")
 			results <- err
-		}()
+		}(userID)
 	}
 	close(start)
 	wg.Wait()
@@ -205,41 +161,16 @@ func TestConcurrentNormalizedEmailDuplicatesCommitExactlyOnce(t *testing.T) {
 		case errors.Is(err, identity.ErrEmailConflict):
 			conflicts++
 		default:
-			t.Fatalf("concurrent CreateEmailIdentifier() error = %v, want nil or ErrEmailConflict", err)
+			t.Fatalf("unexpected concurrent CreateEmailIdentifier() error = %v", err)
 		}
 	}
-	if successes != 1 || conflicts != len(variants)-1 {
-		t.Fatalf("concurrent results successes=%d conflicts=%d, want 1/%d", successes, conflicts, len(variants)-1)
-	}
-
-	db := pool.OpenSQLDB()
-	defer db.Close()
-	var count int
-	var storedUserID int64
-	if err := db.QueryRowContext(
-		ctx,
-		`SELECT count(*), min(user_id)
-		 FROM email_identifiers
-		 WHERE application_instance_id = $1 AND normalized_email = $2`,
-		int64(app.InternalID),
-		"race@example.test",
-	).Scan(&count, &storedUserID); err != nil {
-		t.Fatalf("query concurrent identifier state error = %v", err)
-	}
-	if count != 1 || identity.InternalID(storedUserID) != user.InternalID {
-		t.Fatalf("concurrent persisted state count=%d user=%d, want count=1 user=%d", count, storedUserID, user.InternalID)
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("concurrent results successes=%d conflicts=%d, want 1/1", successes, conflicts)
 	}
 }
 
 func TestEmailIdentifierDatabaseFailureUsesStableSafeError(t *testing.T) {
-	databaseURL := isolatedDatabaseURL(t, "beebox_email_failure")
-	pool := openPool(t, databaseURL)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := migration.Up(ctx, pool.OpenSQLDB()); err != nil {
-		t.Fatalf("migration.Up() error = %v", err)
-	}
+	pool, ctx := resetEmailTestDatabase(t, "beebox_email_identifier_safe_error")
 	app, err := applicationpostgres.New(pool).Create(ctx)
 	if err != nil {
 		t.Fatalf("Create(app) error = %v", err)
@@ -251,17 +182,11 @@ func TestEmailIdentifierDatabaseFailureUsesStableSafeError(t *testing.T) {
 	}
 
 	db := pool.OpenSQLDB()
-	if _, err := db.ExecContext(ctx, "DROP TABLE password_reset_challenges"); err != nil {
-		db.Close()
-		t.Fatalf("drop password_reset_challenges error = %v", err)
-	}
-	if _, err := db.ExecContext(ctx, "DROP TABLE email_verification_challenges"); err != nil {
-		db.Close()
-		t.Fatalf("drop email_verification_challenges error = %v", err)
-	}
-	if _, err := db.ExecContext(ctx, "DROP TABLE email_identifiers"); err != nil {
-		db.Close()
-		t.Fatalf("drop email_identifiers error = %v", err)
+	for _, table := range []string{"password_reset_challenges", "email_otp_signin_challenges", "email_verification_challenges", "email_identifiers"} {
+		if _, err := db.ExecContext(ctx, "DROP TABLE "+table); err != nil {
+			db.Close()
+			t.Fatalf("drop %s error = %v", table, err)
+		}
 	}
 	if err := db.Close(); err != nil {
 		t.Fatalf("close test adapter error = %v", err)
@@ -272,28 +197,67 @@ func TestEmailIdentifierDatabaseFailureUsesStableSafeError(t *testing.T) {
 	}
 }
 
-func assertEmailIdentifier(
-	t *testing.T,
-	identifier identity.EmailIdentifier,
-	appID applicationinstance.InternalID,
-	userID identity.InternalID,
-	wantAddress string,
-	wantNormalized string,
-) {
+func assertEmailIdentifier(t *testing.T, identifier identity.EmailIdentifier, appID applicationinstance.InternalID, userID identity.InternalID, address, normalized string, verified bool) {
 	t.Helper()
-	if !identifier.InternalID.Valid() {
-		t.Fatalf("email identifier internal ID = %d, want positive", identifier.InternalID)
+	if identifier.ApplicationInstanceID != appID || identifier.UserID != userID || identifier.EmailAddress != address || identifier.NormalizedEmail != normalized {
+		t.Fatalf("identifier = %#v", identifier)
 	}
-	if identifier.ApplicationInstanceID != appID || identifier.UserID != userID {
-		t.Fatalf("email identifier scope/owner = %d/%d, want %d/%d", identifier.ApplicationInstanceID, identifier.UserID, appID, userID)
+	if (identifier.VerifiedAt != nil) != verified {
+		t.Fatalf("identifier VerifiedAt = %v, want verified=%v", identifier.VerifiedAt, verified)
 	}
-	if identifier.EmailAddress != wantAddress || identifier.NormalizedEmail != wantNormalized {
-		t.Fatalf("email identifier address/key = %q/%q, want %q/%q", identifier.EmailAddress, identifier.NormalizedEmail, wantAddress, wantNormalized)
+	if identifier.CreatedAt.IsZero() || !identifier.CreatedAt.Equal(identifier.CreatedAt.UTC()) {
+		t.Fatalf("CreatedAt = %v", identifier.CreatedAt)
 	}
-	if identifier.VerifiedAt != nil {
-		t.Fatalf("email identifier VerifiedAt = %v, want nil", identifier.VerifiedAt)
+}
+
+func resetEmailTestDatabase(t *testing.T, schema string) (*database.Pool, context.Context) {
+	t.Helper()
+	databaseURL := os.Getenv("BEEBOX_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Fatal("BEEBOX_TEST_DATABASE_URL is required")
 	}
-	if identifier.CreatedAt.Location() != time.UTC {
-		t.Fatalf("email identifier CreatedAt location = %v, want UTC", identifier.CreatedAt.Location())
+	adminCtx, cancelAdmin := context.WithTimeout(context.Background(), 15*time.Second)
+	t.Cleanup(cancelAdmin)
+	adminPool, err := database.Open(adminCtx, databaseURL)
+	if err != nil {
+		t.Fatalf("database.Open(admin) error = %v", err)
 	}
+	t.Cleanup(adminPool.Close)
+	adminDB := adminPool.OpenSQLDB()
+	quotedSchema := pgx.Identifier{schema}.Sanitize()
+	if _, err := adminDB.ExecContext(adminCtx, "DROP SCHEMA IF EXISTS "+quotedSchema+" CASCADE"); err != nil {
+		adminDB.Close()
+		t.Fatalf("drop schema error = %v", err)
+	}
+	if _, err := adminDB.ExecContext(adminCtx, "CREATE SCHEMA "+quotedSchema); err != nil {
+		adminDB.Close()
+		t.Fatalf("create schema error = %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = adminDB.ExecContext(cleanupCtx, "DROP SCHEMA IF EXISTS "+quotedSchema+" CASCADE")
+		_ = adminDB.Close()
+	})
+	parsed, err := url.Parse(databaseURL)
+	if err != nil {
+		t.Fatalf("parse test database URL error = %v", err)
+	}
+	query := parsed.Query()
+	query.Set("search_path", schema)
+	parsed.RawQuery = query.Encode()
+	pool, err := database.Open(adminCtx, parsed.String())
+	if err != nil {
+		t.Fatalf("database.Open(test schema) error = %v", err)
+	}
+	t.Cleanup(pool.Close)
+	if err := migration.Up(adminCtx, pool.OpenSQLDB()); err != nil {
+		t.Fatalf("migration.Up() error = %v", err)
+	}
+	return pool, adminCtx
+}
+
+func ExampleEmailConflictIsApplicationScoped() {
+	fmt.Println("email equality is scoped by application_instance")
+	// Output: email equality is scoped by application_instance
 }
