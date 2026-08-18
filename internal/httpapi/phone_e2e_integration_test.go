@@ -21,9 +21,9 @@ import (
 )
 
 type phoneExitDelivery struct {
-	mu      sync.Mutex
-	signup  string
-	signin  string
+	mu     sync.Mutex
+	signup string
+	signin string
 }
 
 func (d *phoneExitDelivery) DeliverPhoneSignupCode(_ context.Context, _ string, code string, _ time.Time) error {
