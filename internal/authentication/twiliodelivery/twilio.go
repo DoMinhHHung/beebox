@@ -23,25 +23,29 @@ var (
 	ErrConfig   = errors.New("SMS delivery configuration invalid")
 	ErrDelivery = errors.New("SMS delivery failure")
 	accountSID  = regexp.MustCompile(`^AC[0-9a-fA-F]{32}$`)
+	apiKeySID   = regexp.MustCompile(`^SK[0-9a-fA-F]{32}$`)
 )
 
 type LookupEnv func(string) (string, bool)
 
 type Delivery struct {
-	accountSID string
-	authToken  string
-	from       string
-	client     *http.Client
-	baseURL    string
+	accountSID   string
+	apiKeySID    string
+	apiKeySecret string
+	from         string
+	client       *http.Client
+	baseURL      string
 }
 
 var _ authentication.PhoneOTPDelivery = (*Delivery)(nil)
 
 func FromLookup(lookup LookupEnv) (*Delivery, error) {
 	account, okAccount := lookup("BEEBOX_TWILIO_ACCOUNT_SID")
-	token, okToken := lookup("BEEBOX_TWILIO_AUTH_TOKEN")
+	keySID, okKeySID := lookup("BEEBOX_TWILIO_API_KEY_SID")
+	keySecret, okKeySecret := lookup("BEEBOX_TWILIO_API_KEY_SECRET")
 	from, okFrom := lookup("BEEBOX_TWILIO_FROM")
-	if !okAccount || !okToken || !okFrom || account == "" || token == "" || from == "" || !accountSID.MatchString(account) || len(from) > 64 {
+	if !okAccount || !okKeySID || !okKeySecret || !okFrom ||
+		!accountSID.MatchString(account) || !apiKeySID.MatchString(keySID) || keySecret == "" || from == "" || len(from) > 64 {
 		return nil, ErrConfig
 	}
 	timeout := defaultTimeout
@@ -52,22 +56,29 @@ func FromLookup(lookup LookupEnv) (*Delivery, error) {
 		}
 		timeout = parsed
 	}
-	delivery, err := newDelivery(account, token, from, &http.Client{Timeout: timeout}, productionBaseURL, false)
+	delivery, err := newDelivery(account, keySID, keySecret, from, &http.Client{Timeout: timeout}, productionBaseURL, false)
 	if err != nil {
 		return nil, ErrConfig
 	}
 	return delivery, nil
 }
 
-func newDelivery(account, token, from string, client *http.Client, baseURL string, allowHTTP bool) (*Delivery, error) {
-	if !accountSID.MatchString(account) || token == "" || from == "" || client == nil || baseURL == "" {
+func newDelivery(account, keySID, keySecret, from string, client *http.Client, baseURL string, allowHTTP bool) (*Delivery, error) {
+	if !accountSID.MatchString(account) || !apiKeySID.MatchString(keySID) || keySecret == "" || from == "" || client == nil || baseURL == "" {
 		return nil, ErrConfig
 	}
 	parsed, err := url.Parse(baseURL)
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && !(allowHTTP && parsed.Scheme == "http")) {
 		return nil, ErrConfig
 	}
-	return &Delivery{accountSID: account, authToken: token, from: from, client: client, baseURL: strings.TrimRight(baseURL, "/")}, nil
+	return &Delivery{
+		accountSID:   account,
+		apiKeySID:    keySID,
+		apiKeySecret: keySecret,
+		from:         from,
+		client:       client,
+		baseURL:      strings.TrimRight(baseURL, "/"),
+	}, nil
 }
 
 func (d *Delivery) DeliverPhoneSignupCode(ctx context.Context, destination, code string, _ time.Time) error {
@@ -92,7 +103,7 @@ func (d *Delivery) send(ctx context.Context, destination, body string) error {
 		return ErrDelivery
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.SetBasicAuth(d.accountSID, d.authToken)
+	req.SetBasicAuth(d.apiKeySID, d.apiKeySecret)
 	resp, err := d.client.Do(req)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
