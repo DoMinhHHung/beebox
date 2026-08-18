@@ -26,10 +26,10 @@ var microsoftTenantPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-
 type LookupEnv func(string) (string, bool)
 
 type connectionInput struct {
-	ApplicationID    string                  `json:"application_id"`
-	Provider         authentication.Provider `json:"provider"`
-	ClientID         string                  `json:"client_id"`
-	ClientSecret     string                  `json:"client_secret"`
+	ApplicationID   string                  `json:"application_id"`
+	Provider        authentication.Provider `json:"provider"`
+	ClientID        string                  `json:"client_id"`
+	ClientSecret    string                  `json:"client_secret"`
 	MicrosoftTenant string                  `json:"microsoft_tenant,omitempty"`
 }
 
@@ -81,11 +81,11 @@ func Load(lookup LookupEnv) (*Registry, *authentication.SocialStateProtector, er
 			return nil, nil, ErrConfig
 		}
 		adapter, err := newAdapter(adapterConfig{
-			provider: input.Provider,
-			clientID: input.ClientID,
-			clientSecret: input.ClientSecret,
+			provider:        input.Provider,
+			clientID:        input.ClientID,
+			clientSecret:    input.ClientSecret,
 			microsoftTenant: input.MicrosoftTenant,
-			redirectURL: callbackBase + "/v1/social-auth/callback/" + string(input.Provider),
+			redirectURL:     callbackBase + "/v1/social-auth/callback/" + string(input.Provider),
 		})
 		if err != nil {
 			return nil, nil, ErrConfig
