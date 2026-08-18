@@ -38,6 +38,14 @@ func TestPublicOpenAPIContract(t *testing.T) {
 		"operationId: confirmPhoneOTPSignIn",
 		"pattern: '^\\+[1-9][0-9]{1,14}$'",
 		"pattern: '^[0-9]{6}$'",
+		"  /v1/social-auth/attempts:",
+		"  /v1/social-auth/callback/{provider}:",
+		"  /v1/social-auth/exchange:",
+		"operationId: createSocialAuthAttempt",
+		"operationId: completeSocialProviderCallback",
+		"operationId: exchangeSocialAuthCode",
+		"enum: [google, apple, microsoft, github, gitlab, facebook, discord, linkedin, x, tiktok]",
+		"code_challenge_method: {type: string, const: S256}",
 		"  /v1/sessions/refresh:",
 		"  /v1/sessions/current:",
 		"  /v1/sessions/sign-out:",
@@ -62,6 +70,12 @@ func TestPublicOpenAPIContract(t *testing.T) {
 		"no user is created before successful possession proof",
 		"must not be blindly retried",
 		"invalid_credentials",
+		"exact application-scoped allowlisted redirect",
+		"provider email is not account-link authority",
+		"provider access, refresh, and id tokens are never",
+		"original rfc 7636 verifier",
+		"does not implement mfa",
+		"account linking",
 	} {
 		if !strings.Contains(strings.ToLower(text), strings.ToLower(requiredSemantics)) {
 			t.Fatalf("v1 spec missing authentication semantic %q", requiredSemantics)
@@ -69,7 +83,7 @@ func TestPublicOpenAPIContract(t *testing.T) {
 	}
 	for _, forbidden := range []string{
 		"application_instance_id", "password_hash", "refresh_verifier", "challenge_id", "BIGINT",
-		"phone_identifier_id", "twilio_sid", "message_sid",
+		"phone_identifier_id", "twilio_sid", "message_sid", "provider_subject", "client_secret",
 	} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("v1 spec leaks internal/provider contract term %q", forbidden)
