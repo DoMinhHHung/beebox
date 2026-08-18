@@ -24,7 +24,7 @@ func TestAuthorizationURLProviderMatrix(t *testing.T) {
 		pkce     bool
 		nonce    bool
 	}{
-		{authentication.ProviderGoogle, "", "accounts.google.com", "/o/oauth2/v2/auth", []string{"openid"}, true, true},
+		{authentication.ProviderGoogle, "", "accounts.google.com", "/o/oauth2/v2/auth", []string{"openid", "profile"}, true, true},
 		{authentication.ProviderApple, "", "appleid.apple.com", "/auth/authorize", nil, false, true},
 		{authentication.ProviderMicrosoft, "11111111-1111-4111-8111-111111111111", "login.microsoftonline.com", "/11111111-1111-4111-8111-111111111111/oauth2/v2.0/authorize", []string{"openid"}, true, true},
 		{authentication.ProviderGitHub, "", "github.com", "/login/oauth/authorize", nil, true, false},
@@ -32,7 +32,7 @@ func TestAuthorizationURLProviderMatrix(t *testing.T) {
 		{authentication.ProviderFacebook, "", "www.facebook.com", "/dialog/oauth", nil, false, false},
 		{authentication.ProviderDiscord, "", "discord.com", "/oauth2/authorize", []string{"identify"}, false, false},
 		{authentication.ProviderLinkedIn, "", "www.linkedin.com", "/oauth/v2/authorization", []string{"openid"}, false, true},
-		{authentication.ProviderX, "", "x.com", "/i/oauth2/authorize", []string{"users.read"}, true, false},
+		{authentication.ProviderX, "", "x.com", "/i/oauth2/authorize", []string{"tweet.read", "users.read"}, true, false},
 		{authentication.ProviderTikTok, "", "www.tiktok.com", "/v2/auth/authorize/", []string{"user.info.basic"}, false, false},
 	}
 
@@ -40,6 +40,7 @@ func TestAuthorizationURLProviderMatrix(t *testing.T) {
 		t.Fatalf("matrix providers = %d, vocabulary = %d", len(tests), len(authentication.Providers))
 	}
 	for _, tt := range tests {
+		t := tt
 		t.Run(string(tt.provider), func(t *testing.T) {
 			t.Parallel()
 			adapter, err := newAdapter(adapterConfig{
