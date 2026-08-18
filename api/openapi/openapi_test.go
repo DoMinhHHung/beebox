@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestPhase1OpenAPIContract(t *testing.T) {
+func TestPublicOpenAPIContract(t *testing.T) {
 	content, err := os.ReadFile("v1.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -24,6 +24,11 @@ func TestPhase1OpenAPIContract(t *testing.T) {
 		"  /v1/email-verifications:",
 		"  /v1/email-verifications/confirm:",
 		"  /v1/sign-ins:",
+		"  /v1/sign-ins/email-otp:",
+		"  /v1/sign-ins/email-otp/confirm:",
+		"operationId: requestEmailOTPSignIn",
+		"operationId: confirmEmailOTPSignIn",
+		"pattern: '^[0-9]{6}$'",
 		"  /v1/sessions/refresh:",
 		"  /v1/sessions/current:",
 		"  /v1/sessions/sign-out:",
@@ -39,7 +44,17 @@ func TestPhase1OpenAPIContract(t *testing.T) {
 			t.Fatalf("v1 spec missing required contract anchor %q", required)
 		}
 	}
-	for _, forbidden := range []string{"application_instance_id", "password_hash", "refresh_verifier", "BIGINT"} {
+	for _, requiredSemantics := range []string{
+		"response is intentionally generic",
+		"one-time and replay-safe",
+		"primary authentication method",
+		"invalid_credentials",
+	} {
+		if !strings.Contains(strings.ToLower(text), strings.ToLower(requiredSemantics)) {
+			t.Fatalf("v1 spec missing email OTP semantic %q", requiredSemantics)
+		}
+	}
+	for _, forbidden := range []string{"application_instance_id", "password_hash", "refresh_verifier", "challenge_id", "BIGINT"} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("v1 spec leaks internal contract term %q", forbidden)
 		}

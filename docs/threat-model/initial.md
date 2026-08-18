@@ -1,16 +1,16 @@
 # Initial BeeBox Threat Model
 
-> Status: repository-owned threat model for ratified Phase 1 plus **accepted** Phase 2 trust contracts.
+> Status: repository-owned threat model for ratified Phase 1, the implemented P2.1 passwordless email OTP slice, and **accepted** Phase 2 trust contracts for later work.
 > Governance baseline: `Instruction.md`, `docs/contracts/conventions.md`, and accepted ADRs 0001–0006.
-> ADRs 0004–0006 are accepted architecture/security requirements. Their Phase 2 runtime mitigations are not implemented by this documentation checkpoint and must not be claimed as deployed until later implementation evidence exists.
+> ADRs 0004–0006 are accepted architecture/security requirements. This P2.1 slice implements only the email OTP primary-authentication subset described below; the remaining Phase 2 runtime mitigations must not be claimed as deployed until later implementation evidence exists.
 
 ## 1. Scope and trust model
 
 BeeBox is one Go modular monolith with PostgreSQL as the correctness source of truth. `application_instance` is the root isolation boundary. Email identity is application-scoped and equal email values never authorize account linking or merging. BeeBox Phase 1 is not an OAuth/OIDC authorization server.
 
-The reachable Phase 1 surface covers email/password signup, email ownership verification, verified-email/password signin, session creation/current-state/refresh/revoke/signout, Ed25519 access JWT/JWKS, password reset, backend secret-key session management and bounded operational metrics. The minimal Go SDK consumes this BeeBox-owned surface and can verify access tokens offline from JWKS.
+The reachable baseline surface covers email/password signup, email ownership verification, verified-email/password signin, P2.1 passwordless email OTP signin for an existing verified identifier, session creation/current-state/refresh/revoke/signout, Ed25519 access JWT/JWKS, password reset, backend secret-key session management and bounded operational metrics. The minimal Go SDK consumes this BeeBox-owned surface and can verify access tokens offline from JWKS.
 
-Phase 2 social auth, phone, passkeys, MFA, account linking, generic recovery, hosted auth and device-management behavior remain unimplemented in this P2.0 documentation checkpoint. Accepted ADRs 0004–0006 define the security contracts that later slices must implement and prove.
+Phone/SMS, social OAuth/OIDC, account-linking runtime, passkeys, MFA, generic recovery codes, step-up/reverification runtime, hosted authentication and device-management behavior remain unimplemented. Accepted ADRs 0004–0006 define the security contracts those later slices must satisfy.
 
 ## 2. Assets and secret/PII handling
 
@@ -81,9 +81,9 @@ The following are accepted contract requirements for later implementation, not c
 
 | Threat | Accepted control / required later evidence |
 | --- | --- |
-| MFA downgrade via alternate login path | Required MFA applies regardless of primary method; password/email OTP/phone OTP/social switching cannot bypass required assurance. |
+| MFA downgrade via alternate login path | Required MFA applies regardless of primary method; password/email OTP/phone OTP/social switching cannot bypass required assurance. P2.1 treats email OTP as a primary proof only and does not encode an MFA bypass. |
 | Treating any two steps as independent MFA | Factor independence/security property must be evaluated by the implementing factor set; passkeys are not automatically an extra factor. |
-| Full session issued before MFA complete | Primary proof, pending additional assurance and fully authenticated session are distinct; full privilege waits for required factors. |
+| Full session issued before MFA complete | Primary proof, pending additional assurance and fully authenticated session are distinct; full privilege waits for required factors. P2.1 has no configured additional-assurance runtime, so its successful primary proof currently creates the ordinary session class without ratifying future MFA behavior. |
 | Stale-session sensitive mutation | Sensitive operations require recent trusted server-side reverification, not merely any old valid session. The accepted v1 freshness default is 10 minutes from the most recent successful server-recorded reverification, subject to ADR 0005 scope/method/assurance validation. |
 | Client-forged freshness/assurance | Client timestamps or declared methods are never authority; evidence is server-recorded and bound to app/user/session/flow. |
 | Recovery as permanent weaker password | Recovery credentials are purpose-specific; recovery codes are one-time; replay fails closed; recovery does not silently erase MFA/security state. |
@@ -136,32 +136,56 @@ These outcomes are accepted contract requirements for future Phase 2 implementat
 - hosted redirect substitution/open redirect -> reject unless exact validated current-app destination and state binding pass;
 - device metadata privacy -> no new device PII persistence until bounded purpose/retention is explicitly reviewed.
 
-## 13. Accepted contract versus implemented control boundary
+## 13. P2.1 passwordless email OTP implemented controls
 
-ADRs 0001–0006 are accepted architecture/security contracts. Existing code/tests currently provide Phase 1 runtime evidence only. Acceptance of ADRs 0004–0006 does **not** mean social linking, MFA, passkeys, generic recovery, hosted auth or device-management mitigations are deployed.
+P2.1 adds runtime evidence for one accepted ADR 0005 primary-authentication method only. It does not implement additional assurance/MFA.
 
-Each Phase 2 implementation slice must provide its own concrete code, persistence/API contracts where applicable, security/tenant tests and exact-head CI before BeeBox may claim that runtime control exists.
+| Threat | Implemented P2.1 control / evidence requirement |
+| --- | --- |
+| OTP used as email-verification shortcut | Issue requires an existing verified email identifier; confirmation rechecks the same application/user ownership and verified state. The flow never mutates `verified_at` or creates a user. |
+| Account enumeration at issue | Eligible delivery, unknown/unverified identifiers, resend suppression and account-dependent delivery failure converge on the generic accepted public response for syntactically valid requests. |
+| Cross-application challenge use | Challenge persistence is keyed by trusted `application_instance` + email identifier with a composite foreign key; issue/load/finalize queries include the trusted application. |
+| Plaintext OTP disclosure | Six numeric digits come from the existing `crypto/rand` primitive; only Argon2 verifier encoding is persisted. OTPs are absent from public responses, logs, metrics and audit facts. |
+| Old-code reuse after resend | A permitted resend increments generation and replaces the verifier; confirmation must match the current locked generation. |
+| OTP replay | Successful confirmation row-locks/rechecks the challenge, consumes it and clears `code_hash` in the same transaction as session/refresh-verifier/audit creation. Subsequent or concurrent redemption fails closed. |
+| Confirmation race | PostgreSQL row locking and generation/consumed checks serialize redemption; at most one transaction can create the successful session for a challenge generation. |
+| Excessive guessing / KDF exhaustion | Five challenge-level failed attempts plus purpose-specific global-first persistent admission precede Argon2 verification. Identifier cardinality is touched only after global admission succeeds. |
+| Unbounded resend | One-minute cooldown, three issues per 15-minute window, and one active row per application/email identifier bound challenge issuance. |
+| Expired challenge | Trusted database/server time enforces a 10-minute TTL with no grace period. |
+| Password coupling | OTP does not fabricate password credentials or credential generation. Existing password signin/reset race protection remains on its existing password path. A verified user can authenticate by OTP without a password credential. |
+| Partial success | Successful challenge consumption, session insert, refresh-verifier insert and required success audit fact share one PostgreSQL transaction. SMTP remains outside the transaction. |
+| SMTP ambiguity | Challenge may commit before delivery. Delivery uses the existing bounded SMTP/TLS policy and a purpose-specific sign-in template; account-dependent delivery failure remains generic publicly. |
+| Future MFA downgrade | Email OTP is represented as a primary proof only. The code does not assert that OTP bypasses configured MFA; later MFA must continue to follow ADR 0005. |
 
-## 14. Residual Phase 1 threats
+## 14. Accepted contract versus implemented control boundary
+
+ADRs 0001–0006 are accepted architecture/security contracts. Existing code/tests provide Phase 1 runtime evidence plus the P2.1 passwordless email OTP controls in section 13. Acceptance of ADRs 0004–0006 does **not** mean social linking, phone/SMS, MFA, passkeys, generic recovery codes, step-up/reverification, hosted auth or device-management mitigations are deployed.
+
+Each later Phase 2 implementation slice must provide its own concrete code, persistence/API contracts where applicable, security/tenant tests and exact-head CI before BeeBox may claim that runtime control exists.
+
+## 15. Residual implemented-surface threats
 
 | Threat | Current control / residual risk |
 | --- | --- |
 | Database/backup compromise | Verifier material remains sensitive offline; backups require privileged protection. |
-| Online KDF exhaustion | Request/KDF admission reduces obvious abuse; volumetric protection/capacity remain operational. |
-| Signup/signin/reset enumeration | Public responses collapse account-sensitive distinctions; timing requires regression coverage. |
-| Email/SMTP compromise | Verification/reset prove mailbox control only; provider compromise may expose delivered codes. |
+| Online KDF exhaustion | Request/KDF admission reduces obvious abuse; volumetric protection/capacity remain operational. Email OTP confirmation adds bounded admission but is still a public expensive-verifier endpoint. |
+| Signup/signin/reset/OTP enumeration | Public responses collapse account-sensitive distinctions; timing requires regression coverage and operational observation. |
+| Email/SMTP compromise | Verification/reset/sign-in codes depend on mailbox/provider control; provider compromise may expose delivered codes. |
 | Refresh theft/replay | One-time rotation and replay-triggered revoke; ambiguous response loss can force reauthentication. |
 | Access-token theft | Short-lived bearer remains usable until expiry for offline consumers; no global denylist. |
 | XSS/CSRF | HttpOnly/SameSite/exact-Origin reduce cookie abuse; XSS can still act with page authority. |
 | Signing-key compromise | Requires secure configuration distribution/rotation; private material absent from DB/JWKS. |
 | Metrics exposure | No PII/secret labels, but endpoint still needs network protection. |
 
-## 15. Evidence map
+## 16. Evidence map
 
 - `docs/adr/0001-application-instance-root.md` through `0003-phase1-public-auth-contract.md` — accepted Phase 1 trust decisions.
 - `docs/adr/0004-phase2-identity-linking-external-trust.md` — accepted external identity/account-link ownership and initiation-bound explicit-link transaction.
-- `docs/adr/0005-phase2-authentication-assurance-recovery.md` — accepted assurance/reverification/recovery semantics.
+- `docs/adr/0005-phase2-authentication-assurance-recovery.md` — accepted assurance/reverification/recovery semantics; P2.1 implements email OTP as one primary-authentication method without implementing MFA.
 - `docs/adr/0006-phase2-device-privacy-hosted-auth.md` — accepted privacy/redirect trust boundary and link-specific state binding.
-- `docs/phase1-exit.md`, `api/openapi/v1.yaml`, `sdk/go`, integration tests and `.github/workflows/ci.yml` — existing Phase 1 implementation evidence.
+- `internal/authentication/email_otp.go`, `internal/authentication/postgres/email_otp_store.go`, `internal/session/email_otp.go` — P2.1 challenge lifecycle, one-time proof and transactional session issuance.
+- `internal/httpapi/email_otp.go`, `api/openapi/v1.yaml`, `sdk/go/email_otp.go` — BeeBox-owned P2.1 HTTP and SDK contract.
+- `internal/authentication/postgres/email_otp_integration_test.go` and current CI — P2.1 application scope, verifier-only persistence, rotation, attempt, replay, no-password and concurrency evidence.
+- `docs/phase1-exit.md`, existing integration tests and `.github/workflows/ci.yml` — existing Phase 1 implementation evidence.
 
-No Phase 2 runtime implementation evidence exists in this P2.0 documentation checkpoint.
+No runtime evidence is claimed here for phone/SMS, social OAuth/OIDC, account linking, passkeys, MFA, generic recovery codes, step-up/reverification, device management or hosted authentication.

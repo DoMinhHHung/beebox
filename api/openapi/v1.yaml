@@ -3,9 +3,10 @@ info:
   title: BeeBox Public API
   version: 1.0.0
   description: >-
-    BeeBox-owned Phase 1 B2C authentication contract. BeeBox Phase 1 is not an
-    OAuth or OpenID Connect authorization server. Public resource identifiers
-    are opaque locators and never establish authorization by themselves.
+    BeeBox-owned B2C authentication contract. Phase 1 email/password behavior and
+    the P2.1 passwordless email OTP primary-authentication method are implemented.
+    BeeBox is not an OAuth or OpenID Connect authorization server. Public resource
+    identifiers are opaque locators and never establish authorization by themselves.
 servers:
   - url: /
 paths:
@@ -100,6 +101,64 @@ paths:
       responses:
         '200':
           description: Session and fresh access credential.
+          headers:
+            Cache-Control: {$ref: '#/components/headers/NoStore'}
+            X-Request-ID: {$ref: '#/components/headers/RequestID'}
+            Set-Cookie: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TokenResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidCredentials'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/sign-ins/email-otp:
+    post:
+      operationId: requestEmailOTPSignIn
+      summary: Request a passwordless email OTP primary-authentication challenge
+      description: >-
+        For syntactically valid email input the response is intentionally generic
+        across eligible verified identifiers, unknown or unverified identifiers,
+        resend cooldown/window suppression, and account-dependent delivery failure.
+        A successful issue creates or rotates a purpose-separated six-digit code;
+        no public challenge database identifier is returned.
+      security: [{publishableKey: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EmailRequest'}
+      responses:
+        '202': {$ref: '#/components/responses/Accepted'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/InvalidInput'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/sign-ins/email-otp/confirm:
+    post:
+      operationId: confirmEmailOTPSignIn
+      summary: Create a session from a one-time email OTP primary proof
+      description: >-
+        Confirmation is one-time and replay-safe. Unknown/unverified identifiers,
+        absent, wrong, expired, consumed, attempt-limited, stale/replaced, or
+        cross-application challenge state is collapsed into invalid_credentials.
+        Browser requests with an allowed Origin receive refresh state only in the
+        application-specific Secure HttpOnly SameSite=Strict __Host- cookie;
+        non-browser callers receive the refresh credential in JSON. Email OTP is a
+        primary authentication method and does not override future required MFA.
+      security: [{publishableKey: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EmailOTPConfirmRequest'}
+      responses:
+        '200':
+          description: Ordinary BeeBox session and fresh access credential after one-time OTP consumption.
           headers:
             Cache-Control: {$ref: '#/components/headers/NoStore'}
             X-Request-ID: {$ref: '#/components/headers/RequestID'}
@@ -334,6 +393,16 @@ components:
       properties:
         email: {type: string, format: email}
         code: {type: string, pattern: '^[0-9]{6}$'}
+    EmailOTPConfirmRequest:
+      type: object
+      additionalProperties: false
+      required: [email, code]
+      properties:
+        email: {type: string, format: email}
+        code:
+          type: string
+          pattern: '^[0-9]{6}$'
+          description: One-time six-digit passwordless sign-in code; never returned by BeeBox APIs.
     SignInRequest:
       type: object
       additionalProperties: false
@@ -442,7 +511,7 @@ components:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
     InvalidCredentials:
-      description: Credentials are invalid without revealing identifier existence or verification state.
+      description: Credentials are invalid without revealing identifier existence, verification, challenge, expiry, replay or ownership state.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}

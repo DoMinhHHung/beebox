@@ -100,10 +100,12 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 	verification := authentication.NewPublicVerificationService(identitypostgres.New(concretePool), authStore, verificationCore)
 	signup := authentication.NewPublicSignupService(authStore, delivery)
 	reset := authentication.NewPasswordResetService(authStore, delivery)
+	emailOTP := authentication.NewEmailOTPService(authStore, delivery)
 	base := httpapi.New(health, integrationService, integrationStore, signup, verification)
 	base = httpapi.WithPasswordReset(base, integrationService, integrationStore, reset)
 	ring, err := session.KeyRingFromLookup(session.LookupEnv(lookup))
 	if errors.Is(err, session.ErrTokenDisabled) {
+		base = httpapi.WithEmailOTP(base, integrationService, integrationStore, nil, nil)
 		return httpapi.WithMetrics(base, recorder), nil
 	}
 	if err != nil {
@@ -111,7 +113,9 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 	}
 	sessionStore := sessionpostgres.New(concretePool)
 	sessionService := session.NewService(sessionStore, sessionStore, ring)
+	emailOTPSession := session.NewEmailOTPService(authStore, ring)
 	base = httpapi.WithSessions(base, integrationService, integrationStore, sessionService, ring)
+	base = httpapi.WithEmailOTP(base, integrationService, integrationStore, emailOTP, emailOTPSession)
 	base = httpapi.WithSessionManagement(base, integrationService, integrationService, sessionService)
 	return httpapi.WithMetrics(base, recorder), nil
 }

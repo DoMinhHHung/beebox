@@ -32,6 +32,7 @@ type exitDelivery struct {
 	mu               sync.Mutex
 	verificationCode string
 	resetCode        string
+	signInCode       string
 }
 
 func (d *exitDelivery) DeliverVerificationCode(_ context.Context, _ string, code string, _ time.Time) error {
@@ -48,6 +49,13 @@ func (d *exitDelivery) DeliverPasswordResetCode(_ context.Context, _ string, cod
 	return nil
 }
 
+func (d *exitDelivery) DeliverSignInCode(_ context.Context, _ string, code string, _ time.Time) error {
+	d.mu.Lock()
+	d.signInCode = code
+	d.mu.Unlock()
+	return nil
+}
+
 func (d *exitDelivery) verification() string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -58,6 +66,12 @@ func (d *exitDelivery) reset() string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.resetCode
+}
+
+func (d *exitDelivery) signIn() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.signInCode
 }
 
 func TestPhase1HTTPLifecycleOverPostgreSQL(t *testing.T) {
@@ -98,6 +112,7 @@ func TestPhase1HTTPLifecycleOverPostgreSQL(t *testing.T) {
 	verification := authentication.NewPublicVerificationService(identitypostgres.New(pool), authStore, verificationCore)
 	signup := authentication.NewPublicSignupService(authStore, delivery)
 	reset := authentication.NewPasswordResetService(authStore, delivery)
+	emailOTP := authentication.NewEmailOTPService(authStore, delivery)
 	base := New(http.NotFoundHandler(), integrations, integrationStore, signup, verification)
 	base = WithPasswordReset(base, integrations, integrationStore, reset)
 
@@ -111,7 +126,9 @@ func TestPhase1HTTPLifecycleOverPostgreSQL(t *testing.T) {
 	}
 	sessionStore := sessionpostgres.New(pool)
 	sessions := session.NewService(sessionStore, sessionStore, ring)
+	emailOTPSessions := session.NewEmailOTPService(authStore, ring)
 	base = WithSessions(base, integrations, integrationStore, sessions, ring)
+	base = WithEmailOTP(base, integrations, integrationStore, emailOTP, emailOTPSessions)
 	base = WithSessionManagement(base, integrations, integrations, sessions)
 
 	const email = "alice@example.test"
@@ -124,6 +141,35 @@ func TestPhase1HTTPLifecycleOverPostgreSQL(t *testing.T) {
 		t.Fatal("signup did not deliver verification code")
 	}
 	exitRequest(t, base, publishable, http.MethodPost, "/v1/email-verifications/confirm", `{"email":"`+email+`","code":"`+code+`"}`, nil, http.StatusOK, nil)
+
+	// P2.1 uses a separate authentication-purpose challenge but produces the
+	// ordinary BeeBox session/access/refresh transport.
+	exitRequest(t, base, publishable, http.MethodPost, "/v1/sign-ins/email-otp", `{"email":"`+email+`"}`, nil, http.StatusAccepted, nil)
+	otpCode := delivery.signIn()
+	if otpCode == "" {
+		t.Fatal("email OTP request did not deliver a sign-in code")
+	}
+	var otpSignedIn struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		SessionID    string `json:"session_id"`
+	}
+	exitRequest(t, base, publishable, http.MethodPost, "/v1/sign-ins/email-otp/confirm", `{"email":"`+email+`","code":"`+otpCode+`"}`, nil, http.StatusOK, &otpSignedIn)
+	if otpSignedIn.AccessToken == "" || otpSignedIn.RefreshToken == "" || otpSignedIn.SessionID == "" {
+		t.Fatalf("email OTP returned incomplete session material: %#v", otpSignedIn)
+	}
+	exitRequest(t, base, publishable, http.MethodGet, "/v1/sessions/current", "", map[string]string{"Authorization": "Bearer " + otpSignedIn.AccessToken}, http.StatusOK, nil)
+	var otpRotated struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		SessionID    string `json:"session_id"`
+	}
+	exitRequest(t, base, publishable, http.MethodPost, "/v1/sessions/refresh", `{"refresh_token":"`+otpSignedIn.RefreshToken+`"}`, nil, http.StatusOK, &otpRotated)
+	if otpRotated.RefreshToken == "" || otpRotated.RefreshToken == otpSignedIn.RefreshToken || otpRotated.SessionID != otpSignedIn.SessionID {
+		t.Fatalf("email OTP session refresh did not rotate: %#v", otpRotated)
+	}
+	exitRequest(t, base, publishable, http.MethodPost, "/v1/sessions/sign-out", "", map[string]string{"Authorization": "Bearer " + otpRotated.AccessToken}, http.StatusOK, nil)
+	exitRequest(t, base, publishable, http.MethodPost, "/v1/sign-ins/email-otp/confirm", `{"email":"`+email+`","code":"`+otpCode+`"}`, nil, http.StatusUnauthorized, nil)
 
 	var signedIn struct {
 		AccessToken  string `json:"access_token"`
@@ -166,12 +212,7 @@ func TestPhase1HTTPLifecycleOverPostgreSQL(t *testing.T) {
 
 func exitRequest(t *testing.T, handler http.Handler, publishable, method, path, body string, headers map[string]string, want int, output any) {
 	t.Helper()
-	var reader *strings.Reader
-	if body == "" {
-		reader = strings.NewReader("")
-	} else {
-		reader = strings.NewReader(body)
-	}
+	reader := strings.NewReader(body)
 	req := httptest.NewRequest(method, path, reader)
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")

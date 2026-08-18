@@ -78,6 +78,14 @@ func (s *Store) AllowPasswordResetConfirm(ctx context.Context, appID application
 	return s.allowPublicPair(ctx, appID, "password_reset_confirm_global", [32]byte{14}, 100, time.Minute, "password_reset_confirm_identifier", fingerprint, 5, 15*time.Minute, authentication.ErrPasswordResetPersistence)
 }
 
+func (s *Store) AllowEmailOTPIssue(ctx context.Context, appID applicationinstance.InternalID, fingerprint [32]byte) error {
+	return s.allowPublicPair(ctx, appID, "email_otp_issue_global", [32]byte{15}, 100, time.Minute, "email_otp_issue_identifier", fingerprint, 5, 15*time.Minute, authentication.ErrEmailOTPPersistence)
+}
+
+func (s *Store) AllowEmailOTPConfirm(ctx context.Context, appID applicationinstance.InternalID, fingerprint [32]byte) error {
+	return s.allowPublicPair(ctx, appID, "email_otp_confirm_global", [32]byte{16}, 100, time.Minute, "email_otp_confirm_identifier", fingerprint, 5, 15*time.Minute, authentication.ErrEmailOTPPersistence)
+}
+
 func (s *Store) allowPublicPair(ctx context.Context, appID applicationinstance.InternalID, globalOp string, globalHash [32]byte, globalLimit int, globalWindow time.Duration, identifierOp string, identifierHash [32]byte, identifierLimit int, identifierWindow time.Duration, persistenceErr error) error {
 	if s == nil || s.pool == nil || !appID.Valid() {
 		return persistenceErr

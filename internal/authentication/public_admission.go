@@ -26,3 +26,11 @@ type PasswordResetAdmission interface {
 	AllowPasswordResetIssue(context.Context, applicationinstance.InternalID, [32]byte) error
 	AllowPasswordResetConfirm(context.Context, applicationinstance.InternalID, [32]byte) error
 }
+
+// EmailOTPAdmission protects passwordless email-OTP issue and confirmation in
+// purpose-specific namespaces. Implementations must admit the fixed global
+// subject before touching attacker-controlled identifier cardinality.
+type EmailOTPAdmission interface {
+	AllowEmailOTPIssue(context.Context, applicationinstance.InternalID, [32]byte) error
+	AllowEmailOTPConfirm(context.Context, applicationinstance.InternalID, [32]byte) error
+}

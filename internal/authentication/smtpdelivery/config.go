@@ -11,6 +11,7 @@ type LookupEnv func(string) (string, bool)
 type Sender interface {
 	DeliverVerificationCode(context.Context, string, string, time.Time) error
 	DeliverPasswordResetCode(context.Context, string, string, time.Time) error
+	DeliverSignInCode(context.Context, string, string, time.Time) error
 }
 
 type unavailable struct{}
@@ -20,6 +21,10 @@ func (unavailable) DeliverVerificationCode(context.Context, string, string, time
 }
 
 func (unavailable) DeliverPasswordResetCode(context.Context, string, string, time.Time) error {
+	return ErrDelivery
+}
+
+func (unavailable) DeliverSignInCode(context.Context, string, string, time.Time) error {
 	return ErrDelivery
 }
 

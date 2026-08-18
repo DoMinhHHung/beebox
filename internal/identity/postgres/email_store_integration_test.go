@@ -255,6 +255,10 @@ func TestEmailIdentifierDatabaseFailureUsesStableSafeError(t *testing.T) {
 		db.Close()
 		t.Fatalf("drop password_reset_challenges error = %v", err)
 	}
+	if _, err := db.ExecContext(ctx, "DROP TABLE email_otp_signin_challenges"); err != nil {
+		db.Close()
+		t.Fatalf("drop email_otp_signin_challenges error = %v", err)
+	}
 	if _, err := db.ExecContext(ctx, "DROP TABLE email_verification_challenges"); err != nil {
 		db.Close()
 		t.Fatalf("drop email_verification_challenges error = %v", err)
