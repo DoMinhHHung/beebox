@@ -205,19 +205,22 @@ func openPool(t *testing.T, databaseURL string) *database.Pool {
 		t.Fatalf("database.Open() error = %v", err)
 	}
 	t.Cleanup(pool.Close)
+	if err := pool.Ping(ctx); err != nil {
+		t.Fatalf("pool.Ping() error = %v", err)
+	}
 	return pool
 }
 
-func assertMigrationState(t *testing.T, ctx context.Context, pool *database.Pool, wantCount int) {
+func assertMigrationState(t *testing.T, ctx context.Context, pool *database.Pool, wantApplied int) {
 	t.Helper()
 	db := pool.OpenSQLDB()
 	defer db.Close()
-	var appliedCount int
-	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM goose_db_version WHERE is_applied`).Scan(&appliedCount); err != nil {
-		t.Fatalf("count applied migrations error = %v", err)
+	var applied int
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM goose_db_version WHERE version_id > 0 AND is_applied").Scan(&applied); err != nil {
+		t.Fatalf("query applied migrations error = %v", err)
 	}
-	if appliedCount != wantCount {
-		t.Fatalf("applied migration rows = %d, want %d", appliedCount, wantCount)
+	if applied != wantApplied {
+		t.Fatalf("applied migration rows = %d, want %d", applied, wantApplied)
 	}
 }
 
@@ -225,28 +228,42 @@ func assertSchemaTables(t *testing.T, ctx context.Context, pool *database.Pool) 
 	t.Helper()
 	db := pool.OpenSQLDB()
 	defer db.Close()
-	rows, err := db.QueryContext(ctx, `
-		SELECT table_name
-		FROM information_schema.tables
-		WHERE table_schema = current_schema()
-		  AND table_name IN ('runtime_metadata', 'application_instances', 'users', 'email_identifiers', 'password_credentials', 'audit_events', 'email_verification_challenges')
-		ORDER BY table_name`)
+	rows, err := db.QueryContext(ctx, `SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() ORDER BY table_name`)
 	if err != nil {
 		t.Fatalf("query schema tables error = %v", err)
 	}
 	defer rows.Close()
 	var tables []string
 	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			t.Fatal(err)
+		var table string
+		if err := rows.Scan(&table); err != nil {
+			t.Fatalf("scan schema table error = %v", err)
 		}
-		tables = append(tables, name)
+		tables = append(tables, table)
 	}
 	if err := rows.Err(); err != nil {
-		t.Fatal(err)
+		t.Fatalf("iterate schema tables error = %v", err)
 	}
-	want := []string{"application_instances", "audit_events", "email_identifiers", "email_verification_challenges", "password_credentials", "runtime_metadata", "users"}
+	want := []string{
+		"application_allowed_origins",
+		"application_credentials",
+		"application_instances",
+		"audit_events",
+		"email_identifiers",
+		"email_otp_signin_challenges",
+		"email_verification_challenges",
+		"goose_db_version",
+		"password_credentials",
+		"password_reset_challenges",
+		"phone_identifiers",
+		"phone_otp_signin_challenges",
+		"phone_signup_challenges",
+		"public_auth_idempotency",
+		"public_auth_rate_limits",
+		"session_refresh_credentials",
+		"sessions",
+		"users",
+	}
 	if !reflect.DeepEqual(tables, want) {
 		t.Fatalf("schema tables = %v, want %v", tables, want)
 	}
