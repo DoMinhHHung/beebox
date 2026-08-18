@@ -35,17 +35,33 @@ Public conflict behavior must preserve anti-enumeration and must not reveal anot
 
 ### Explicit authenticated linking
 
+An explicit link is one security transaction across initiation, external proof and commit. The link target is fixed from trusted server-side state when the transaction begins and must not be re-selected from whichever BeeBox session happens to be present when the provider callback arrives.
+
+At initiation, the transaction must bind or securely reference at least:
+
+- the trusted `application_instance`;
+- the initiating BeeBox principal/user resolved from trusted authenticated state;
+- the initiating authenticated session, or an explicitly equivalent non-substitutable authenticated context;
+- operation purpose = account linking;
+- the external/provider proof attempt being started;
+- the applicable recent-reverification evidence/context required by ADR 0005.
+
 The proposed v1 linking flow is:
 
-1. resolve the target user from trusted authenticated session state;
-2. require recent reverification under ADR 0005;
-3. begin provider or credential proof;
-4. validate the proof inside the current application scope;
-5. verify the external subject/credential is not owned by another user in that application;
-6. atomically attach it to the current user;
-7. append required audit evidence in the same correctness boundary.
+1. resolve the target user and authenticated context from trusted server-side state;
+2. require recent reverification under ADR 0005 and bind the applicable evidence/context to the link transaction;
+3. create a link transaction bound to the application, initiating principal, authenticated context, link purpose and provider/credential proof attempt;
+4. perform the external provider or credential proof;
+5. on callback/commit, validate the provider proof and the complete bound link context before choosing any mutation target;
+6. verify the external subject/credential is not owned by another user in that application;
+7. atomically attach it to the already-bound initiating principal;
+8. append required audit evidence in the same correctness boundary.
 
-A client-supplied user ID is never linking authority. Unauthenticated account-link mutation is forbidden. An unauthenticated social sign-in may authenticate an already-linked provider subject but may not attach that subject to an unrelated existing account.
+The callback MUST NOT determine the account-link target by consulting whichever BeeBox user is currently authenticated in the browser. A later representation may use server-stored state, integrity-protected state, or another reviewed mechanism; this ADR does not require a particular schema or OAuth state encoding.
+
+Before commit, BeeBox must fail closed if the bound application, initiating principal, authenticated session/equivalent context, operation purpose, provider attempt or applicable reverification authority is missing, expired, revoked, substituted, cross-application or otherwise no longer valid. Such failure creates no link mutation, transfers no provider-subject ownership and requires a fresh/restarted linking flow when appropriate. A replacement browser session is not authority to continue a transaction initiated by another principal/context.
+
+A client-supplied user ID is never linking authority. Provider email is never linking authority. Unauthenticated account-link mutation is forbidden. An unauthenticated social sign-in may authenticate an already-linked provider subject but may not attach that subject to an unrelated existing account.
 
 ### Deterministic conflicts and concurrency
 
@@ -111,7 +127,7 @@ WebAuthn protocol details remain deferred to the passkey implementation slice.
 
 Future Phase 2 security mutations must preserve current audit semantics: explicit application scope, actor/subject, resource category/reference, outcome, correlation/operation identifier, occurrence time and minimized safe source context.
 
-Security-relevant linking/unlinking attempts, primary-identifier changes, passkey registration/revocation and equivalent credential ownership changes require audit evidence where the concrete threat model requires attempted/denied/succeeded facts.
+Security-relevant linking/unlinking attempts, including state/context mismatch denial, primary-identifier changes, passkey registration/revocation and equivalent credential ownership changes require audit evidence where the concrete threat model requires attempted/denied/succeeded facts.
 
 Audit/log/metric data must never contain provider tokens, OTPs, recovery codes, password material, passkey private material, arbitrary provider errors, or unnecessary raw email/phone/provider-subject PII.
 
@@ -123,7 +139,8 @@ No schema is added by this ADR. Later storage must enforce at least:
 - provider-subject uniqueness within the application/provider namespace;
 - deterministic verified-identifier uniqueness according to the ratified identifier policy;
 - passkey credential ownership uniqueness in the applicable security scope;
-- concurrency-safe attach/detach transitions.
+- concurrency-safe attach/detach transitions;
+- non-substitutable link transaction/context semantics sufficient to preserve the initiation bindings above.
 
 ## Human decision required
 
@@ -132,12 +149,13 @@ Decision 1 — ratify or reject this identity-linking baseline:
 - no email-based automatic account linking;
 - provider subject is the stable social identity authority;
 - linking requires an authenticated current user plus recent reverification;
+- the explicit-link transaction remains bound to its initiating principal/session-equivalent context across the provider round-trip;
 - conflicts never merge principals implicitly.
 
 ## Consequences
 
-Later social, phone, passkey and account-linking PRs cannot infer ownership from mutable claims or client-selected user IDs. Application isolation remains explicit. This conservative model may require an extra user proof in ambiguous same-email cases, trading convenience for takeover resistance.
+Later social, phone, passkey and account-linking PRs cannot infer ownership from mutable claims, client-selected user IDs or a callback-time replacement browser session. Application isolation remains explicit. This conservative model may require an extra user proof or restarted flow when authenticated context changes, trading convenience for takeover resistance.
 
 ## Non-goals
 
-This ADR adds no provider adapter, OAuth/OIDC endpoint, account-link code, phone persistence, SMS contract, passkey/WebAuthn runtime, migration, OpenAPI operation, SDK method, account merge, organization behavior or provider-token storage.
+This ADR adds no provider adapter, OAuth/OIDC endpoint, account-link code, phone persistence, SMS contract, passkey/WebAuthn runtime, migration, OpenAPI operation, SDK method, account merge, organization behavior, provider-token storage or concrete link-state persistence schema.
