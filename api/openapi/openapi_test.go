@@ -61,6 +61,7 @@ func TestPublicOpenAPIContract(t *testing.T) {
 			t.Fatalf("v1 spec missing required contract anchor %q", required)
 		}
 	}
+	normalizedText := strings.Join(strings.Fields(strings.ToLower(text)), " ")
 	for _, requiredSemantics := range []string{
 		"response is intentionally generic",
 		"one-time and replay-safe",
@@ -77,7 +78,7 @@ func TestPublicOpenAPIContract(t *testing.T) {
 		"does not implement mfa",
 		"account linking",
 	} {
-		if !strings.Contains(strings.ToLower(text), strings.ToLower(requiredSemantics)) {
+		if !strings.Contains(normalizedText, strings.ToLower(requiredSemantics)) {
 			t.Fatalf("v1 spec missing authentication semantic %q", requiredSemantics)
 		}
 	}
