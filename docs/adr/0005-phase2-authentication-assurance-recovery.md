@@ -1,12 +1,14 @@
 # ADR 0005 — Phase 2 authentication assurance, reverification and recovery
 
-Status: **proposed**
+Status: **accepted**
 
 Date: 2026-08-18
 
 Decision owner: Human maintainer
 
-Authority: This ADR is not accepted architecture until the Human maintainer explicitly ratifies it. It defines no runtime API or persistence by itself.
+Acceptance record: Human maintainer explicitly ratified this ADR on 2026-08-18 against PR #19 technical head `0a42a1883c098eac96338ea5bf74fa5214d2db8f`. The same Draft PR was authorized to record accepted status. This ratification did not authorize merge, marking the PR Ready, deployment, or P2.1 implementation.
+
+Authority: This is an accepted architecture/security decision. It defines no runtime API or persistence by itself.
 
 ## Context
 
@@ -14,7 +16,7 @@ Phase 2 introduces additional authentication methods, MFA, recovery and sensitiv
 
 This ADR defines the minimum assurance model needed by concrete Phase 2 work without introducing a generic policy engine.
 
-## Proposed decision
+## Decision
 
 ### Three distinct states
 
@@ -62,11 +64,11 @@ Trusted server-side representation may include authentication time, last success
 
 The proof used for reverification must itself satisfy the operation's security requirements; a weaker recovery or alternate method cannot be used merely to downgrade protection.
 
-### Proposed freshness default
+### Accepted freshness default
 
-Pending Human approval, the proposed simple v1 freshness window is **10 minutes from the most recent successful server-recorded reverification** for the sensitive mutations listed above.
+The v1 freshness window is **10 minutes from the most recent successful server-recorded reverification** for the sensitive mutations listed above.
 
-The concrete implementation must fail closed when the freshness evidence is absent, expired, belongs to another application/user/session, or does not satisfy the required method/assurance semantics. This duration is a proposed default, not accepted architecture until Human ratification.
+The concrete implementation must fail closed when the freshness evidence is absent, expired, belongs to another application/user/session, or does not satisfy the required method/assurance semantics.
 
 ### Enrollment, change and reset
 
@@ -102,14 +104,14 @@ Audit facts follow BeeBox conventions: explicit application scope, actor/subject
 
 This ADR adds no runtime metrics. Future metrics use fixed bounded operation/outcome vocabularies only. Metric labels must not include email, phone, user ID, application ID, provider subject, credential ID, session ID, IP address, token/code or raw error.
 
-## Human decision required
+## Accepted decision summary
 
-Decision 2 — ratify or change the proposed reverification/assurance baseline:
+The Human maintainer accepted that:
 
 - valid primary proof is distinct from full required assurance;
 - MFA requirements apply consistently across alternate primary methods;
 - sensitive mutations require fresh server-trusted proof;
-- proposed v1 freshness default: 10 minutes.
+- the v1 freshness default is 10 minutes.
 
 ## Consequences
 
