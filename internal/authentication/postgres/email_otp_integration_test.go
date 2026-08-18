@@ -170,7 +170,10 @@ func TestEmailOTPResendRotatesGenerationAndInvalidatesOldCode(t *testing.T) {
 	}
 	oldCode := delivery.snapshot()[0]
 	db := pool.OpenSQLDB()
-	if _, err := db.ExecContext(ctx, `UPDATE email_otp_signin_challenges SET last_issued_at=CURRENT_TIMESTAMP-INTERVAL '61 seconds' WHERE application_instance_id=$1`, int64(app.InternalID)); err != nil {
+	if _, err := db.ExecContext(ctx, `UPDATE email_otp_signin_challenges
+		SET issue_window_started_at=LEAST(issue_window_started_at,CURRENT_TIMESTAMP-INTERVAL '61 seconds'),
+		    last_issued_at=CURRENT_TIMESTAMP-INTERVAL '61 seconds'
+		WHERE application_instance_id=$1`, int64(app.InternalID)); err != nil {
 		db.Close()
 		t.Fatal(err)
 	}
