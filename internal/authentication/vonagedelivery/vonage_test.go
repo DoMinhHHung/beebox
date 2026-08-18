@@ -24,7 +24,7 @@ func TestFromLookupValidatesConfigTimeoutAndProductionHTTPS(t *testing.T) {
 	lookup := func(key string) (string, bool) { value, ok := values[key]; return value, ok }
 	delivery, err := FromLookup(lookup)
 	if err != nil || delivery == nil || delivery.client.Timeout != 3*time.Second {
-		t.Fatalf("FromLookup() delivery=%v timeout=%v err=%v", delivery, delivery.client.Timeout, err)
+		t.Fatalf("FromLookup() delivery=%v err=%v", delivery, err)
 	}
 	delete(values, "BEEBOX_VONAGE_FROM")
 	if _, err := FromLookup(lookup); !errors.Is(err, ErrConfig) || strings.Contains(err.Error(), secret) {
@@ -38,11 +38,23 @@ func TestFromLookupValidatesConfigTimeoutAndProductionHTTPS(t *testing.T) {
 func TestDeliveryMapsProviderRequestAndPurposesWithoutRetry(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		send func(*Delivery) error
 		want string
+		send func(*Delivery) error
 	}{
-		{name: "signup", want: "phone verification code", send: func(d *Delivery) error { return d.DeliverPhoneSignupCode(context.Background(), "+84901234567", "123456", time.Now()) }},
-		{name: "signin", want: "sign-in code", send: func(d *Delivery) error { return d.DeliverPhoneSignInCode(context.Background(), "+84901234567", "654321", time.Now()) }},
+		{
+			name: "signup",
+			want: "phone verification code",
+			send: func(d *Delivery) error {
+				return d.DeliverPhoneSignupCode(context.Background(), "+84901234567", "123456", time.Now())
+			},
+		},
+		{
+			name: "signin",
+			want: "sign-in code",
+			send: func(d *Delivery) error {
+				return d.DeliverPhoneSignInCode(context.Background(), "+84901234567", "654321", time.Now())
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls atomic.Int32
@@ -59,11 +71,8 @@ func TestDeliveryMapsProviderRequestAndPurposesWithoutRetry(t *testing.T) {
 				if err := r.ParseForm(); err != nil {
 					t.Fatal(err)
 				}
-				if r.Form.Get("to") != "84901234567" || r.Form.Get("from") != "15551234567" {
-					t.Fatalf("provider addressing = %#v", r.Form)
-				}
-				if !strings.Contains(r.Form.Get("text"), tc.want) {
-					t.Fatalf("message body = %q", r.Form.Get("text"))
+				if r.Form.Get("to") != "84901234567" || r.Form.Get("from") != "15551234567" || !strings.Contains(r.Form.Get("text"), tc.want) {
+					t.Fatalf("provider request = %#v", r.Form)
 				}
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write([]byte(`{"message-count":"1","messages":[{"status":"0","message-id":"ignored"}]}`))
@@ -83,13 +92,13 @@ func TestDeliveryMapsProviderRequestAndPurposesWithoutRetry(t *testing.T) {
 	}
 }
 
-func TestDeliveryClassifiesProviderFailuresSafelyAndBoundsResponse(t *testing.T) {
+func TestDeliveryClassifiesFailuresSafelyAndBoundsResponse(t *testing.T) {
 	cases := []struct {
 		name   string
 		status int
 		body   string
 	}{
-		{name: "provider-status", status: http.StatusOK, body: `{"messages":[{"status":"4","error-text":"credential detail"}]}`},
+		{name: "provider-status", status: http.StatusOK, body: `{"messages":[{"status":"4","error-text":"provider detail"}]}`},
 		{name: "400", status: http.StatusBadRequest, body: "provider body"},
 		{name: "429", status: http.StatusTooManyRequests, body: "provider body"},
 		{name: "500-large", status: http.StatusInternalServerError, body: strings.Repeat("provider-body", 20_000)},
@@ -97,7 +106,7 @@ func TestDeliveryClassifiesProviderFailuresSafelyAndBoundsResponse(t *testing.T)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				calls.Add(1)
 				w.WriteHeader(tc.status)
 				_, _ = w.Write([]byte(tc.body))
@@ -121,7 +130,7 @@ func TestDeliveryClassifiesProviderFailuresSafelyAndBoundsResponse(t *testing.T)
 
 func TestDeliveryHonorsCancellationWithoutSecondRequest(t *testing.T) {
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		<-r.Context().Done()
 	}))

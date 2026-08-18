@@ -38,11 +38,23 @@ func TestFromLookupValidatesConfigTimeoutAndProductionHTTPS(t *testing.T) {
 func TestDeliveryMapsProviderRequestAndPurposesWithoutRetry(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		send func(*Delivery) error
 		want string
+		send func(*Delivery) error
 	}{
-		{name: "signup", want: "phone verification code", send: func(d *Delivery) error { return d.DeliverPhoneSignupCode(context.Background(), "+84901234567", "123456", time.Now()) }},
-		{name: "signin", want: "sign-in code", send: func(d *Delivery) error { return d.DeliverPhoneSignInCode(context.Background(), "+84901234567", "654321", time.Now()) }},
+		{
+			name: "signup",
+			want: "phone verification code",
+			send: func(d *Delivery) error {
+				return d.DeliverPhoneSignupCode(context.Background(), "+84901234567", "123456", time.Now())
+			},
+		},
+		{
+			name: "signin",
+			want: "sign-in code",
+			send: func(d *Delivery) error {
+				return d.DeliverPhoneSignInCode(context.Background(), "+84901234567", "654321", time.Now())
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls atomic.Int32
@@ -84,11 +96,11 @@ func TestDeliveryMapsProviderRequestAndPurposesWithoutRetry(t *testing.T) {
 	}
 }
 
-func TestDeliveryClassifiesProviderFailuresSafelyAndBoundsResponse(t *testing.T) {
+func TestDeliveryClassifiesFailuresSafelyAndBoundsResponse(t *testing.T) {
 	for _, status := range []int{http.StatusBadRequest, http.StatusTooManyRequests, http.StatusInternalServerError} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			var calls atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				calls.Add(1)
 				w.WriteHeader(status)
 				_, _ = w.Write([]byte(strings.Repeat("provider-body", 20_000)))
@@ -112,7 +124,7 @@ func TestDeliveryClassifiesProviderFailuresSafelyAndBoundsResponse(t *testing.T)
 
 func TestDeliveryHonorsCancellationWithoutSecondRequest(t *testing.T) {
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		<-r.Context().Done()
 	}))
