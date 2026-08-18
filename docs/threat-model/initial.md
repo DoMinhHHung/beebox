@@ -67,10 +67,11 @@ The following are **proposed controls**, not claims about current runtime.
 | --- | --- |
 | Provider-email account takeover | Provider email is a claim only; email equality never auto-links. Existing-account attachment requires authenticated explicit linking and recent reverification. |
 | Provider-subject reassignment | `(application_instance, provider, provider_subject)` is stable ownership identity; provider email/profile changes never transfer ownership. |
-| Malicious/conflicting explicit linking | Target user comes from authenticated session state, never client user ID; owned-subject conflicts deny without merge or unnecessary disclosure. |
+| Malicious/conflicting explicit linking | Target user comes from authenticated server state, never client user ID; owned-subject conflicts deny without merge or unnecessary disclosure. |
+| Account-link CSRF/session-switch substitution | Explicit-link transaction is bound at initiation to trusted application, initiating principal, initiating session/equivalent authenticated context, link purpose, provider attempt and applicable reverification evidence. Callback must not re-resolve the target from the browser's current session. Any principal/session/app/context substitution denies with no link mutation and requires a fresh flow. |
 | Unauthenticated linking | Forbidden. Unauthenticated social signin may use only an already-linked subject. |
 | Concurrent link ownership race | PostgreSQL uniqueness in application/provider scope must allow one owner; application pre-check alone is insufficient. |
-| Cross-application external identity confusion | Every provider/phone/passkey lookup and mutation includes trusted `application_instance`; same external identity may exist independently in another app. |
+| Cross-application external identity confusion | Every provider/phone/passkey lookup and mutation includes trusted `application_instance`; same external identity may exist independently in another app. Cross-application link-state substitution fails closed. |
 | Unlinking last usable method | Removal requires current authenticated owner, recent reverification and a remaining actually usable auth/recovery path consistent with MFA requirements. |
 | Primary identifier takeover | New primary identifier belongs to the same app/user, completes identifier-specific verification, passes uniqueness/conflict policy and requires recent proof. |
 | Phone/SMS claim abuse | Phone is application-scoped, canonicalized by a reviewed representation, explicit verified/unverified state; equality/unverified claims never link accounts. Vendor SMS models do not become public authority. |
@@ -97,7 +98,7 @@ The following are **proposed controls**, not claims about current runtime.
 | Indefinite IP/user-agent retention | New persistence is deferred until a concrete feature defines bounded retention, deletion and user visibility. |
 | PII leakage through observability | IP/user-agent/user/app/session/device identifiers are not metric labels; audit/log use is minimized and purpose-bound. |
 
-## 11. Proposed hosted-auth redirect threats
+## 11. Proposed hosted-auth redirect and state threats
 
 | Threat | Proposed control / required later evidence |
 | --- | --- |
@@ -106,7 +107,8 @@ The following are **proposed controls**, not claims about current runtime.
 | Browser-supplied callback as authority | Browser redirect/callback values are untrusted input only. |
 | Malformed/userinfo/fragment redirect abuse | Reject malformed destinations, userinfo and fragments where applicable; production uses HTTPS with explicit localhost development exception only. |
 | Error-path open redirect | Error redirects obey the same allowlist/application boundary as success redirects. |
-| State replay/substitution | State binds attempt/application/redirect/purpose and is unpredictable or integrity-protected with bounded lifetime/replay in later implementation. |
+| Generic state replay/substitution | State binds attempt/application/redirect/purpose and is unpredictable or integrity-protected with bounded lifetime/replay in later implementation. |
+| Explicit-link state substitution | Link state/transaction additionally binds initiating principal, initiating session/equivalent non-substitutable authenticated context and required reverification authority. Revoked, switched, substituted or cross-application context cannot be replaced at callback time. |
 
 ## 12. Required scenario outcomes for P2.0
 
@@ -118,8 +120,11 @@ These outcomes are deterministic at the contract level. They remain proposed unt
 - provider stops reporting verified email -> existing provider-subject ownership remains; no orphan/reassignment;
 - provider changes email -> ownership remains with provider subject; BeeBox primary email does not silently change;
 - provider subject already owned by another user -> deny attachment without leaking that user's unnecessary details;
-- explicit link while authenticated/recently reverified -> may proceed if proof valid and subject unowned in the application;
+- explicit link while authenticated/recently reverified -> may proceed only through the initiation-bound application/principal/session-equivalent/purpose/provider-attempt/reverification transaction and only if the external subject is unowned in that application;
 - link while unauthenticated -> forbidden;
+- **link initiated as user A, callback redeemed while browser is authenticated as user B or presents a non-equivalent session/context -> DENY / FAIL CLOSED; do not re-resolve the target from B, do not link the provider credential to B, do not merge principals, and require a fresh link flow under the correct authenticated/reverified principal;**
+- **link initiated in application A, callback/state substituted into application B or another application context -> DENY / FAIL CLOSED with no provider-ownership transfer and require a fresh correctly scoped flow;**
+- initiating session/equivalent context revoked or no longer satisfies the link requirements before callback commit -> fail closed; a replacement browser session cannot continue the original transaction;
 - unlink last usable authentication method -> reject;
 - cross-application provider identity -> independent scope; cannot select/mutate another application's user;
 - concurrent link attempt -> database-enforced single owner; losing claim fails deterministically;
@@ -152,9 +157,9 @@ Accepted ADRs 0001–0003 and existing code/tests describe ratified Phase 1 beha
 ## 15. Evidence map
 
 - `docs/adr/0001-application-instance-root.md` through `0003-phase1-public-auth-contract.md` — accepted Phase 1 trust decisions.
-- `docs/adr/0004-phase2-identity-linking-external-trust.md` — proposed external identity/account-link ownership.
+- `docs/adr/0004-phase2-identity-linking-external-trust.md` — proposed external identity/account-link ownership and initiation-bound explicit-link transaction.
 - `docs/adr/0005-phase2-authentication-assurance-recovery.md` — proposed assurance/reverification/recovery semantics.
-- `docs/adr/0006-phase2-device-privacy-hosted-auth.md` — proposed privacy/redirect trust boundary.
+- `docs/adr/0006-phase2-device-privacy-hosted-auth.md` — proposed privacy/redirect trust boundary and link-specific state binding.
 - `docs/phase1-exit.md`, `api/openapi/v1.yaml`, `sdk/go`, integration tests and `.github/workflows/ci.yml` — existing Phase 1 implementation evidence.
 
 No Phase 2 runtime implementation evidence exists in this P2.0 documentation checkpoint.
