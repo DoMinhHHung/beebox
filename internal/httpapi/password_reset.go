@@ -125,6 +125,9 @@ func (h *passwordResetHTTP) handlePasswordResetConfirm(w http.ResponseWriter, r 
 	switch {
 	case errors.Is(err, identity.ErrInvalidEmail), errors.Is(err, authentication.ErrInvalidPasswordResetCode), errors.Is(err, authentication.ErrPublicPasswordPolicy):
 		writeError(w, http.StatusUnprocessableEntity, "invalid_input", "The supplied input is invalid.", requestID)
+	case errors.Is(err, authentication.ErrPasswordResetRateLimited):
+		w.Header().Set("Retry-After", "60")
+		writeError(w, http.StatusTooManyRequests, "rate_limited", "Too many requests were received.", requestID)
 	case errors.Is(err, authentication.ErrPasswordResetFailed), errors.Is(err, authentication.ErrPasswordResetStale):
 		writeError(w, http.StatusBadRequest, "password_reset_failed", "The password reset could not be completed.", requestID)
 	default:
