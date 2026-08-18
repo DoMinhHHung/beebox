@@ -106,25 +106,51 @@ func (s *Service) SignIn(ctx context.Context, appID applicationinstance.Internal
 
 func (s *Service) issueNewSession(ctx context.Context, appID applicationinstance.InternalID, record CredentialRecord, correlationID audit.CorrelationID) (TokenPair, error) {
 	sessionID, err := NewPublicID()
-	if err != nil { return TokenPair{}, ErrSessionUnavailable }
+	if err != nil {
+		return TokenPair{}, ErrSessionUnavailable
+	}
 	refresh, refreshHash, err := GenerateRefreshSecret()
-	if err != nil { return TokenPair{}, ErrSessionUnavailable }
+	if err != nil {
+		return TokenPair{}, ErrSessionUnavailable
+	}
 	now := s.now().UTC()
-	if err := s.store.CreateSession(ctx, appID, record.UserInternalID, record.CredentialGeneration, sessionID, refreshHash, now.Add(InactivityLifetime), now.Add(AbsoluteLifetime), correlationID); err != nil { return TokenPair{}, err }
+	if err := s.store.CreateSession(ctx, appID, record.UserInternalID, record.CredentialGeneration, sessionID, refreshHash, now.Add(InactivityLifetime), now.Add(AbsoluteLifetime), correlationID); err != nil {
+		return TokenPair{}, err
+	}
 	access, err := s.ring.Sign(record.UserPublicID, record.ApplicationPublicID, sessionID, now)
-	if err != nil { return TokenPair{}, ErrSessionUnavailable }
-	return TokenPair{AccessToken: access, RefreshToken: refresh, ExpiresIn: int64(AccessTokenLifetime / time.Second), SessionID: sessionID}, nil
+	if err != nil {
+		return TokenPair{}, ErrSessionUnavailable
+	}
+	return TokenPair{
+		AccessToken:  access,
+		RefreshToken: refresh,
+		ExpiresIn:    int64(AccessTokenLifetime / time.Second),
+		SessionID:    sessionID,
+	}, nil
 }
 
 func (s *Service) Refresh(ctx context.Context, appID applicationinstance.InternalID, refresh string, correlationID audit.CorrelationID) (TokenPair, error) {
-	if s == nil || s.store == nil || s.ring == nil || !appID.Valid() || refresh == "" || correlationID == (audit.CorrelationID{}) { return TokenPair{}, ErrRefreshInvalid }
+	if s == nil || s.store == nil || s.ring == nil || !appID.Valid() || refresh == "" || correlationID == (audit.CorrelationID{}) {
+		return TokenPair{}, ErrRefreshInvalid
+	}
 	oldHash := HashRefreshSecret(refresh)
 	newRefresh, newHash, err := GenerateRefreshSecret()
-	if err != nil { return TokenPair{}, ErrSessionUnavailable }
+	if err != nil {
+		return TokenPair{}, ErrSessionUnavailable
+	}
 	now := s.now().UTC()
 	record, sessionID, err := s.store.RotateRefresh(ctx, appID, oldHash, newHash, now, now.Add(InactivityLifetime), correlationID)
-	if err != nil { return TokenPair{}, err }
+	if err != nil {
+		return TokenPair{}, err
+	}
 	access, err := s.ring.Sign(record.UserPublicID, record.ApplicationPublicID, sessionID, now)
-	if err != nil { return TokenPair{}, ErrSessionUnavailable }
-	return TokenPair{AccessToken: access, RefreshToken: newRefresh, ExpiresIn: int64(AccessTokenLifetime / time.Second), SessionID: sessionID}, nil
+	if err != nil {
+		return TokenPair{}, ErrSessionUnavailable
+	}
+	return TokenPair{
+		AccessToken:  access,
+		RefreshToken: newRefresh,
+		ExpiresIn:    int64(AccessTokenLifetime / time.Second),
+		SessionID:    sessionID,
+	}, nil
 }
