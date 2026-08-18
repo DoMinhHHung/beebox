@@ -108,11 +108,13 @@ Phone OTP sign-in is purpose-separated from signup and requires an existing `pho
 
 ## 10. P2.2 SMS provider and partial-failure controls
 
-BeeBox has a narrow BeeBox-owned delivery port with separate signup/signin purposes. The current production adapter uses Twilio Programmable Messaging internally; provider models, message identifiers and response bodies are not public BeeBox contracts.
+BeeBox has one narrow BeeBox-owned `PhoneOTPDelivery` port with separate signup/signin purposes. P2.2 implements four interchangeable internal transport adapters: Twilio, Vonage, Plivo and Telnyx. Provider wire models, message identifiers, response bodies and provider-specific status models remain adapter-local and are not BeeBox public contracts or identity authority.
 
-Production provider routing is fixed to HTTPS and operator configuration supplies only mode/account/auth/sender plus a bounded request timeout. Partial Twilio configuration fails startup before listener creation with a stable credential-free configuration error. SMS mode defaults to disabled, so non-phone capabilities continue without provider configuration.
+`BEEBOX_SMS_MODE` is composition-owned and selects exactly one process-wide mode: `disabled`, `twilio`, `vonage`, `plivo` or `telnyx`. Unset mode is disabled. Unknown explicit mode and incomplete selected-provider configuration fail startup before listener creation with a stable credential-free configuration error. Provider adapters own only their own credentials/sender/timeout and fixed verified HTTPS production endpoint; normal operator configuration exposes no arbitrary provider base URL.
 
-Provider network I/O occurs only **after** challenge persistence commits; PostgreSQL transactions are never held open across SMS network I/O. A provider error cannot be rolled back across the network and remains generic publicly where account state could otherwise leak. BeeBox does not automatically retry an ambiguous provider POST; a later explicit user request, after admission/cooldown, is the retry boundary. Provider response reads and request duration are bounded.
+Provider network I/O occurs only **after** challenge persistence commits; PostgreSQL transactions are never held open across SMS network I/O. Every adapter performs exactly one context-aware bounded request, bounds response consumption, closes response bodies and maps provider-specific synchronous acceptance/failure to BeeBox-owned stable errors. Provider synchronous acceptance is not a claim of carrier or handset delivery.
+
+P2.2 has no runtime provider routing, failover, least-cost selection, per-country switching, health-based switching or cross-provider retry. An ambiguous timeout/failure may occur after the selected provider accepted the SMS, so BeeBox never automatically submits that OTP to another provider. A later explicit user request, after admission/cooldown, is the retry boundary.
 
 When SMS mode is disabled, phone issue endpoints return a uniform service-unavailable response before phone ownership/challenge state lookup. Confirmation does not itself require provider I/O, allowing a previously committed valid challenge to remain confirmable when session-signing capability is configured.
 
@@ -183,7 +185,7 @@ Each later slice must provide its own concrete code, persistence/API contracts, 
 | Signup/signin/reset/OTP enumeration | Public responses collapse account-sensitive distinctions; timing requires continued regression/operational observation. |
 | Email/SMS provider compromise | Delivered OTPs depend on mailbox/carrier/provider control; provider compromise may expose codes/destination metadata. |
 | SMS cost/message bombing | Global-first/per-phone admission and challenge cooldown/windows bound application behavior; upstream volumetric/provider controls remain operational concerns. |
-| Provider delivery ambiguity | Challenge can commit before provider response; no automatic retry avoids duplicate sends but may require explicit user resend later. |
+| Provider delivery ambiguity | Challenge can commit before provider response; no automatic retry/failover avoids duplicate sends but may require explicit user resend later. |
 | Refresh theft/replay | One-time rotation and replay-triggered revoke; ambiguous response loss can force reauthentication. |
 | Access-token theft | Short-lived bearer remains usable until expiry for offline consumers; no global denylist. |
 | XSS/CSRF | HttpOnly/SameSite/exact-Origin reduce cookie abuse; XSS can still act with page authority. |
@@ -196,15 +198,16 @@ Each later slice must provide its own concrete code, persistence/API contracts, 
 - `docs/contracts/conventions.md` — tenancy, error, time, audit, versioning and idempotency conventions.
 - `internal/identity/phone.go` — strict E.164 BeeBox phone value.
 - `internal/platform/migration/sql/00014_phone_sms.sql` — application-scoped phone identity, verified uniqueness, fingerprint-only signup challenge, purpose-separated signin challenge and limiter vocabulary.
-- `internal/authentication/phone.go` — signup/signin OTP generation, purpose separation, admission and delivery boundary.
+- `internal/authentication/phone.go` — signup/signin OTP generation, purpose separation, admission and provider-neutral delivery boundary.
 - `internal/authentication/postgres/phone_store.go` — PostgreSQL issue/load/finalize correctness and transactional signup/session/audit semantics.
 - `internal/session/phone.go` — primary-proof confirmation, KDF behavior and ordinary session/token integration.
-- `internal/authentication/twiliodelivery/` — fixed HTTPS Twilio adapter with bounded I/O, stable errors and no automatic retry.
+- `internal/authentication/twiliodelivery/`, `vonagedelivery/`, `plivodelivery/` and `telnyxdelivery/` — fixed-production-endpoint adapters with bounded I/O, stable errors and no automatic retry/fallback.
+- `cmd/beebox/sms.go` — static one-provider-per-process composition and fail-closed mode/config selection.
 - `internal/authentication/metricsdelivery/phone.go` — bounded SMS purpose/outcome observations.
 - `internal/httpapi/phone.go` — four additive v1 routes, trusted application/Origin boundary, anti-enumerating issue behavior and normal session transport.
 - `api/openapi/v1.yaml` and `sdk/go/phone.go` — BeeBox-owned public/SDK phone contracts with no provider/internal IDs.
 - `internal/authentication/postgres/phone_sms*_integration_test.go` — no-account-before-proof, privacy, lifecycle, attempts/expiry/replay/concurrency and transactional rollback evidence.
 - `internal/platform/migration/phone_sms_migration_integration_test.go` — fresh/upgrade/constraint/vocabulary evidence.
 - `internal/httpapi/phone*_test.go` — disabled/provider privacy, browser/non-browser transport and full PostgreSQL HTTP lifecycle evidence.
-- `internal/authentication/twiliodelivery/*_test.go` and `cmd/beebox/phone_sms_startup_test.go` — synthetic provider/startup evidence without real SMS credentials.
+- provider `*_delivery/*_test.go`, `cmd/beebox/sms_test.go` and `cmd/beebox/phone_sms_startup_test.go` — synthetic provider/composition/startup evidence without live SMS credentials or network sends.
 - `.github/workflows/ci.yml` — formatting, vet, vulnerability, contract, SDK, unit, PostgreSQL integration and race gates.

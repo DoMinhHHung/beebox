@@ -96,20 +96,52 @@ The request endpoint intentionally returns the same generic accepted behavior fo
 
 P2.2 accepts phone input only in strict international E.164 canonical form: `+` followed by 2–15 ASCII decimal digits, first digit non-zero. Surrounding ordinary whitespace may be trimmed. BeeBox does not infer a default region and does not accept national formatting, embedded spaces, dashes, parentheses, `00` prefixes, `tel:` URIs, extensions or alphabetic digits.
 
-SMS is optional and disabled by default:
+SMS is optional and disabled by default. Exactly one provider is selected by the operator for a BeeBox process with `BEEBOX_SMS_MODE=disabled|twilio|vonage|plivo|telnyx`; clients and public API requests never select the provider.
+
+Twilio:
 
 ```sh
 export BEEBOX_SMS_MODE='twilio'
 export BEEBOX_TWILIO_ACCOUNT_SID='<account-sid>'
 export BEEBOX_TWILIO_AUTH_TOKEN='<auth-token>'
 export BEEBOX_TWILIO_FROM='<configured-sender>'
-# Optional, bounded to at most 30 seconds:
-export BEEBOX_TWILIO_TIMEOUT='5s'
+export BEEBOX_TWILIO_TIMEOUT='5s' # optional; maximum 30s
 ```
 
-Twilio Programmable Messaging is the current internal production SMS adapter, not part of the public BeeBox API contract. BeeBox does not persist provider response models or expose provider identifiers/errors publicly. The adapter performs one bounded provider request per BeeBox send attempt and does not automatically retry an ambiguous provider POST; a later explicit user request, subject to cooldown/rate controls, is the retry boundary.
+Vonage:
 
-When `BEEBOX_SMS_MODE` is absent or `disabled`, BeeBox still starts normally and existing email/password/P2.1 functionality remains available. Phone **issue** endpoints return a uniform `service_unavailable` before phone ownership/challenge state is inspected. Confirmation itself does not require provider I/O, so an already committed valid challenge can still be confirmed when session signing capability remains configured.
+```sh
+export BEEBOX_SMS_MODE='vonage'
+export BEEBOX_VONAGE_API_KEY='<api-key>'
+export BEEBOX_VONAGE_API_SECRET='<api-secret>'
+export BEEBOX_VONAGE_FROM='<configured-sender>'
+export BEEBOX_VONAGE_TIMEOUT='5s' # optional; maximum 30s
+```
+
+Plivo:
+
+```sh
+export BEEBOX_SMS_MODE='plivo'
+export BEEBOX_PLIVO_AUTH_ID='<auth-id>'
+export BEEBOX_PLIVO_AUTH_TOKEN='<auth-token>'
+export BEEBOX_PLIVO_FROM='<configured-sender>'
+export BEEBOX_PLIVO_TIMEOUT='5s' # optional; maximum 30s
+```
+
+Telnyx:
+
+```sh
+export BEEBOX_SMS_MODE='telnyx'
+export BEEBOX_TELNYX_API_KEY='<api-key>'
+export BEEBOX_TELNYX_FROM='<configured-sender>'
+export BEEBOX_TELNYX_TIMEOUT='5s' # optional; maximum 30s
+```
+
+Twilio, Vonage, Plivo and Telnyx are interchangeable internal transport adapters behind BeeBox-owned `PhoneOTPDelivery`; vendor request/response models and provider identifiers are not public BeeBox contracts. BeeBox performs one bounded synchronous provider request per send attempt. Provider API acceptance means only that the selected provider synchronously accepted/processed the request according to its API contract; it does not prove carrier or handset delivery.
+
+P2.2 intentionally has no runtime provider routing, failover, load balancing or cross-provider retry. An ambiguous timeout/failure may occur after a provider accepted the SMS, so BeeBox never automatically sends the same OTP through another provider. A later explicit user request, subject to cooldown/rate controls, is the retry boundary.
+
+When `BEEBOX_SMS_MODE` is absent or `disabled`, BeeBox still starts normally and existing email/password/P2.1 functionality remains available. Phone **issue** endpoints return a uniform `service_unavailable` before phone ownership/challenge state is inspected. An unknown explicit mode or incomplete configuration for the selected provider fails startup before listener creation rather than silently falling back. Confirmation itself does not require provider I/O, so an already committed valid challenge can still be confirmed when session signing capability remains configured.
 
 Phone-first signup is deliberately no-account-before-proof:
 
@@ -224,10 +256,10 @@ Core runtime values include:
 - `BEEBOX_DATABASE_READINESS_TIMEOUT`
 - `BEEBOX_DATABASE_MIGRATION_TIMEOUT`
 - SMTP settings (`BEEBOX_SMTP_ADDR`, `BEEBOX_SMTP_FROM`, TLS/auth/timeout settings)
-- optional SMS settings (`BEEBOX_SMS_MODE=disabled|twilio`, Twilio Account SID/Auth Token/sender, bounded timeout)
+- optional SMS mode `BEEBOX_SMS_MODE=disabled|twilio|vonage|plivo|telnyx` plus exactly one selected provider's credentials/sender and optional bounded timeout;
 - signing settings (`BEEBOX_ISSUER`, `BEEBOX_SIGNING_KID`, `BEEBOX_SIGNING_PRIVATE_KEY`, `BEEBOX_SIGNING_PUBLIC_KEY`, optional retiring public keys).
 
-Production credential-bearing SMTP requires secure transport. `insecure_localhost` is explicit local/test behavior only. Signing private material and Twilio authentication material are configuration-only and are not stored in PostgreSQL or exposed through metrics/public errors.
+Production credential-bearing SMTP requires secure transport. `insecure_localhost` is explicit local/test behavior only. Signing private material and all SMS provider authentication material are configuration-only and are not stored in PostgreSQL or exposed through metrics/public errors.
 
 ## Migration policy
 
@@ -255,7 +287,7 @@ BEEBOX_TEST_DATABASE_URL='postgres://beebox:test-password@127.0.0.1:5432/beebox_
 go test -race ./...
 ```
 
-GitHub Actions runs the same gates on pull-request heads. P2.2 integration coverage adds no-account-before-proof phone signup, strict application/phone ownership, fingerprint/verifier-only challenge state, cooldown/rotation/attempt/expiry/replay behavior, concurrent one-time account/session creation, verified-only phone sign-in, ordinary session/refresh lifecycle and migration/provider-boundary evidence while preserving Phase 1 and P2.1 regression suites.
+GitHub Actions runs the same gates on pull-request heads. P2.2 integration coverage adds no-account-before-proof phone signup, strict application/phone ownership, fingerprint/verifier-only challenge state, cooldown/rotation/attempt/expiry/replay behavior, concurrent one-time account/session creation, verified-only phone sign-in, ordinary session/refresh lifecycle and migration/provider-boundary evidence while preserving Phase 1 and P2.1 regression suites. Provider adapter tests use synthetic credentials and local `httptest` servers only; CI never sends a live SMS.
 
 ## Health endpoints
 
