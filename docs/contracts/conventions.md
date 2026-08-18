@@ -1,6 +1,6 @@
 # BeeBox Contract and Tenancy Conventions
 
-> Status: Phase 0 repository baseline. These semantics constrain future product/data PRs but do not create a public API, schema, SDK, or tenant model by themselves.
+> Status: Phase 0 repository baseline plus references to proposed Phase 2 trust decisions. Proposed ADRs do not create runtime behavior, public API, schema or SDK contracts until Human-ratified.
 
 This document refines `Instruction.md` without overriding it. If a future public contract or trust-boundary decision conflicts with these semantics, the change requires the repository's normal ADR/maintainer process rather than a silent reinterpretation.
 
@@ -17,9 +17,7 @@ Required semantics:
 - identifiers must be unambiguous within the public resource namespace that defines them, and persisted resources must retain enough explicit application/instance scope to prevent an identifier collision or lookup from bypassing tenancy enforcement;
 - server-side repository/application code resolves a resource inside a trusted scope rather than accepting a client-provided identifier as a scope decision.
 
-### Wire encoding is not yet ratified
-
-No public product resource exists today. BeeBox therefore does **not** commit in Phase 0 to UUID, ULID, prefixed IDs, integer IDs, or another permanent public wire encoding. The first PR that exposes a public resource identifier must ratify the concrete encoding and compatibility rules before release. That decision must preserve the semantics above and must not smuggle tenant or authorization information into the identifier.
+Concrete public-ID encodings are ratified by the public contract that exposes them. Existing accepted contracts, including ADR 0003, remain authoritative for already introduced identifiers.
 
 ## 2. Errors
 
@@ -30,7 +28,7 @@ Public-facing errors separate machine behavior from safe human explanation.
 - Provider, database, SQL, topology, vendor SDK, stack, credential, token, or secret details must not cross a public error boundary.
 - Validation and failure classification must be deterministic for the same contract state; adapter-specific failures map to BeeBox-owned categories.
 - When a request/correlation identifier exists, safe error responses may expose that identifier for support correlation. Its format is not an authorization primitive and must not carry secrets or unnecessary PII.
-- Authentication, recovery, identifier lookup, invitation, and similar security-sensitive flows must preserve anti-enumeration properties. A more specific internal failure category must not force a public message/code that confirms whether a protected account or identifier exists.
+- Authentication, recovery, identifier lookup, invitation, linking and similar security-sensitive flows must preserve anti-enumeration properties. More specific internal state must not force a public response that confirms another account or identifier exists.
 
 A new public error code or compatibility-significant change must be reviewed as part of the versioned contract that exposes it.
 
@@ -39,112 +37,113 @@ A new public error code or compatibility-significant change must be reviewed as 
 Every list contract is bounded.
 
 - There is no unbounded `list all` product API.
-- Each endpoint defines a maximum page size. Requests above the maximum are rejected or capped according to that endpoint's documented contract; the behavior must be deterministic.
-- Ordering is deterministic and includes a stable tie-breaker so repeated pagination cannot depend on incidental database row order.
-- Mutable collections should use opaque cursors rather than exposing database offsets or ordering internals when cursor semantics can provide a stable contract.
-- A cursor is scoped to the list contract and relevant server-selected tenant/application context. Clients must not be able to edit a cursor to select another scope.
-- Invalid, malformed, tampered, unsupported-version, or otherwise unusable cursors fail with a stable machine-readable client error. An expired cursor, when a cursor design has expiry, fails deterministically rather than silently restarting from page one.
-- Cursor contents, encoding, signing, retention, and expiry are ratified with the first concrete paginated public contract; this document does not invent a persistence/cache mechanism.
+- Each endpoint defines a maximum page size and deterministic ordering with a stable tie-breaker.
+- Mutable collections should use opaque cursors when cursor semantics provide a stable contract.
+- Cursors are scoped to the list contract and trusted server-selected tenant/application context; clients cannot edit them to select another scope.
+- Invalid, malformed, tampered, unsupported-version or expired cursors fail deterministically.
+- Cursor encoding/signing/retention is selected by the concrete paginated contract and does not imply Redis or other infrastructure.
 
-## 4. Idempotency
+## 4. Idempotency, retry and concurrency
 
-Idempotency is required for mutations where a client can safely retry but duplicate execution could create an additional resource, repeat a side effect, or produce an incorrect state transition. Examples include create operations, externally triggered security/administrative mutations, payment/provider operations, and other retryable commands once those capabilities exist.
+Idempotency is required where safe client retry could otherwise duplicate resources, side effects or state transitions.
 
-Baseline semantics:
-
-- the idempotency namespace includes the server-selected application/instance scope and logical operation; organization/subject scope is added where required by that operation;
-- the key itself is opaque client input and never selects tenant authority;
-- the server associates the key with a canonical request fingerprint or equivalent request identity;
-- same scoped key + same logical request replays/returns the original logical result, including a previously committed failure/success category when the concrete contract requires it;
-- same scoped key + conflicting payload/request identity fails deterministically and must not execute the competing mutation;
-- concurrent attempts using the same scoped key must converge on one logical execution/result through transactionally enforceable persistence once storage is introduced;
-- records have a documented retention/expiry policy appropriate to retry windows and security requirements. Expiry is a semantic requirement, not a mandate for Redis, queues, or another infrastructure component;
-- if a mutation cannot safely support replay, its contract must explicitly define why and how retries are handled instead of silently ignoring duplicate risk.
+- the namespace includes server-selected application scope and logical operation, plus subject/organization scope where required;
+- a client key never selects tenant authority;
+- same scoped key plus same logical request converges on one logical result;
+- conflicting payload for the same scoped key fails deterministically without executing the competing mutation;
+- concurrency-sensitive ownership or uniqueness invariants are database-enforced when persistence exists; application pre-check alone is insufficient;
+- replay/retention semantics are explicit for the concrete operation;
+- if replay cannot be safe, the contract explains retry behavior instead of ignoring duplicate risk.
 
 ## 5. Time
 
-- Persisted and public contract time semantics are UTC. Local server/user time zones must not change ordering, expiry, or persisted security meaning.
-- Externally serialized timestamps use RFC 3339 / ISO 8601-compatible UTC timestamps. Unless a concrete contract explicitly requires otherwise, emit UTC with a `Z` offset and sufficient precision to preserve the event/order semantics being represented.
-- Domain/event models distinguish **occurrence time** (when the represented fact happened) from processing/receipt/persistence time when both matter.
-- Clock-sensitive security behavior such as token validity, OTP expiry, replay windows, signatures, or lockouts may tolerate only an explicitly documented bounded clock skew. There is no implicit unlimited grace period.
-- Server-side trusted time is used for security decisions; client-supplied timestamps are data unless the contract explicitly validates and authorizes their meaning.
+- Persisted/public time semantics are UTC.
+- Externally serialized timestamps use RFC 3339 / ISO 8601-compatible UTC values.
+- Occurrence time is distinguished from processing/receipt time where both matter.
+- Clock-sensitive security behavior has explicit bounded skew; there is no unlimited grace period.
+- Server-side trusted time is used for security decisions; client timestamps are input, not authority.
 
 ## 6. API versioning and compatibility
 
-- Public HTTP product APIs live under an explicit version such as `/v1`, as required by `Instruction.md`.
-- BeeBox public models are BeeBox-owned contract models. Database rows and provider/vendor SDK types never become public models by reuse.
-- An incompatible meaning change, removal, required-field change, or behavior change requires a new version or an explicit documented migration/deprecation path.
-- Adding a field must not redefine, overload, or contradict the meaning of an existing field.
-- Existing fields/events are never reused with a new semantic meaning.
-- Deprecation requires documentation, migration guidance, and removal criteria; telemetry is required once a production contract exists and can provide meaningful usage evidence.
-- This baseline does not promise Clerk endpoint compatibility or any vendor-compatible wire contract.
+- Public HTTP product APIs live under explicit versions such as `/v1`.
+- BeeBox public models are BeeBox-owned. Database rows and provider/vendor SDK types never become public models by reuse.
+- Incompatible meaning changes require a new version or explicit migration/deprecation path.
+- Existing fields/events are never silently reused with a new semantic meaning.
+- This baseline does not promise Clerk endpoint compatibility or vendor-compatible wire contracts.
+
+The proposed Phase 2 ADRs add no route, OpenAPI operation, SDK method or provider wire model. Any externally binding Phase 2 API shape must be reviewed in the implementing slice.
 
 ## 7. Audit-event semantics
 
-Security and administrative audit facts are correctness evidence, not optional notification artifacts.
+Security and administrative audit facts are correctness evidence, not optional notification artifacts. A security-sensitive committed mutation keeps required audit evidence inside its correctness boundary; later asynchronous/provider failure must not erase that fact.
 
-A security-sensitive action introduced by a product slice is incomplete unless that slice records the required audit fact as part of the action's correctness boundary. Failure of later asynchronous email, webhook, notification, provider delivery, or other secondary work must not erase an audit fact for an action that already committed.
+Every required audit fact includes:
 
-Every security or administrative audit fact must contain:
-
-- immutable event identifier;
-- occurred-at timestamp;
-- actor identity, including support/impersonating actor when applicable;
-- subject identity where the action has a distinct subject;
-- explicit application/instance scope;
-- organization scope only where applicable;
-- action name/category;
-- a resource category/reference identifying what the action concerns. When no persisted resource object exists yet, the implementing slice records the logical resource, category, or operation concerned rather than omitting the field;
-- result/outcome, including denied or failed security-sensitive attempts when the concrete threat model requires them;
-- source/context sufficient for investigation without storing secrets or unnecessary PII;
-- a correlation/operation identifier. If no inbound request correlation identifier exists, including non-HTTP/background work, the implementing slice creates and propagates an appropriate identifier rather than omitting the field;
+- immutable event identifier and occurred-at time;
+- actor and applicable subject;
+- explicit application scope and organization scope only where applicable;
+- action plus resource category/reference;
+- result/outcome, including denied attempts when the concrete threat model requires them;
+- correlation/operation identifier;
+- minimized safe source/context;
 - redaction/minimization rules for secrets and PII.
 
-This Phase 0 baseline does not ratify the resource-reference encoding, correlation-identifier encoding, database primary-key type, audit table layout, or event-schema wire encoding.
+For future Phase 2 mutations this includes, where security-relevant, link/unlink attempts and results, primary-identifier changes, factor enrollment/removal/reset, passkey registration/revocation, recovery credential regeneration/use and reverification decisions.
 
-The storage mechanism, table design, outbox, worker, event bus, and export pipeline are **not** selected by this Phase 0 document. A future slice chooses only the smallest mechanism that can satisfy its correctness, transaction, retention, and operational requirements. Kafka, queues, or outbox infrastructure are not implied by these semantics.
+Provider tokens, email, phone, OTP, recovery code, password/credential material and arbitrary raw provider errors must not become audit facts merely because the operation concerns them.
+
+The storage mechanism, table design, outbox, worker, event bus and export pipeline are not selected here.
 
 ## 8. Tenancy and scope
 
 BeeBox's root isolation invariant is explicit application/instance scope.
 
-- Every product resource and persisted row belongs to an explicit application/instance.
-- Organization scope is additional only where the resource is organization-owned or organization-specific. Organization is **not** a universal tenant/root model.
-- A client-supplied application ID, organization ID, owner ID, resource ID, role, permission, or entitlement is input to validate, never sufficient authorization evidence.
-- Authentication establishes identity; authorization independently decides whether that identity may act in the server-selected scope.
-- Application/use-case code derives or selects trusted scope from authenticated/authorized server context. Repository operations accept/enforce that trusted scope and do not perform unscoped product lookups that can return another application's row.
-- Database uniqueness constraints and foreign keys must include or otherwise enforce the correct application/instance scope; organization scope is included where required by the domain invariant. An application-only pre-check is insufficient under concurrency.
-- Public identifiers remain opaque and must not be decoded to establish ownership.
-- The first product persistence/API slice must include negative cross-tenant tests, including valid identifiers belonging to a different application/instance and, where applicable, a different organization.
-- Deletion, retention, backup/restore, import/export, and migration behavior must preserve scope and must not create cross-tenant visibility.
+- Every product resource and persisted row belongs to an explicit `application_instance`.
+- Organization scope is additional only where the resource is organization-owned or organization-specific; organization is not a universal root.
+- Client-supplied application/user/organization/resource IDs, roles, permissions or entitlements are input to validate, never authorization evidence.
+- Authentication establishes identity; authorization independently decides whether that identity may act in trusted server-selected scope.
+- Repository operations remain scoped and database uniqueness/foreign-key constraints enforce the correct application boundary.
+- Public IDs and external provider subjects are locators/identities in their defined namespace, not encoded ownership authority.
+- Cross-application negative tests are required for product slices that introduce new identity/credential state.
+- Deletion, retention, backup/restore, import/export and migration must preserve scope.
 
-## 9. Decisions intentionally left open
+## 9. Proposed Phase 2 trust decisions
+
+ADRs 0004–0006 are **proposed** and require explicit Human maintainer ratification before an implementation may treat them as accepted architecture.
+
+Future Phase 2 implementation must read the applicable ADR rather than inventing policy locally:
+
+- `docs/adr/0004-phase2-identity-linking-external-trust.md` — external/provider subject ownership, no email-equality auto-link, authenticated explicit link/unlink, conflict/last-method rules, primary identifiers, phone and passkey ownership;
+- `docs/adr/0005-phase2-authentication-assurance-recovery.md` — primary proof versus full assurance, MFA downgrade resistance, pending authentication, reverification freshness and recovery;
+- `docs/adr/0006-phase2-device-privacy-hosted-auth.md` — device metadata minimization/retention and application-scoped hosted redirect/state binding.
+
+While those ADRs remain proposed, accepted ADRs 0001–0003 continue to govern existing behavior. In particular ADR 0002's prohibition on email-equality account linking remains accepted and binding. No runtime mitigation described only in a proposed ADR may be claimed as implemented.
+
+## 10. Decisions still intentionally open
 
 This baseline does not decide:
 
-- concrete permanent public resource-ID wire encoding;
-- account-linking semantics;
-- token/JWT issuer, audience, authorized-party, revocation, or other trust-boundary choices beyond existing `Instruction.md` invariants;
-- organization as a universal tenant model;
+- acceptance of ADRs 0004–0006;
+- any account-merge lifecycle beyond the proposed explicit-link model;
+- concrete OAuth/OIDC provider adapter or token-storage lifecycle;
+- concrete WebAuthn, MFA, recovery-code or pending-auth transaction representation;
+- concrete device PII retention because new device PII storage is deferred by default;
 - data ownership between future extracted services;
 - Clerk API compatibility;
-- concrete cursor encoding/signing;
-- concrete idempotency storage infrastructure;
-- concrete audit persistence or delivery infrastructure.
+- concrete cursor/idempotency/audit infrastructure.
 
-The PR that first makes one of these decisions externally binding must surface it explicitly for review rather than treating this Phase 0 document as prior authorization.
+## 11. Review checklist for future contract PRs
 
-## 10. Review checklist for future contract PRs
+A future public/product PR touching these conventions should demonstrate:
 
-A future public/product PR that touches these conventions should demonstrate:
-
-- explicit application/instance and applicable organization scope;
+- explicit application and applicable organization scope;
 - stable/opaque identifiers without encoded authority;
-- BeeBox-owned safe errors;
+- BeeBox-owned safe/anti-enumerating errors;
 - bounded deterministic pagination when listing;
-- idempotency/retry/concurrency semantics for relevant mutations;
+- idempotency/retry/concurrency semantics for mutations;
 - UTC/versioned time semantics;
-- explicit API/event versioning and compatibility impact;
-- required audit facts for security-sensitive actions;
-- negative authorization and cross-tenant tests;
-- no implicit public compatibility/trust-boundary decision outside the PR's approved scope.
+- explicit API/event compatibility impact;
+- required audit evidence;
+- negative authorization/cross-tenant tests;
+- for Phase 2 identity/security work, traceability to the applicable **accepted** trust ADR and no reliance on a merely proposed decision;
+- no vendor-model leakage or implicit trust-boundary expansion.
