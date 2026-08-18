@@ -156,6 +156,21 @@ func TestPasswordResetWrongAttemptsExhaustBudget(t *testing.T) {
 			t.Fatalf("wrong reset attempt %d error = %v", i+1, err)
 		}
 	}
+
+	// This test targets the challenge-level failed-attempt invariant. Clear the
+	// separate pre-KDF abuse-control rows so the next request reaches the already
+	// exhausted challenge rather than being rejected by the identifier limiter.
+	db := pool.OpenSQLDB()
+	if _, err := db.ExecContext(ctx, `DELETE FROM public_auth_rate_limits
+		WHERE application_instance_id=$1
+		AND operation IN ('password_reset_confirm_global', 'password_reset_confirm_identifier')`, int64(app.InternalID)); err != nil {
+		db.Close()
+		t.Fatalf("clear reset-confirm limiter rows error = %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close limiter reset adapter error = %v", err)
+	}
+
 	correctCorrelation, _ := audit.NewCorrelationID()
 	if err := reset.ConfirmWithCorrelation(ctx, app.InternalID, email, code, "new correct horse battery staple", correctCorrelation); !errors.Is(err, authentication.ErrPasswordResetFailed) {
 		t.Fatalf("correct code after attempt exhaustion error = %v", err)
