@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
 	applicationpostgres "github.com/DoMinhHHung/beebox/internal/applicationinstance/postgres"
 	"github.com/DoMinhHHung/beebox/internal/audit"
 	"github.com/DoMinhHHung/beebox/internal/authentication"
@@ -228,7 +229,6 @@ func TestPhoneSignupAttemptsRotationWindowAndCrossApplicationIndependence(t *tes
 		t.Fatal(err)
 	}
 	first := delivery.signupCodes()[0]
-	// Cooldown request is generic and sends nothing.
 	c, _ = audit.NewCorrelationID()
 	if err := issuer.RequestWithCorrelation(ctx, appA.InternalID, phone, c); err != nil {
 		t.Fatal(err)
@@ -262,7 +262,6 @@ func TestPhoneSignupAttemptsRotationWindowAndCrossApplicationIndependence(t *tes
 		t.Fatalf("fourth issue delivered: %d", got)
 	}
 
-	// An independent application can issue and prove the same canonical phone.
 	c, _ = audit.NewCorrelationID()
 	if err := issuer.RequestWithCorrelation(ctx, appB.InternalID, phone, c); err != nil {
 		t.Fatal(err)
@@ -274,7 +273,6 @@ func TestPhoneSignupAttemptsRotationWindowAndCrossApplicationIndependence(t *tes
 		t.Fatalf("cross-app independent signup error = %v", err)
 	}
 
-	// Reset app A to a fresh challenge to prove five failures exhaust it.
 	if _, err := db.ExecContext(ctx, `DELETE FROM phone_signup_challenges WHERE application_instance_id=$1`, int64(appA.InternalID)); err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +328,6 @@ func TestPhoneOTPSignInVerifiedOnlyReplayCrossAppAndConcurrency(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Synthetic unverified row in app B is ineligible, as is an unknown phone.
 	db := pool.OpenSQLDB()
 	defer db.Close()
 	var userB int64
@@ -410,8 +407,6 @@ func TestPhoneOTPSignInVerifiedOnlyReplayCrossAppAndConcurrency(t *testing.T) {
 	}
 }
 
-// applicationID keeps the generic-ineligible table concise while retaining the
-// applicationinstance type used by the public authentication port.
 func applicationID(value int64) applicationinstance.InternalID {
 	return applicationinstance.InternalID(value)
 }
