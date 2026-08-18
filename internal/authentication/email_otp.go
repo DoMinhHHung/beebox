@@ -77,11 +77,6 @@ type EmailOTPPersistence interface {
 	FinalizeEmailOTP(context.Context, EmailOTPFinalize) (EmailOTPFinalizeResult, error)
 }
 
-type EmailOTPAdmission interface {
-	AllowEmailOTPIssue(context.Context, applicationinstance.InternalID, [32]byte) error
-	AllowEmailOTPConfirm(context.Context, applicationinstance.InternalID, [32]byte) error
-}
-
 type EmailOTPService struct {
 	persistence EmailOTPPersistence
 	delivery    EmailOTPDelivery
