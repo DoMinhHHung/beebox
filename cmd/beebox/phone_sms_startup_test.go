@@ -18,7 +18,7 @@ func TestRunRejectsInvalidSMSConfigurationBeforeListening(t *testing.T) {
 		values map[string]string
 	}{
 		{name: "twilio-partial", secret: "fixture-twilio-secret", values: map[string]string{
-			"BEEBOX_SMS_MODE": "twilio", "BEEBOX_TWILIO_ACCOUNT_SID": "AC" + strings.Repeat("0", 32), "BEEBOX_TWILIO_AUTH_TOKEN": "fixture-twilio-secret",
+			"BEEBOX_SMS_MODE": "twilio", "BEEBOX_TWILIO_ACCOUNT_SID": "AC" + strings.Repeat("0", 32), "BEEBOX_TWILIO_API_KEY_SID": "SK" + strings.Repeat("1", 32), "BEEBOX_TWILIO_API_KEY_SECRET": "fixture-twilio-secret",
 		}},
 		{name: "vonage-partial", secret: "fixture-vonage-secret", values: map[string]string{
 			"BEEBOX_SMS_MODE": "vonage", "BEEBOX_VONAGE_API_KEY": "fixture-key", "BEEBOX_VONAGE_API_SECRET": "fixture-vonage-secret",
