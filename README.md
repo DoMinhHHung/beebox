@@ -103,10 +103,13 @@ Twilio:
 ```sh
 export BEEBOX_SMS_MODE='twilio'
 export BEEBOX_TWILIO_ACCOUNT_SID='<account-sid>'
-export BEEBOX_TWILIO_AUTH_TOKEN='<auth-token>'
+export BEEBOX_TWILIO_API_KEY_SID='<api-key-sid>'
+export BEEBOX_TWILIO_API_KEY_SECRET='<api-key-secret>'
 export BEEBOX_TWILIO_FROM='<configured-sender>'
 export BEEBOX_TWILIO_TIMEOUT='5s' # optional; maximum 30s
 ```
+
+The Account SID identifies the owning Twilio account used in the Messages resource URL. BeeBox authenticates production Twilio requests with the API Key SID as the HTTP Basic username and the API Key Secret as the password. These values are process configuration only; never commit or log the API Key Secret.
 
 Vonage:
 
