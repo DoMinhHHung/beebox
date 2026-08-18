@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"io/fs"
 	"regexp"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -26,19 +27,7 @@ func TestMigrationEightBackfillsStablePublicIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fs.Sub() error = %v", err)
 	}
-	preEight := omitMigrationFS{
-		FS: omitMigrationFS{
-			FS: omitMigrationFS{
-				FS: omitMigrationFS{
-					FS:   sources,
-					omit: "00011_password_resets.sql",
-				},
-				omit: "00010_sessions.sql",
-			},
-			omit: "00009_public_auth_controls.sql",
-		},
-		omit: "00008_phase1_public_integration.sql",
-	}
+	preEight := migrationsThroughFS{FS: sources, through: 7}
 	if err := upWithSources(ctx, pool.OpenSQLDB(), preEight); err != nil {
 		t.Fatalf("apply pre-00008 migrations error = %v", err)
 	}
@@ -108,21 +97,34 @@ func readBackfilledPublicIDs(
 	return appPublicID, userPublicID
 }
 
-type omitMigrationFS struct {
+type migrationsThroughFS struct {
 	fs.FS
-	omit string
+	through int
 }
 
-func (o omitMigrationFS) ReadDir(name string) ([]fs.DirEntry, error) {
-	entries, err := fs.ReadDir(o.FS, name)
+func (m migrationsThroughFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	entries, err := fs.ReadDir(m.FS, name)
 	if err != nil {
 		return nil, err
 	}
 	filtered := make([]fs.DirEntry, 0, len(entries))
 	for _, entry := range entries {
-		if entry.Name() != o.omit {
-			filtered = append(filtered, entry)
+		migrationVersion, ok := migrationFileVersion(entry.Name())
+		if ok && migrationVersion > m.through {
+			continue
 		}
+		filtered = append(filtered, entry)
 	}
 	return filtered, nil
+}
+
+func migrationFileVersion(name string) (int, bool) {
+	if len(name) < 5 {
+		return 0, false
+	}
+	version, err := strconv.Atoi(name[:5])
+	if err != nil {
+		return 0, false
+	}
+	return version, true
 }

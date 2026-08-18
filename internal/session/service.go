@@ -83,12 +83,22 @@ func (s *Service) SignIn(ctx context.Context, appID applicationinstance.Internal
 			return TokenPair{}, ctxErr
 		}
 		if errors.Is(err, ErrInvalidCredentials) {
-			_, _ = authentication.HashPassword([]byte(password))
+			if _, hashErr := authentication.HashPasswordContext(ctx, []byte(password)); errors.Is(hashErr, authentication.ErrKDFAdmissionLimited) {
+				return TokenPair{}, ErrSignInRateLimited
+			} else if hashErr != nil && (errors.Is(hashErr, context.Canceled) || errors.Is(hashErr, context.DeadlineExceeded)) {
+				return TokenPair{}, hashErr
+			}
 			return TokenPair{}, ErrInvalidCredentials
 		}
 		return TokenPair{}, ErrSessionUnavailable
 	}
-	if err := authentication.VerifyPassword(record.PasswordHash, []byte(password)); err != nil {
+	if err := authentication.VerifyPasswordContext(ctx, record.PasswordHash, []byte(password)); err != nil {
+		if errors.Is(err, authentication.ErrKDFAdmissionLimited) {
+			return TokenPair{}, ErrSignInRateLimited
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return TokenPair{}, err
+		}
 		return TokenPair{}, ErrInvalidCredentials
 	}
 	return s.issueNewSession(ctx, appID, record, correlationID)
@@ -111,7 +121,12 @@ func (s *Service) issueNewSession(ctx context.Context, appID applicationinstance
 	if err != nil {
 		return TokenPair{}, ErrSessionUnavailable
 	}
-	return TokenPair{AccessToken: access, RefreshToken: refresh, ExpiresIn: int64(AccessTokenLifetime / time.Second), SessionID: sessionID}, nil
+	return TokenPair{
+		AccessToken:  access,
+		RefreshToken: refresh,
+		ExpiresIn:    int64(AccessTokenLifetime / time.Second),
+		SessionID:    sessionID,
+	}, nil
 }
 
 func (s *Service) Refresh(ctx context.Context, appID applicationinstance.InternalID, refresh string, correlationID audit.CorrelationID) (TokenPair, error) {
@@ -132,5 +147,10 @@ func (s *Service) Refresh(ctx context.Context, appID applicationinstance.Interna
 	if err != nil {
 		return TokenPair{}, ErrSessionUnavailable
 	}
-	return TokenPair{AccessToken: access, RefreshToken: newRefresh, ExpiresIn: int64(AccessTokenLifetime / time.Second), SessionID: sessionID}, nil
+	return TokenPair{
+		AccessToken:  access,
+		RefreshToken: newRefresh,
+		ExpiresIn:    int64(AccessTokenLifetime / time.Second),
+		SessionID:    sessionID,
+	}, nil
 }

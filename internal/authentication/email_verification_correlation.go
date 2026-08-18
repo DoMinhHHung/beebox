@@ -9,33 +9,24 @@ import (
 	"github.com/DoMinhHHung/beebox/internal/identity"
 )
 
-func (s *EmailVerificationService) IssueEmailVerificationWithCorrelation(
-	ctx context.Context,
-	applicationInstanceID applicationinstance.InternalID,
-	emailIdentifierID identity.EmailIdentifierInternalID,
-	correlationID audit.CorrelationID,
-) error {
+func (s *EmailVerificationService) IssueEmailVerificationWithCorrelation(ctx context.Context, applicationInstanceID applicationinstance.InternalID, emailIdentifierID identity.EmailIdentifierInternalID, correlationID audit.CorrelationID) error {
 	if !applicationInstanceID.Valid() {
 		return ErrInvalidApplicationInstanceScope
 	}
 	if !emailIdentifierID.Valid() {
 		return ErrInvalidEmailIdentifierInternalID
 	}
-	if correlationID == (audit.CorrelationID{}) {
-		return ErrEmailVerificationPersistence
-	}
-	if s == nil || s.persistence == nil {
+	if correlationID == (audit.CorrelationID{}) || s == nil || s.persistence == nil {
 		return ErrEmailVerificationPersistence
 	}
 	if s.delivery == nil {
 		return ErrEmailVerificationDelivery
 	}
-
 	code, err := GenerateVerificationCode()
 	if err != nil {
 		return err
 	}
-	codeHash, err := HashVerificationCode(code)
+	codeHash, err := HashVerificationCodeContext(ctx, code)
 	if err != nil {
 		return err
 	}
@@ -60,13 +51,7 @@ func (s *EmailVerificationService) IssueEmailVerificationWithCorrelation(
 	return nil
 }
 
-func (s *EmailVerificationService) VerifyEmailCodeWithCorrelation(
-	ctx context.Context,
-	applicationInstanceID applicationinstance.InternalID,
-	emailIdentifierID identity.EmailIdentifierInternalID,
-	rawCode string,
-	correlationID audit.CorrelationID,
-) (VerifiedEmailResult, error) {
+func (s *EmailVerificationService) VerifyEmailCodeWithCorrelation(ctx context.Context, applicationInstanceID applicationinstance.InternalID, emailIdentifierID identity.EmailIdentifierInternalID, rawCode string, correlationID audit.CorrelationID) (VerifiedEmailResult, error) {
 	if !applicationInstanceID.Valid() {
 		return VerifiedEmailResult{}, ErrInvalidApplicationInstanceScope
 	}
@@ -76,10 +61,7 @@ func (s *EmailVerificationService) VerifyEmailCodeWithCorrelation(
 	if !validVerificationCode(rawCode) {
 		return VerifiedEmailResult{}, ErrInvalidVerificationCode
 	}
-	if correlationID == (audit.CorrelationID{}) {
-		return VerifiedEmailResult{}, ErrEmailVerificationPersistence
-	}
-	if s == nil || s.persistence == nil {
+	if correlationID == (audit.CorrelationID{}) || s == nil || s.persistence == nil {
 		return VerifiedEmailResult{}, ErrEmailVerificationPersistence
 	}
 
@@ -88,7 +70,7 @@ func (s *EmailVerificationService) VerifyEmailCodeWithCorrelation(
 		return VerifiedEmailResult{}, err
 	}
 	matched := true
-	if err := VerifyVerificationCode(snapshot.CodeHash, rawCode); err != nil {
+	if err := VerifyVerificationCodeContext(ctx, snapshot.CodeHash, rawCode); err != nil {
 		switch {
 		case errors.Is(err, ErrVerificationCodeMismatch):
 			matched = false

@@ -13,14 +13,14 @@ import (
 	"github.com/DoMinhHHung/beebox/internal/platform/signingkey"
 )
 
-var errOperatorUsage = errors.New("usage: beebox [migrate|generate-signing-key|bootstrap-application [origin...]|add-origin <app_id> <origin>|rotate-credential <app_id> <publishable|secret> <old_credential_id>|revoke-credential <app_id> <credential_id>]")
+var errOperatorUsage = errors.New("usage: beebox [migrate|cleanup-security-state|generate-signing-key|bootstrap-application [origin...]|add-origin <app_id> <origin>|rotate-credential <app_id> <publishable|secret> <old_credential_id>|revoke-credential <app_id> <credential_id>]")
 
 func isOperatorCommand(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
 	switch args[0] {
-	case "generate-signing-key", "bootstrap-application", "add-origin", "rotate-credential", "revoke-credential":
+	case "cleanup-security-state", "generate-signing-key", "bootstrap-application", "add-origin", "rotate-credential", "revoke-credential":
 		return true
 	default:
 		return false
@@ -30,6 +30,12 @@ func isOperatorCommand(args []string) bool {
 func runOperator(ctx context.Context, lookup config.LookupEnv, output io.Writer, args []string) error {
 	if len(args) == 0 {
 		return errOperatorUsage
+	}
+	if args[0] == "cleanup-security-state" {
+		if len(args) != 1 {
+			return errOperatorUsage
+		}
+		return runCleanupOperator(ctx, lookup, output)
 	}
 	if args[0] == "generate-signing-key" {
 		if len(args) != 1 {

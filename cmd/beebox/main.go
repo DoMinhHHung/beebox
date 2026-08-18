@@ -46,7 +46,6 @@ type databasePool interface {
 	OpenSQLDB() *sql.DB
 	Close()
 }
-
 type runtimeDependencies struct {
 	openDatabase func(context.Context, string) (databasePool, error)
 	listen       func(string, string) (net.Listener, error)
@@ -73,11 +72,8 @@ func run(ctx context.Context, logger *slog.Logger, lookup config.LookupEnv, args
 		openDatabase: func(ctx context.Context, databaseURL string) (databasePool, error) {
 			return database.Open(ctx, databaseURL)
 		},
-		listen:    net.Listen,
-		serveHTTP: httpserver.Run,
-		migrate: func(ctx context.Context, pool databasePool) error {
-			return migration.Up(ctx, pool.OpenSQLDB())
-		},
+		listen: net.Listen, serveHTTP: httpserver.Run,
+		migrate:   func(ctx context.Context, pool databasePool) error { return migration.Up(ctx, pool.OpenSQLDB()) },
 		buildHTTP: buildProductHTTP,
 	}, args)
 }
@@ -94,28 +90,18 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 	recorder := metrics.New()
 	recorder.SetDatabaseStatsProvider(func() metrics.DatabaseStats {
 		stats := concretePool.Stats()
-		return metrics.DatabaseStats{
-			AcquiredConns: stats.AcquiredConns,
-			IdleConns:     stats.IdleConns,
-			TotalConns:    stats.TotalConns,
-			MaxConns:      stats.MaxConns,
-		}
+		return metrics.DatabaseStats{AcquiredConns: stats.AcquiredConns, IdleConns: stats.IdleConns, TotalConns: stats.TotalConns, MaxConns: stats.MaxConns}
 	})
 	delivery := metricsdelivery.New(sender, recorder)
 	integrationStore := applicationpostgres.NewIntegrationStore(concretePool)
 	integrationService := applicationinstance.NewIntegrationService(integrationStore)
 	authStore := authpostgres.New(concretePool)
 	verificationCore := authentication.NewEmailVerificationService(authStore, delivery)
-	verification := authentication.NewPublicVerificationService(
-		identitypostgres.New(concretePool),
-		authStore,
-		verificationCore,
-	)
+	verification := authentication.NewPublicVerificationService(identitypostgres.New(concretePool), authStore, verificationCore)
 	signup := authentication.NewPublicSignupService(authStore, delivery)
 	reset := authentication.NewPasswordResetService(authStore, delivery)
 	base := httpapi.New(health, integrationService, integrationStore, signup, verification)
 	base = httpapi.WithPasswordReset(base, integrationService, integrationStore, reset)
-
 	ring, err := session.KeyRingFromLookup(session.LookupEnv(lookup))
 	if errors.Is(err, session.ErrTokenDisabled) {
 		return httpapi.WithMetrics(base, recorder), nil
@@ -140,7 +126,6 @@ func runWithDependencies(ctx context.Context, logger *slog.Logger, lookup config
 	}
 	return runServeMode(ctx, logger, lookup, dependencies)
 }
-
 func parseMode(args []string) (processMode, error) {
 	switch {
 	case len(args) == 0:
@@ -157,6 +142,9 @@ func runServeMode(ctx context.Context, logger *slog.Logger, lookup config.Lookup
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
 	}
+	if err := authentication.ConfigureProcessKDFConcurrency(cfg.KDFConcurrency); err != nil {
+		return errors.New("configure KDF concurrency")
+	}
 	startupCtx, cancelStartup := context.WithTimeout(ctx, cfg.DatabaseStartupTimeout)
 	pool, err := dependencies.openDatabase(startupCtx, cfg.DatabaseURL)
 	if err != nil {
@@ -169,7 +157,6 @@ func runServeMode(ctx context.Context, logger *slog.Logger, lookup config.Lookup
 		return errors.New("verify PostgreSQL connectivity")
 	}
 	cancelStartup()
-
 	health := httpserver.NewHandler(pool.Ping, cfg.DatabaseReadinessTimeout)
 	handler := health
 	if dependencies.buildHTTP != nil {
@@ -178,7 +165,6 @@ func runServeMode(ctx context.Context, logger *slog.Logger, lookup config.Lookup
 			return err
 		}
 	}
-
 	listener, err := dependencies.listen("tcp", cfg.HTTPAddr)
 	if err != nil {
 		return fmt.Errorf("listen on %q: %w", cfg.HTTPAddr, err)

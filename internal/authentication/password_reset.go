@@ -3,6 +3,7 @@ package authentication
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"math/big"
@@ -34,7 +35,10 @@ type PasswordResetCodeHash struct {
 	encoded string
 }
 
-func (h PasswordResetCodeHash) StorageEncoding() string { return h.encoded }
+func (h PasswordResetCodeHash) StorageEncoding() string {
+	return h.encoded
+}
+
 func (h PasswordResetCodeHash) Valid() bool {
 	_, err := ParsePasswordHash(h.encoded)
 	return err == nil
@@ -68,17 +72,25 @@ func validPasswordResetCode(code string) bool {
 }
 
 func HashPasswordResetCode(code string) (PasswordResetCodeHash, error) {
+	return HashPasswordResetCodeContext(context.Background(), code)
+}
+
+func HashPasswordResetCodeContext(ctx context.Context, code string) (PasswordResetCodeHash, error) {
 	if !validPasswordResetCode(code) {
 		return PasswordResetCodeHash{}, ErrInvalidPasswordResetCode
 	}
-	hash, err := HashPassword([]byte(code))
+	hash, err := HashPasswordContext(ctx, []byte(code))
 	if err != nil {
-		return PasswordResetCodeHash{}, ErrPasswordResetPersistence
+		return PasswordResetCodeHash{}, err
 	}
 	return PasswordResetCodeHash{encoded: hash.StorageEncoding()}, nil
 }
 
 func VerifyPasswordResetCode(hash PasswordResetCodeHash, code string) error {
+	return VerifyPasswordResetCodeContext(context.Background(), hash, code)
+}
+
+func VerifyPasswordResetCodeContext(ctx context.Context, hash PasswordResetCodeHash, code string) error {
 	if !validPasswordResetCode(code) {
 		return ErrInvalidPasswordResetCode
 	}
@@ -86,11 +98,15 @@ func VerifyPasswordResetCode(hash PasswordResetCodeHash, code string) error {
 	if err != nil {
 		return ErrPasswordResetPersistence
 	}
-	if err := VerifyPassword(parsed, []byte(code)); err != nil {
-		if errors.Is(err, ErrPasswordMismatch) {
+	if err := VerifyPasswordContext(ctx, parsed, []byte(code)); err != nil {
+		switch {
+		case errors.Is(err, ErrPasswordMismatch):
 			return ErrPasswordResetFailed
+		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded), errors.Is(err, ErrKDFAdmissionLimited):
+			return err
+		default:
+			return ErrPasswordResetPersistence
 		}
-		return ErrPasswordResetPersistence
 	}
 	return nil
 }
@@ -152,15 +168,29 @@ func (s *PasswordResetService) RequestWithCorrelation(ctx context.Context, appID
 	if s == nil || s.persistence == nil || s.delivery == nil || !appID.Valid() || correlationID == (audit.CorrelationID{}) {
 		return ErrPasswordResetPersistence
 	}
+	admission, ok := s.persistence.(PasswordResetAdmission)
+	if !ok {
+		return ErrPasswordResetPersistence
+	}
 	email, err := identity.NormalizeEmail(rawEmail)
 	if err != nil {
 		return identity.ErrInvalidEmail
+	}
+	fingerprint := sha256.Sum256([]byte("password-reset-issue-email\x00" + email.ComparisonKey))
+	if err := admission.AllowPasswordResetIssue(ctx, appID, fingerprint); err != nil {
+		if errors.Is(err, ErrPublicRateLimited) {
+			return nil
+		}
+		return err
 	}
 	code, err := GeneratePasswordResetCode()
 	if err != nil {
 		return err
 	}
-	codeHash, err := HashPasswordResetCode(code)
+	codeHash, err := HashPasswordResetCodeContext(ctx, code)
+	if errors.Is(err, ErrKDFAdmissionLimited) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -198,6 +228,10 @@ func (s *PasswordResetService) ConfirmWithCorrelation(ctx context.Context, appID
 	if !validPasswordResetCode(code) {
 		return ErrInvalidPasswordResetCode
 	}
+	admission, ok := s.persistence.(PasswordResetAdmission)
+	if !ok {
+		return ErrPasswordResetPersistence
+	}
 	email, err := identity.NormalizeEmail(rawEmail)
 	if err != nil {
 		return identity.ErrInvalidEmail
@@ -206,8 +240,11 @@ func (s *PasswordResetService) ConfirmWithCorrelation(ctx context.Context, appID
 	if err != nil {
 		return err
 	}
-	newHash, err := HashPassword(prepared)
-	if err != nil {
+	fingerprint := sha256.Sum256([]byte("password-reset-confirm-email\x00" + email.ComparisonKey))
+	if err := admission.AllowPasswordResetConfirm(ctx, appID, fingerprint); err != nil {
+		if errors.Is(err, ErrPublicRateLimited) {
+			return ErrPasswordResetRateLimited
+		}
 		return err
 	}
 	if err := ctx.Err(); err != nil {
@@ -220,9 +257,27 @@ func (s *PasswordResetService) ConfirmWithCorrelation(ctx context.Context, appID
 		}
 		return err
 	}
-	matched := VerifyPasswordResetCode(snapshot.CodeHash, code) == nil
+	verifyErr := VerifyPasswordResetCodeContext(ctx, snapshot.CodeHash, code)
+	if errors.Is(verifyErr, ErrKDFAdmissionLimited) {
+		return ErrPasswordResetRateLimited
+	}
+	matched := verifyErr == nil
+	if verifyErr != nil && !errors.Is(verifyErr, ErrPasswordResetFailed) {
+		return verifyErr
+	}
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+
+	var newHash PasswordHash
+	if matched {
+		newHash, err = HashPasswordContext(ctx, prepared)
+		if errors.Is(err, ErrKDFAdmissionLimited) {
+			return ErrPasswordResetRateLimited
+		}
+		if err != nil {
+			return err
+		}
 	}
 	err = s.persistence.FinalizePasswordReset(ctx, PasswordResetFinalize{
 		ApplicationInstanceID: appID,

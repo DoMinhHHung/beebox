@@ -25,7 +25,6 @@ func TestMigrationFirstApplyAndRerunAreIdempotent(t *testing.T) {
 	pool := openPool(t, databaseURL)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-
 	firstAdapter := pool.OpenSQLDB()
 	if err := Up(ctx, firstAdapter); err != nil {
 		t.Fatalf("first Up() error = %v", err)
@@ -33,11 +32,11 @@ func TestMigrationFirstApplyAndRerunAreIdempotent(t *testing.T) {
 	if err := firstAdapter.PingContext(ctx); err == nil || err.Error() != "sql: database is closed" {
 		t.Fatalf("first adapter remained open after Up: %v", err)
 	}
-	assertMigrationState(t, ctx, pool, 11)
+	assertMigrationState(t, ctx, pool, 12)
 	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
 		t.Fatalf("second Up() error = %v", err)
 	}
-	assertMigrationState(t, ctx, pool, 11)
+	assertMigrationState(t, ctx, pool, 12)
 	assertSchemaTables(t, ctx, pool)
 }
 
@@ -68,7 +67,7 @@ func TestConcurrentMigrationRunnersSerializeAndConverge(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	assertMigrationState(t, ctx, firstPool, 11)
+	assertMigrationState(t, ctx, firstPool, 12)
 	assertSchemaTables(t, ctx, firstPool)
 }
 
@@ -93,7 +92,6 @@ func TestMigrationLockWaitHonorsCancellation(t *testing.T) {
 		defer cancel()
 		_, _ = conn.ExecContext(unlockCtx, "SELECT pg_advisory_unlock($1)", lock.DefaultLockID)
 	}()
-
 	runCtx, cancelRun := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancelRun()
 	started := time.Now()
@@ -115,7 +113,6 @@ func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
 		t.Fatalf("baseline Up() error = %v", err)
 	}
-
 	const secretMarker = "super-secret-provider-dsn"
 	failingSources := fstest.MapFS{
 		"00001_runtime_baseline.sql":              {Data: []byte(validMigration)},
@@ -129,14 +126,14 @@ func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 		"00009_public_auth_controls.sql":          {Data: []byte(validMigration)},
 		"00010_sessions.sql":                      {Data: []byte(validMigration)},
 		"00011_password_resets.sql":               {Data: []byte(validMigration)},
-		"00012_failure_probe.sql": {Data: []byte(
+		"00012_production_hardening.sql":          {Data: []byte(validMigration)},
+		"00013_failure_probe.sql": {Data: []byte(
 			"-- +goose Up\n" +
 				"-- " + secretMarker + "\n" +
 				"CREATE TABLE migration_failure_probe (id bigint PRIMARY KEY);\n" +
 				"SELECT missing_column FROM migration_failure_probe;\n",
 		)},
 	}
-
 	err := upWithSources(ctx, pool.OpenSQLDB(), failingSources)
 	if !errors.Is(err, errApply) || err.Error() != "apply PostgreSQL migrations" {
 		t.Fatalf("upWithSources() error = %v, want stable apply error", err)
@@ -144,7 +141,6 @@ func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 	if strings.Contains(err.Error(), secretMarker) || strings.Contains(err.Error(), "missing_column") {
 		t.Fatalf("migration error leaks SQL/provider detail: %q", err)
 	}
-
 	db := pool.OpenSQLDB()
 	defer db.Close()
 	var probeTable sql.NullString
@@ -154,12 +150,12 @@ func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 	if probeTable.Valid {
 		t.Fatalf("failing migration left probe table %q", probeTable.String)
 	}
-	var versionTwelveCount int
-	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM goose_db_version WHERE version_id = 12 AND is_applied").Scan(&versionTwelveCount); err != nil {
-		t.Fatalf("query version 12 error = %v", err)
+	var versionThirteenCount int
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM goose_db_version WHERE version_id = 13 AND is_applied").Scan(&versionThirteenCount); err != nil {
+		t.Fatalf("query version 13 error = %v", err)
 	}
-	if versionTwelveCount != 0 {
-		t.Fatalf("applied version 12 rows = %d, want 0", versionTwelveCount)
+	if versionThirteenCount != 0 {
+		t.Fatalf("applied version 13 rows = %d, want 0", versionThirteenCount)
 	}
 }
 

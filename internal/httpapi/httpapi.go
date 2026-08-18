@@ -231,6 +231,9 @@ func (h *Handler) handleVerificationConfirm(w http.ResponseWriter, r *http.Reque
 		switch {
 		case errors.Is(err, identity.ErrInvalidEmail), errors.Is(err, authentication.ErrInvalidVerificationCode):
 			writeError(w, http.StatusUnprocessableEntity, "invalid_input", "The supplied input is invalid.", requestID)
+		case errors.Is(err, authentication.ErrPublicRateLimited):
+			w.Header().Set("Retry-After", "60")
+			writeError(w, http.StatusTooManyRequests, "rate_limited", "Too many requests were received.", requestID)
 		case errors.Is(err, authentication.ErrEmailVerificationChallengeNotFound),
 			errors.Is(err, authentication.ErrEmailVerificationAlreadyCompleted),
 			errors.Is(err, authentication.ErrEmailVerificationExpired),
