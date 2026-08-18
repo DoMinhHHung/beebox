@@ -26,7 +26,7 @@ func TestPhoneSMSMigrationUpgradesExisting00013SchemaAndPreservesLimiterVocabula
 		t.Fatal(err)
 	}
 	for _, entry := range entries {
-		if entry.Name() == "00014_phone_sms.sql" {
+		if entry.Name() == "00014_phone_sms.sql" || entry.Name() == "00015_social_oauth.sql" {
 			continue
 		}
 		content, err := fs.ReadFile(sources, entry.Name())
@@ -40,9 +40,9 @@ func TestPhoneSMSMigrationUpgradesExisting00013SchemaAndPreservesLimiterVocabula
 	}
 	assertMigrationState(t, ctx, pool, 13)
 	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
-		t.Fatalf("upgrade to 00014 error = %v", err)
+		t.Fatalf("upgrade through current schema error = %v", err)
 	}
-	assertMigrationState(t, ctx, pool, 14)
+	assertMigrationState(t, ctx, pool, 15)
 
 	db := pool.OpenSQLDB()
 	defer db.Close()
@@ -64,8 +64,7 @@ func TestPhoneSMSMigrationUpgradesExisting00013SchemaAndPreservesLimiterVocabula
 		"email_otp_issue_global", "email_otp_issue_identifier", "email_otp_confirm_global", "email_otp_confirm_identifier",
 		"phone_signup_issue_global", "phone_signup_issue_identifier", "phone_signup_confirm_global", "phone_signup_confirm_identifier",
 		"phone_otp_issue_global", "phone_otp_issue_identifier", "phone_otp_confirm_global", "phone_otp_confirm_identifier",
-	}
-	for _, operation := range operations {
+	} {
 		if _, err := db.ExecContext(ctx, `
 			INSERT INTO public_auth_rate_limits(application_instance_id,operation,subject_hash,window_started_at,request_count,expires_at)
 			VALUES($1,$2,decode(repeat('ab',32),'hex'),CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP+INTERVAL '1 minute')`, appID, operation); err != nil {
@@ -82,7 +81,7 @@ func TestPhoneSMSMigrationFreshSchemaOwnershipUniquenessAndChallengeConstraints(
 	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
 		t.Fatal(err)
 	}
-	assertMigrationState(t, ctx, pool, 14)
+	assertMigrationState(t, ctx, pool, 15)
 	db := pool.OpenSQLDB()
 	defer db.Close()
 
