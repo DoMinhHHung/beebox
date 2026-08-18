@@ -1,8 +1,4 @@
 -- +goose Up
-ALTER TABLE email_identifiers
-    ADD CONSTRAINT email_identifiers_application_id_key
-    UNIQUE (application_instance_id, id);
-
 CREATE TABLE email_otp_signin_challenges (
     application_instance_id BIGINT NOT NULL,
     email_identifier_id BIGINT NOT NULL,
