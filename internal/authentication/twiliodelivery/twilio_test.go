@@ -14,7 +14,7 @@ import (
 )
 
 func fixtureAccountSID() string { return "AC" + strings.Repeat("0", 32) }
-func fixtureAuthValue() string   { return strings.Repeat("fixture_", 4) }
+func fixtureAuthValue() string  { return strings.Repeat("fixture_", 4) }
 
 func TestFromLookupDefaultsDisabledAndRejectsPartialTwilio(t *testing.T) {
 	lookup := func(string) (string, bool) { return "", false }
