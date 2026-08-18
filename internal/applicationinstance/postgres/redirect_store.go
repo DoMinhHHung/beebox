@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
 
 	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -42,7 +43,14 @@ func (s *IntegrationStore) AddAllowedRedirectURL(ctx context.Context, appID appl
 		}
 		return applicationinstance.AllowedRedirectURL{}, classifyIntegrationError(ctx, err)
 	}
-	if err := insertIntegrationAudit(ctx, tx, appID, applicationinstance.AuditActionRedirectAdded, applicationinstance.AuditResourceRedirect, correlation); err != nil {
+	resourceReference := "application_redirect:" + strconv.FormatInt(redirect.InternalID, 10)
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO audit_events(application_instance_id,actor_kind,action,resource_category,resource_reference,outcome,correlation_id,source)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+		int64(appID), applicationinstance.AuditActorOperator,
+		applicationinstance.AuditActionRedirectAdded, applicationinstance.AuditResourceRedirect,
+		resourceReference, applicationinstance.AuditOutcomeSuccess, correlation[:], applicationinstance.AuditSourceOperator,
+	); err != nil {
 		return applicationinstance.AllowedRedirectURL{}, classifyIntegrationError(ctx, err)
 	}
 	if err := tx.Commit(); err != nil {
