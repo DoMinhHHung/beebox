@@ -26,11 +26,11 @@ func TestTikTokTokenContract(t *testing.T) {
 			t.Fatal(err)
 		}
 		want := url.Values{
-			"client_key": {"fake-client"},
+			"client_key":    {"fake-client"},
 			"client_secret": {"fake-secret"},
-			"code": {"fake-code"},
-			"grant_type": {"authorization_code"},
-			"redirect_uri": {server.URL + "/callback"},
+			"code":          {"fake-code"},
+			"grant_type":    {"authorization_code"},
+			"redirect_uri":  {server.URL + "/callback"},
 		}
 		if !reflect.DeepEqual(r.Form, want) {
 			t.Fatalf("TikTok token form = %v, want %v", r.Form, want)
