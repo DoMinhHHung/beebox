@@ -46,7 +46,6 @@ jobs:
       - name: Verify formatting
         shell: bash
         run: |
-          gofmt -d internal/authentication/social_test.go
           files="$(gofmt -l .)"
 
           if [ -n "$files" ]; then
