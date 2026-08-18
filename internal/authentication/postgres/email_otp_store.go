@@ -288,6 +288,9 @@ func insertEmailOTPAudit(ctx context.Context, tx *sql.Tx, appID applicationinsta
 }
 
 func classifyEmailOTP(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return ctxErr
 	}
