@@ -3,10 +3,11 @@ info:
   title: BeeBox Public API
   version: 1.0.0
   description: >-
-    BeeBox-owned B2C authentication contract. Phase 1 email/password behavior and
-    the P2.1 passwordless email OTP primary-authentication method are implemented.
-    BeeBox is not an OAuth or OpenID Connect authorization server. Public resource
-    identifiers are opaque locators and never establish authorization by themselves.
+    BeeBox-owned B2C authentication contract. Phase 1 email/password behavior,
+    P2.1 passwordless email OTP, and P2.2 phone-first signup plus verified-phone
+    SMS OTP primary authentication are implemented. BeeBox is not an OAuth or
+    OpenID Connect authorization server. Public resource identifiers are opaque
+    locators and never establish authorization by themselves.
 servers:
   - url: /
 paths:
@@ -42,6 +43,67 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '409': {$ref: '#/components/responses/Conflict'}
         '422': {$ref: '#/components/responses/InvalidInput'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/sign-ups/phone:
+    post:
+      operationId: requestPhoneSignUpOTP
+      summary: Request an SMS possession challenge for phone-first signup
+      description: >-
+        Phone input uses strict international E.164 form with no default region or
+        national-format guessing. No user is created before successful possession proof.
+        For syntactically valid input the response is intentionally generic across a
+        new-phone challenge, an already-owned verified phone, resend cooldown/window
+        suppression, and account-dependent provider delivery failure. When SMS is
+        administratively disabled or incomplete, BeeBox returns service_unavailable
+        uniformly before phone ownership or challenge state is inspected.
+      security: [{publishableKey: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PhoneRequest'}
+      responses:
+        '202': {$ref: '#/components/responses/Accepted'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/InvalidInput'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/sign-ups/phone/confirm:
+    post:
+      operationId: confirmPhoneSignUpOTP
+      summary: Prove phone possession and atomically create a phone-first account
+      description: >-
+        A successful one-time six-digit proof atomically creates one new BeeBox user,
+        one verified phone identifier, one ordinary session, refresh verifier state,
+        and required audit evidence. Invalid, expired, exhausted, replayed, stale,
+        already-owned, or cross-application state is collapsed into invalid_credentials.
+        Confirmation is one-time and must not be blindly retried after an ambiguous
+        client response; if the commit succeeded, the user can use phone OTP sign-in.
+        Browser requests receive refresh state only in the application-specific Secure
+        HttpOnly SameSite=Strict __Host- cookie; non-browser callers receive it in JSON.
+      security: [{publishableKey: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PhoneConfirmRequest'}
+      responses:
+        '200':
+          description: Ordinary BeeBox session after successful phone possession proof.
+          headers:
+            Cache-Control: {$ref: '#/components/headers/NoStore'}
+            X-Request-ID: {$ref: '#/components/headers/RequestID'}
+            Set-Cookie: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TokenResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidCredentials'}
+        '403': {$ref: '#/components/responses/Forbidden'}
         '429': {$ref: '#/components/responses/RateLimited'}
         '503': {$ref: '#/components/responses/Unavailable'}
 
@@ -159,6 +221,65 @@ paths:
       responses:
         '200':
           description: Ordinary BeeBox session and fresh access credential after one-time OTP consumption.
+          headers:
+            Cache-Control: {$ref: '#/components/headers/NoStore'}
+            X-Request-ID: {$ref: '#/components/headers/RequestID'}
+            Set-Cookie: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TokenResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidCredentials'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/sign-ins/phone-otp:
+    post:
+      operationId: requestPhoneOTPSignIn
+      summary: Request SMS OTP primary authentication for an existing verified phone
+      description: >-
+        Phone input uses strict international E.164 form with no default region.
+        The response is intentionally generic across eligible verified phones,
+        unknown or unverified phones, cooldown/window suppression, and
+        account-dependent provider delivery failure. No public challenge identifier
+        is returned. When SMS is disabled, service_unavailable is returned uniformly
+        before phone ownership or challenge state is inspected.
+      security: [{publishableKey: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PhoneRequest'}
+      responses:
+        '202': {$ref: '#/components/responses/Accepted'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/InvalidInput'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/sign-ins/phone-otp/confirm:
+    post:
+      operationId: confirmPhoneOTPSignIn
+      summary: Create a session from a one-time verified-phone SMS OTP primary proof
+      description: >-
+        Confirmation is one-time and replay-safe. Unknown/unverified phones and
+        absent, wrong, expired, consumed, attempt-limited, stale/replaced, or
+        cross-application challenge state is collapsed into invalid_credentials.
+        Phone OTP is a primary authentication method; it does not bypass future
+        additional assurance requirements and is not ranked permanently above or
+        below password or email OTP. Browser/non-browser refresh transport is the
+        same ordinary BeeBox session transport used by other primary methods.
+      security: [{publishableKey: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PhoneConfirmRequest'}
+      responses:
+        '200':
+          description: Ordinary BeeBox session after successful one-time phone OTP consumption.
           headers:
             Cache-Control: {$ref: '#/components/headers/NoStore'}
             X-Request-ID: {$ref: '#/components/headers/RequestID'}
@@ -375,6 +496,28 @@ components:
       required: [email]
       properties:
         email: {type: string, format: email}
+    PhoneRequest:
+      type: object
+      additionalProperties: false
+      required: [phone]
+      properties:
+        phone:
+          type: string
+          pattern: '^\+[1-9][0-9]{1,14}$'
+          description: Strict international E.164 canonical input. Surrounding ordinary whitespace may be trimmed by BeeBox; there is no default region, national-format guessing, embedded whitespace, punctuation, extension, tel URI prefix, or 00-prefix conversion.
+    PhoneConfirmRequest:
+      type: object
+      additionalProperties: false
+      required: [phone, code]
+      properties:
+        phone:
+          type: string
+          pattern: '^\+[1-9][0-9]{1,14}$'
+          description: Strict international E.164 canonical input with no default region or national-format guessing.
+        code:
+          type: string
+          pattern: '^[0-9]{6}$'
+          description: One-time six-digit SMS possession/authentication code; never returned by BeeBox APIs.
     SignUpRequest:
       type: object
       additionalProperties: false
