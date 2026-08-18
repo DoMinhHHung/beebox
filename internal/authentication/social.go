@@ -230,7 +230,8 @@ func (s *SocialService) CreateAttempt(ctx context.Context, app applicationinstan
 	var nonce string
 	var nonceHash *[32]byte
 	if adapter.UsesNonce() {
-		nonce, hash, err := newSocialSecret()
+		var hash [32]byte
+		nonce, hash, err = newSocialSecret()
 		if err != nil {
 			return SocialAttemptResult{}, ErrSocialUnavailable
 		}
