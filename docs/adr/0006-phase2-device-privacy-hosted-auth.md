@@ -59,20 +59,39 @@ Existing ADR 0003 exact-origin semantics remain the browser-origin baseline; a f
 
 ### State binding
 
-A future hosted/social authentication attempt must bind state to at least:
+Generic hosted/social sign-in and explicit authenticated account linking do not have identical state requirements. Both require server-validated flow binding, but account linking additionally carries an already-authenticated BeeBox principal across an external round-trip and therefore must prevent principal/session substitution.
 
-- the authentication attempt;
+Every future hosted/social authentication attempt must bind state to at least:
+
+- the authentication/provider attempt;
 - the trusted application scope;
-- the intended validated redirect;
+- the intended validated redirect where applicable;
 - the relevant flow/purpose so one flow cannot be substituted for another.
 
-State must be unpredictable or integrity-protected according to the later implementation and must be bounded in lifetime/replay. Client-declared application identity, redirect or assurance does not replace trusted server-side binding.
+For an **explicit account-link** operation, the state/transaction must additionally bind or securely reference:
+
+- the initiating BeeBox principal/user resolved from trusted authenticated state;
+- the initiating authenticated session, or an explicitly equivalent non-substitutable authenticated context;
+- purpose = account linking;
+- the external/provider proof attempt initiated for that link;
+- the required recent-reverification context/evidence from ADR 0005;
+- the trusted application scope and validated redirect where applicable.
+
+Raw user IDs, session IDs or other identifiers carried by the client are never link authority merely because they appear in state or callback input. The later concrete representation may be server-stored, signed/integrity-protected or otherwise safely represented; this ADR does not ratify one schema or protocol mechanism.
+
+State/transaction representation must be unpredictable or integrity-protected as appropriate, bounded in lifetime, replay-bounded or one-time where the flow requires it, and validated server-side before security mutation.
+
+For explicit linking, callback/commit must validate the complete initiation binding before attaching any external credential. If the initiating authenticated context has been revoked, expired, substituted, switched to a different principal, moved across applications or otherwise no longer satisfies the link requirements, BeeBox must fail closed. The operation must not continue merely by using a replacement browser session; it must create no link mutation and require a fresh/restarted link flow when appropriate.
+
+Client-declared application identity, redirect, principal, session or assurance never replaces trusted server-side binding.
 
 The exact state schema, persistence, signing/encryption choice and OAuth/OIDC protocol details are deferred to the implementing slice.
 
-### Phishing/open-redirect defenses
+### Phishing/open-redirect and link-CSRF defenses
 
 Future hosted-auth UI must not create a generic arbitrary redirector. Invalid, cross-application or non-allowlisted redirects fail safely. Failure handling must not leak provider tokens/codes, session secrets or unnecessary identity details into URLs, logs, audit or telemetry.
+
+An explicit-link callback must also reject account-link CSRF/session-switch substitution: a provider proof initiated while authenticated as principal A cannot be redeemed as authority to attach that provider credential to principal B merely because B is the browser's current authenticated user when the callback arrives. Cross-application substitution fails identically.
 
 ### Retention proposal
 
@@ -82,17 +101,18 @@ When later persistence is justified, that PR must define deletion/retention/user
 
 ## Human decision required
 
-Decision 3 — ratify or change the device metadata baseline:
+Decision 3 — ratify or change the device metadata/hosted-auth baseline:
 
 - minimal collection only for defined security/user purpose;
 - no precise location or fingerprinting by default;
 - defer new IP/user-agent/location persistence until a concrete bounded retention lifecycle is reviewed;
-- hosted redirects are exact application-scoped allowlisted destinations with the same boundary for success and error flows.
+- hosted redirects are exact application-scoped allowlisted destinations with the same boundary for success and error flows;
+- explicit account-link state remains bound to its initiating principal/session-equivalent and reverification context across the provider round-trip.
 
 ## Consequences
 
-Later device/session UX cannot silently create a fingerprinting system, and hosted authentication cannot delegate redirect authority to browser input. Future features may add narrowly justified metadata or redirect forms only through explicit reviewed contracts.
+Later device/session UX cannot silently create a fingerprinting system, hosted authentication cannot delegate redirect authority to browser input, and explicit linking cannot silently switch its target principal at callback time. Future features may add narrowly justified metadata or redirect/state representations only through explicit reviewed contracts.
 
 ## Non-goals
 
-No hosted frontend, OAuth/OIDC provider flow, redirect endpoint, device-management API, session UI, location service, fingerprinting provider, migration, OpenAPI operation or SDK method is introduced here.
+No hosted frontend, OAuth/OIDC provider flow, redirect endpoint, account-link runtime, device-management API, session UI, location service, fingerprinting provider, migration, OpenAPI operation, SDK method or concrete OAuth state schema is introduced here.
