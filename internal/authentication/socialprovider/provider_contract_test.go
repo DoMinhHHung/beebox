@@ -49,7 +49,7 @@ func TestVerifiedProductionProviderContracts(t *testing.T) {
 		{authentication.ProviderDiscord, "", "https://discord.com/oauth2/authorize", "https://discord.com/api/v10/oauth2/token", "https://discord.com/api/v10/users/@me", []string{"identify"}, oauth2.AuthStyleInParams, false, false, subjectTopLevelStringID, "", ""},
 		{authentication.ProviderLinkedIn, "", "https://www.linkedin.com/oauth/v2/authorization", "https://www.linkedin.com/oauth/v2/accessToken", "", []string{"openid"}, oauth2.AuthStyleInParams, false, true, subjectOIDC, "https://www.linkedin.com", "https://www.linkedin.com/oauth/openid/jwks"},
 		{authentication.ProviderX, "", "https://x.com/i/oauth2/authorize", "https://api.x.com/2/oauth2/token", "https://api.x.com/2/users/me", []string{"tweet.read", "users.read"}, oauth2.AuthStyleInHeader, true, false, subjectNestedStringID, "", ""},
-		{authentication.ProviderTikTok, "", "https://www.tiktok.com/v2/auth/authorize/", "https://open.tiktokapis.com/v2/oauth/token/", "", []string{"user.info.basic"}, oauth2.AuthStyleUnknown, false, false, subjectTikTokOpenID, "", ""},
+		{authentication.ProviderTikTok, "", "https://www.tiktok.com/v2/auth/authorize/", "https://open.tiktokapis.com/v2/oauth/token/", "", []string{"user.info.basic"}, oauth2.AuthStyle(0), false, false, subjectTikTokOpenID, "", ""},
 	}
 	for _, contract := range contracts {
 		contract := contract
