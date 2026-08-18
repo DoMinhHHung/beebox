@@ -4,7 +4,7 @@ package postgres
 
 import (
 	"context"
-	"crypto/sha256"
+	cryptosha256 "crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -26,8 +26,8 @@ func TestPreKDFLimiterConcurrentFirstUseIsAtomic(t *testing.T) {
 		{
 			name: "signup",
 			admit: func(ctx context.Context, store *Store, appID int64, subject [32]byte) error {
-				keyHash := sha256.Sum256([]byte("concurrent-signup-key"))
-				requestHash := sha256.Sum256([]byte("concurrent-signup-request"))
+				keyHash := cryptosha256.Sum256([]byte("concurrent-signup-key"))
+				requestHash := cryptosha256.Sum256([]byte("concurrent-signup-request"))
 				_, err := store.AdmitPublicSignup(ctx, internalID(appID), keyHash, requestHash, subject)
 				return err
 			},
@@ -66,7 +66,7 @@ func TestPreKDFLimiterConcurrentFirstUseIsAtomic(t *testing.T) {
 				t.Fatalf("Create(application) error = %v", err)
 			}
 			store := New(pool)
-			subject := sha256.Sum256([]byte("same-first-use-identifier"))
+			subject := cryptosha256.Sum256([]byte("same-first-use-identifier"))
 
 			const attempts = 8
 			start := make(chan struct{})
@@ -118,7 +118,7 @@ func TestPreKDFGlobalDenialStopsIdentifierCardinalityGrowth(t *testing.T) {
 	store := New(pool)
 
 	for i := 0; i < 100; i++ {
-		fingerprint := sha256.Sum256([]byte(fmt.Sprintf("allowed-%d", i)))
+		fingerprint := cryptosha256.Sum256([]byte(fmt.Sprintf("allowed-%d", i)))
 		if err := store.AllowPasswordResetIssue(ctx, app.InternalID, fingerprint); err != nil {
 			t.Fatalf("allowed admission %d error = %v", i, err)
 		}
@@ -129,7 +129,7 @@ func TestPreKDFGlobalDenialStopsIdentifierCardinalityGrowth(t *testing.T) {
 	}
 
 	for i := 0; i < 20; i++ {
-		fingerprint := sha256.Sum256([]byte(fmt.Sprintf("denied-%d", i)))
+		fingerprint := cryptosha256.Sum256([]byte(fmt.Sprintf("denied-%d", i)))
 		err := store.AllowPasswordResetIssue(ctx, app.InternalID, fingerprint)
 		if !errors.Is(err, authentication.ErrPublicRateLimited) {
 			t.Fatalf("post-global admission %d error = %v, want rate limited", i, err)
@@ -159,7 +159,7 @@ func TestPreKDFLimiterIsIndependentAcrossApplications(t *testing.T) {
 		t.Fatalf("Create(second application) error = %v", err)
 	}
 	store := New(pool)
-	fingerprint := sha256.Sum256([]byte("shared-identifier"))
+	fingerprint := cryptosha256.Sum256([]byte("shared-identifier"))
 	for i := 0; i < 5; i++ {
 		if err := store.AllowPublicVerificationConfirm(ctx, first.InternalID, fingerprint); err != nil {
 			t.Fatalf("first application admission %d error = %v", i, err)
