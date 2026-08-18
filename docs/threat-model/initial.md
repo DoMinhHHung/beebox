@@ -1,8 +1,8 @@
 # Initial BeeBox Threat Model
 
-> Status: repository-owned threat model for ratified Phase 1 plus **proposed** Phase 2 trust boundaries.
-> Governance baseline: `Instruction.md`, `docs/contracts/conventions.md`, accepted ADRs 0001–0003, and proposed ADRs 0004–0006.
-> Proposed Phase 2 controls below are design requirements only. They are not runtime mitigations and are not accepted until Human-ratified.
+> Status: repository-owned threat model for ratified Phase 1 plus **accepted** Phase 2 trust contracts.
+> Governance baseline: `Instruction.md`, `docs/contracts/conventions.md`, and accepted ADRs 0001–0006.
+> ADRs 0004–0006 are accepted architecture/security requirements. Their Phase 2 runtime mitigations are not implemented by this documentation checkpoint and must not be claimed as deployed until later implementation evidence exists.
 
 ## 1. Scope and trust model
 
@@ -10,7 +10,7 @@ BeeBox is one Go modular monolith with PostgreSQL as the correctness source of t
 
 The reachable Phase 1 surface covers email/password signup, email ownership verification, verified-email/password signin, session creation/current-state/refresh/revoke/signout, Ed25519 access JWT/JWKS, password reset, backend secret-key session management and bounded operational metrics. The minimal Go SDK consumes this BeeBox-owned surface and can verify access tokens offline from JWKS.
 
-Phase 2 social auth, phone, passkeys, MFA, account linking, generic recovery, hosted auth and device-management behavior are not implemented by this document. ADRs 0004–0006 only propose the security contracts that later slices must satisfy if ratified.
+Phase 2 social auth, phone, passkeys, MFA, account linking, generic recovery, hosted auth and device-management behavior remain unimplemented in this P2.0 documentation checkpoint. Accepted ADRs 0004–0006 define the security contracts that later slices must implement and prove.
 
 ## 2. Assets and secret/PII handling
 
@@ -59,11 +59,11 @@ They must not contain email/phone unnecessarily, password/hash, OTP/reset/recove
 
 Metrics use fixed bounded vocabulary only and never label by email, phone, user/session/application ID, provider subject, credential ID, IP address, token/code or raw error.
 
-## 8. Proposed Phase 2 identity-linking threats and controls
+## 8. Accepted Phase 2 identity-linking requirements
 
-The following are **proposed controls**, not claims about current runtime.
+The following are accepted contract requirements for later implementation, not claims about current runtime.
 
-| Threat | Proposed control / required later evidence |
+| Threat | Accepted control / required later evidence |
 | --- | --- |
 | Provider-email account takeover | Provider email is a claim only; email equality never auto-links. Existing-account attachment requires authenticated explicit linking and recent reverification. |
 | Provider-subject reassignment | `(application_instance, provider, provider_subject)` is stable ownership identity; provider email/profile changes never transfer ownership. |
@@ -77,30 +77,30 @@ The following are **proposed controls**, not claims about current runtime.
 | Phone/SMS claim abuse | Phone is application-scoped, canonicalized by a reviewed representation, explicit verified/unverified state; equality/unverified claims never link accounts. Vendor SMS models do not become public authority. |
 | Passkey ownership confusion | Credential ID has one user owner in the applicable app/RP scope; private key never reaches BeeBox; email/provider changes do not transfer credential ownership. |
 
-## 9. Proposed Phase 2 assurance, MFA and recovery threats
+## 9. Accepted Phase 2 assurance, MFA and recovery requirements
 
-| Threat | Proposed control / required later evidence |
+| Threat | Accepted control / required later evidence |
 | --- | --- |
 | MFA downgrade via alternate login path | Required MFA applies regardless of primary method; password/email OTP/phone OTP/social switching cannot bypass required assurance. |
 | Treating any two steps as independent MFA | Factor independence/security property must be evaluated by the implementing factor set; passkeys are not automatically an extra factor. |
 | Full session issued before MFA complete | Primary proof, pending additional assurance and fully authenticated session are distinct; full privilege waits for required factors. |
-| Stale-session sensitive mutation | Sensitive operations require recent trusted server-side reverification, not merely any old valid session. Proposed v1 freshness default is 10 minutes pending Human approval. |
+| Stale-session sensitive mutation | Sensitive operations require recent trusted server-side reverification, not merely any old valid session. The accepted v1 freshness default is 10 minutes from the most recent successful server-recorded reverification, subject to ADR 0005 scope/method/assurance validation. |
 | Client-forged freshness/assurance | Client timestamps or declared methods are never authority; evidence is server-recorded and bound to app/user/session/flow. |
 | Recovery as permanent weaker password | Recovery credentials are purpose-specific; recovery codes are one-time; replay fails closed; recovery does not silently erase MFA/security state. |
 | Reset path downgrades assurance | Factor/credential reset is separately authorized/audited and cannot leave the account below configured requirements or without a usable method. |
 
-## 10. Proposed Phase 2 device/privacy threats
+## 10. Accepted Phase 2 device/privacy requirements
 
-| Threat | Proposed control / required later evidence |
+| Threat | Accepted control / required later evidence |
 | --- | --- |
 | Device fingerprinting/privacy creep | No permanent cross-session fingerprint or third-party fingerprinting; collect only metadata with documented security/user purpose. |
 | Precise location tracking | Not allowed by default; approximate geography deferred until separately justified. |
 | Indefinite IP/user-agent retention | New persistence is deferred until a concrete feature defines bounded retention, deletion and user visibility. |
 | PII leakage through observability | IP/user-agent/user/app/session/device identifiers are not metric labels; audit/log use is minimized and purpose-bound. |
 
-## 11. Proposed hosted-auth redirect and state threats
+## 11. Accepted hosted-auth redirect and state requirements
 
-| Threat | Proposed control / required later evidence |
+| Threat | Accepted control / required later evidence |
 | --- | --- |
 | Open redirect/phishing | Redirect targets are server-validated against current application configuration using exact canonical matching; arbitrary wildcard/substring/suffix matches are forbidden. |
 | Redirect substitution across applications | Flow state binds trusted application and intended validated redirect; one app cannot substitute another app's target. |
@@ -112,7 +112,7 @@ The following are **proposed controls**, not claims about current runtime.
 
 ## 12. Required scenario outcomes for P2.0
 
-These outcomes are deterministic at the contract level. They remain proposed until Human ratification:
+These outcomes are accepted contract requirements for future Phase 2 implementations:
 
 - existing password user + Google same verified email -> no automatic link; require authenticated explicit linking;
 - provider-first user later adds password -> authenticated credential enrollment after recent proof; no email adoption lookup;
@@ -131,14 +131,16 @@ These outcomes are deterministic at the contract level. They remain proposed unt
 - primary email/phone change -> verified same-user identifier + conflict checks + recent proof + audit;
 - MFA alternate-method bypass -> forbidden;
 - recovery-code downgrade/replay -> one-time, purpose-specific, replay fails closed and does not erase configured assurance;
-- stale session attempting sensitive mutation -> require fresh reverification;
+- stale session attempting sensitive mutation -> require fresh reverification under the accepted 10-minute default and ADR 0005 conditions;
 - passkey ownership -> one owner in applicable app/RP scope, not transferred by identifier changes;
 - hosted redirect substitution/open redirect -> reject unless exact validated current-app destination and state binding pass;
 - device metadata privacy -> no new device PII persistence until bounded purpose/retention is explicitly reviewed.
 
-## 13. Current versus proposed control boundary
+## 13. Accepted contract versus implemented control boundary
 
-Accepted ADRs 0001–0003 and existing code/tests describe ratified Phase 1 behavior. ADRs 0004–0006 are proposed security contracts only. Until Human acceptance and later runtime implementation, BeeBox must not claim that social linking, MFA, passkeys, generic recovery, hosted auth or device-management mitigations above are deployed.
+ADRs 0001–0006 are accepted architecture/security contracts. Existing code/tests currently provide Phase 1 runtime evidence only. Acceptance of ADRs 0004–0006 does **not** mean social linking, MFA, passkeys, generic recovery, hosted auth or device-management mitigations are deployed.
+
+Each Phase 2 implementation slice must provide its own concrete code, persistence/API contracts where applicable, security/tenant tests and exact-head CI before BeeBox may claim that runtime control exists.
 
 ## 14. Residual Phase 1 threats
 
@@ -157,9 +159,9 @@ Accepted ADRs 0001–0003 and existing code/tests describe ratified Phase 1 beha
 ## 15. Evidence map
 
 - `docs/adr/0001-application-instance-root.md` through `0003-phase1-public-auth-contract.md` — accepted Phase 1 trust decisions.
-- `docs/adr/0004-phase2-identity-linking-external-trust.md` — proposed external identity/account-link ownership and initiation-bound explicit-link transaction.
-- `docs/adr/0005-phase2-authentication-assurance-recovery.md` — proposed assurance/reverification/recovery semantics.
-- `docs/adr/0006-phase2-device-privacy-hosted-auth.md` — proposed privacy/redirect trust boundary and link-specific state binding.
+- `docs/adr/0004-phase2-identity-linking-external-trust.md` — accepted external identity/account-link ownership and initiation-bound explicit-link transaction.
+- `docs/adr/0005-phase2-authentication-assurance-recovery.md` — accepted assurance/reverification/recovery semantics.
+- `docs/adr/0006-phase2-device-privacy-hosted-auth.md` — accepted privacy/redirect trust boundary and link-specific state binding.
 - `docs/phase1-exit.md`, `api/openapi/v1.yaml`, `sdk/go`, integration tests and `.github/workflows/ci.yml` — existing Phase 1 implementation evidence.
 
 No Phase 2 runtime implementation evidence exists in this P2.0 documentation checkpoint.
