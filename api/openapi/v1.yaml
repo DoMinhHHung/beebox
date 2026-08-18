@@ -4,10 +4,11 @@ info:
   version: 1.0.0
   description: >-
     BeeBox-owned B2C authentication contract. Phase 1 email/password behavior,
-    P2.1 passwordless email OTP, and P2.2 phone-first signup plus verified-phone
-    SMS OTP primary authentication are implemented. BeeBox is not an OAuth or
-    OpenID Connect authorization server. Public resource identifiers are opaque
-    locators and never establish authorization by themselves.
+    P2.1 passwordless email OTP, P2.2 phone-first signup plus verified-phone
+    SMS OTP primary authentication, and P2.3 headless social authentication are
+    implemented. BeeBox is not an OAuth or OpenID Connect authorization server.
+    Public resource identifiers are opaque locators and never establish
+    authorization by themselves.
 servers:
   - url: /
 paths:
@@ -293,6 +294,108 @@ paths:
         '429': {$ref: '#/components/responses/RateLimited'}
         '503': {$ref: '#/components/responses/Unavailable'}
 
+  /v1/social-auth/attempts:
+    post:
+      operationId: createSocialAuthAttempt
+      summary: Start a browser social authentication attempt
+      description: >-
+        Resolves the application from X-BeeBox-Publishable-Key, requires an allowed
+        browser Origin, requires that Origin to equal the origin of an exact
+        application-scoped allowlisted redirect_url, and stores trusted state for ten
+        minutes. The caller supplies an RFC 7636 S256 completion code challenge and
+        retains the verifier across the provider round-trip. BeeBox requests only the
+        provider scope needed to establish a stable provider subject; provider email is
+        not account-link authority and is not imported into BeeBox email identifiers.
+      security: [{publishableKey: []}]
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SocialAuthAttemptRequest'}
+      responses:
+        '201':
+          description: Provider authorization URL containing BeeBox-bound state.
+          headers:
+            Cache-Control: {$ref: '#/components/headers/NoStore'}
+            X-Request-ID: {$ref: '#/components/headers/RequestID'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SocialAuthAttemptResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/InvalidInput'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/social-auth/callback/{provider}:
+    get:
+      operationId: completeSocialProviderCallback
+      summary: Receive a configured social provider authorization callback
+      description: >-
+        The callback trusts only BeeBox state persisted at initiation. The callback
+        path, browser state, provider email, and any browser-supplied application or
+        redirect input are not account authority. A valid provider proof resolves an
+        existing external identity or creates one new provider-first BeeBox principal,
+        then redirects only to the exact stored allowlisted redirect. Success carries
+        only a short-lived one-time opaque beebox_code. Provider denial after valid
+        state carries only beebox_error=social_auth_failed. Provider access, refresh,
+        and ID tokens are never redirected to or exposed to the application.
+      security: []
+      parameters:
+        - {$ref: '#/components/parameters/SocialProviderPath'}
+      responses:
+        '303':
+          description: Exact stored application redirect with one bounded BeeBox completion result query parameter.
+          headers:
+            Cache-Control: {$ref: '#/components/headers/NoStore'}
+            X-Request-ID: {$ref: '#/components/headers/RequestID'}
+            Location: {schema: {type: string, format: uri}}
+        '400':
+          description: Invalid or unresolvable BeeBox state. No browser/provider supplied redirect is used.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/social-auth/exchange:
+    post:
+      operationId: exchangeSocialAuthCode
+      summary: Exchange a one-time social completion grant for an ordinary BeeBox session
+      description: >-
+        Browser-origin-bound P2.3 exchange. The one-time five-minute completion code is
+        useless without the original client PKCE verifier: BeeBox validates S256,
+        application scope, expiry, one-time consumption, and current user ownership,
+        then atomically creates the same ordinary BeeBox session and refresh state used
+        by other primary authentication methods. The operation is not safe for blind
+        automatic retry after an ambiguous client response and does not implement MFA,
+        account linking, provider-token storage, or profile enrichment.
+      security: [{publishableKey: []}]
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SocialAuthExchangeRequest'}
+      responses:
+        '200':
+          description: Ordinary BeeBox session after one-time social completion consumption.
+          headers:
+            Cache-Control: {$ref: '#/components/headers/NoStore'}
+            X-Request-ID: {$ref: '#/components/headers/RequestID'}
+            Set-Cookie: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TokenResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidCredentials'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
   /v1/sessions/refresh:
     post:
       operationId: refreshSession
@@ -454,6 +557,18 @@ components:
       required: true
       schema: {type: string, minLength: 1, maxLength: 200}
       description: Opaque retry key scoped by server-selected application and operation.
+    BrowserOrigin:
+      name: Origin
+      in: header
+      required: true
+      schema: {type: string, format: uri}
+      description: Browser origin that must be exactly allowed for the resolved application. Social initiation additionally requires it to equal redirect_url origin.
+    SocialProviderPath:
+      name: provider
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/SocialProvider'}
+      description: Fixed BeeBox social provider key. Callback path alone never selects application or ownership authority.
     SessionID:
       name: session_id
       in: path
@@ -553,6 +668,52 @@ components:
       properties:
         email: {type: string, format: email}
         password: {type: string}
+    SocialProvider:
+      type: string
+      enum: [google, apple, microsoft, github, gitlab, facebook, discord, linkedin, x, tiktok]
+      description: Fixed P2.3 provider vocabulary. Provider-specific wire models are not part of the BeeBox public contract.
+    SocialAuthAttemptRequest:
+      type: object
+      additionalProperties: false
+      required: [provider, redirect_url, code_challenge, code_challenge_method]
+      properties:
+        provider: {$ref: '#/components/schemas/SocialProvider'}
+        redirect_url:
+          type: string
+          format: uri
+          maxLength: 2048
+          description: Exact application-scoped allowlisted redirect. Query strings, fragments, userinfo and wildcards are rejected; production redirects require HTTPS and localhost is the only HTTP development exception.
+        code_challenge:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+          description: Base64url SHA-256 challenge derived from the caller-retained RFC 7636 verifier.
+        code_challenge_method: {type: string, const: S256}
+    SocialAuthAttemptResponse:
+      type: object
+      additionalProperties: false
+      required: [authorization_url, expires_in]
+      properties:
+        authorization_url:
+          type: string
+          format: uri
+          description: Fixed-provider authorization URL carrying BeeBox-generated state and any provider protocol PKCE/nonce material required for proof.
+        expires_in: {type: integer, const: 600}
+    SocialAuthExchangeRequest:
+      type: object
+      additionalProperties: false
+      required: [code, code_verifier]
+      properties:
+        code:
+          type: string
+          minLength: 43
+          maxLength: 43
+          description: One-time 256-bit BeeBox completion grant represented as unpadded base64url. BeeBox stores only its SHA-256 hash.
+        code_verifier:
+          type: string
+          minLength: 43
+          maxLength: 128
+          pattern: '^[A-Za-z0-9._~-]+$'
+          description: Original RFC 7636 verifier retained by the client and never sent to the social provider.
     RefreshRequest:
       type: object
       additionalProperties: false
@@ -654,7 +815,7 @@ components:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
     InvalidCredentials:
-      description: Credentials are invalid without revealing identifier existence, verification, challenge, expiry, replay or ownership state.
+      description: Credentials or one-time completion state are invalid without revealing identifier existence, verification, challenge, expiry, replay or ownership state.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
@@ -694,7 +855,7 @@ components:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
     InvalidInput:
-      description: Input fails deterministic validation or public password policy.
+      description: Input fails deterministic validation, exact redirect policy, provider availability, or public password policy.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
