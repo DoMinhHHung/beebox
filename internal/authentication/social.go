@@ -36,6 +36,7 @@ const (
 	ProviderGitHub    Provider = "github"
 	ProviderGitLab    Provider = "gitlab"
 	ProviderFacebook  Provider = "facebook"
+	ProviderSlack     Provider = "slack"
 	ProviderDiscord   Provider = "discord"
 	ProviderLinkedIn  Provider = "linkedin"
 	ProviderX         Provider = "x"
@@ -49,6 +50,7 @@ var Providers = [...]Provider{
 	ProviderGitHub,
 	ProviderGitLab,
 	ProviderFacebook,
+	ProviderSlack,
 	ProviderDiscord,
 	ProviderLinkedIn,
 	ProviderX,
@@ -72,7 +74,7 @@ var pkceChallengePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
 
 func (p Provider) Valid() bool {
 	switch p {
-	case ProviderGoogle, ProviderApple, ProviderMicrosoft, ProviderGitHub, ProviderGitLab, ProviderFacebook, ProviderDiscord, ProviderLinkedIn, ProviderX, ProviderTikTok:
+	case ProviderGoogle, ProviderApple, ProviderMicrosoft, ProviderGitHub, ProviderGitLab, ProviderFacebook, ProviderSlack, ProviderDiscord, ProviderLinkedIn, ProviderX, ProviderTikTok:
 		return true
 	default:
 		return false
