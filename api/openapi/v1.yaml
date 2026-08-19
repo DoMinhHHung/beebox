@@ -670,7 +670,7 @@ components:
         password: {type: string}
     SocialProvider:
       type: string
-      enum: [google, apple, microsoft, github, gitlab, facebook, discord, linkedin, x, tiktok]
+      enum: [google, apple, microsoft, github, gitlab, facebook, slack, discord, linkedin, x, tiktok]
       description: Fixed P2.3 provider vocabulary. Provider-specific wire models are not part of the BeeBox public contract.
     SocialAuthAttemptRequest:
       type: object
