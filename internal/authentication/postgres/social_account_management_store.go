@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"errors"
+	"strconv"
 	"time"
 
 	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
@@ -60,8 +61,6 @@ func (s *Store) UnlinkSocialAccount(ctx context.Context, current authentication.
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Serialize all method-removal decisions for this user so two concurrent
-	// unlinks cannot both observe the other identity as a usable alternative.
 	var lockedUser int64
 	if err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE application_instance_id=$1 AND id=$2 FOR UPDATE`, int64(current.ApplicationInstanceID), int64(current.UserID)).Scan(&lockedUser); err != nil {
 		return authentication.ErrSocialAccountPersistence
@@ -85,8 +84,6 @@ func (s *Store) UnlinkSocialAccount(ctx context.Context, current authentication.
 	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, managementKey); err != nil {
 		return authentication.ErrSocialAccountPersistence
 	}
-	// Re-read after the management lock so a concurrent finalizer cannot leave us
-	// acting on a stale target snapshot.
 	if err := tx.QueryRowContext(ctx, `SELECT id,provider,provider_subject FROM external_identities WHERE application_instance_id=$1 AND user_id=$2 AND public_id=$3 FOR UPDATE`, int64(current.ApplicationInstanceID), int64(current.UserID), publicID).Scan(&targetID, &provider, &providerSubject); errors.Is(err, sql.ErrNoRows) {
 		if err := tx.Commit(); err != nil {
 			return authentication.ErrSocialAccountPersistence
@@ -110,7 +107,10 @@ func (s *Store) UnlinkSocialAccount(ctx context.Context, current authentication.
 		return authentication.ErrSocialAccountInvalidSession
 	}
 	now = now.UTC()
-	if sessionAppID != int64(current.ApplicationInstanceID) || sessionUserID != int64(current.UserID) || revokedAt.Valid || !sessionCreatedAt.UTC().Equal(current.CreatedAt.UTC()) || !now.Before(idleExpiresAt.UTC()) || !now.Before(expiresAt.UTC()) || !now.Before(sessionCreatedAt.UTC().Add(authentication.SocialLinkFreshness)) {
+	if sessionAppID != int64(current.ApplicationInstanceID) || sessionUserID != int64(current.UserID) || revokedAt.Valid || !sessionCreatedAt.UTC().Equal(current.CreatedAt.UTC()) || !now.Before(idleExpiresAt.UTC()) || !now.Before(expiresAt.UTC()) {
+		return authentication.ErrSocialAccountInvalidSession
+	}
+	if !now.Before(sessionCreatedAt.UTC().Add(authentication.SocialLinkFreshness)) {
 		return authentication.ErrSocialAccountReverification
 	}
 
@@ -187,7 +187,10 @@ func usableAuthenticationPathRemains(ctx context.Context, tx *sql.Tx, current au
 			}
 		}
 	}
-	return false, rows.Err()
+	if err := rows.Err(); err != nil {
+		return false, authentication.ErrSocialAccountPersistence
+	}
+	return false, nil
 }
 
 func insertSocialUnlinkAudit(ctx context.Context, tx *sql.Tx, current authentication.SocialAccountSession, publicID, action, outcome string, correlationID audit.CorrelationID) error {
