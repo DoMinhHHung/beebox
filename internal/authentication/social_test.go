@@ -13,7 +13,7 @@ import (
 
 func TestSocialProviderVocabularyAndPKCE(t *testing.T) {
 	t.Parallel()
-	if len(Providers) != 10 {
+	if len(Providers) != 11 {
 		t.Fatalf("providers = %d", len(Providers))
 	}
 	seen := map[Provider]bool{}
