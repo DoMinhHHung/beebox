@@ -25,8 +25,8 @@ type verifiedProductionContract struct {
 
 // These literals are intentionally independent of specFor. They are copied
 // from the provider-owned protocol documentation cited in PR #22. Facebook is
-// deliberately excluded until current Meta-owned Facebook Login documentation
-// can be retrieved and establishes the complete Login wire contract.
+// deliberately excluded until applicable current Meta-owned Website evidence
+// establishes the complete Facebook Login wire contract.
 func TestVerifiedProductionProviderContracts(t *testing.T) {
 	t.Parallel()
 	contracts := []verifiedProductionContract{
@@ -35,6 +35,7 @@ func TestVerifiedProductionProviderContracts(t *testing.T) {
 		{authentication.ProviderMicrosoft, "11111111-1111-4111-8111-111111111111", "https://login.microsoftonline.com/11111111-1111-4111-8111-111111111111/oauth2/v2.0/authorize", "https://login.microsoftonline.com/11111111-1111-4111-8111-111111111111/oauth2/v2.0/token", "", []string{"openid"}, oauth2.AuthStyleInParams, true, true, subjectOIDC, "https://login.microsoftonline.com/11111111-1111-4111-8111-111111111111/v2.0", "https://login.microsoftonline.com/11111111-1111-4111-8111-111111111111/discovery/v2.0/keys"},
 		{authentication.ProviderGitHub, "", "https://github.com/login/oauth/authorize", "https://github.com/login/oauth/access_token", "https://api.github.com/user", nil, oauth2.AuthStyleInParams, true, false, subjectTopLevelNumericID, "", ""},
 		{authentication.ProviderGitLab, "", "https://gitlab.com/oauth/authorize", "https://gitlab.com/oauth/token", "https://gitlab.com/api/v4/user", []string{"read_user"}, oauth2.AuthStyleInParams, true, false, subjectTopLevelNumericID, "", ""},
+		{authentication.ProviderSlack, "", "https://slack.com/openid/connect/authorize", "https://slack.com/api/openid.connect.token", "", []string{"openid"}, oauth2.AuthStyleInHeader, false, true, subjectOIDC, "https://slack.com", "https://slack.com/openid/connect/keys"},
 		{authentication.ProviderDiscord, "", "https://discord.com/oauth2/authorize", "https://discord.com/api/v10/oauth2/token", "https://discord.com/api/v10/users/@me", []string{"identify"}, oauth2.AuthStyleInParams, false, false, subjectTopLevelStringID, "", ""},
 		{authentication.ProviderLinkedIn, "", "https://www.linkedin.com/oauth/v2/authorization", "https://www.linkedin.com/oauth/v2/accessToken", "", []string{"openid"}, oauth2.AuthStyleInParams, false, true, subjectOIDC, "https://www.linkedin.com", "https://www.linkedin.com/oauth/openid/jwks"},
 		{authentication.ProviderX, "", "https://x.com/i/oauth2/authorize", "https://api.x.com/2/oauth2/token", "https://api.x.com/2/users/me", []string{"tweet.read", "users.read"}, oauth2.AuthStyleInHeader, true, false, subjectNestedStringID, "", ""},
