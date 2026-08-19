@@ -3,6 +3,7 @@
 - Status: accepted
 - Date: 2026-08-18
 - Human authority: ratified before P2.3 implementation
+- Human amendment: 2026-08-19 — expand the fixed P2.3 provider vocabulary from ten to eleven by adding `slack`; `facebook` remains in scope. This amendment changes provider breadth only and does not alter identity ownership, provider-email non-authority, token handling, account-linking, or P2.4 boundaries below.
 
 ## Context
 
@@ -39,12 +40,13 @@ The P2.3 public provider vocabulary is exactly:
 - `github`
 - `gitlab`
 - `facebook`
+- `slack`
 - `discord`
 - `linkedin`
 - `x`
 - `tiktok`
 
-These are protocol adapters behind one BeeBox-owned social-auth lifecycle. This ADR does not authorize provider-specific account models, provider-specific persistence ownership, custom OIDC, enterprise SSO, or additional providers.
+These are protocol adapters behind one BeeBox-owned social-auth lifecycle. This ADR does not authorize provider-specific account models, provider-specific persistence ownership, custom OIDC, enterprise SSO, or additional providers. Adding Slack does not replace Facebook and does not resolve or weaken any provider-specific protocol evidence gate.
 
 ## Security consequences
 
