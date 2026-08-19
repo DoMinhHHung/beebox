@@ -29,21 +29,27 @@ func (f *fakeSocialLinkHTTPSessions) Current(_ context.Context, appID applicatio
 	f.appID, f.appPublicID, f.token = appID, appPublicID, token
 	return f.record, f.err
 }
-func (*fakeSocialLinkHTTPSessions) SignOut(context.Context, applicationinstance.InternalID, string, string, audit.CorrelationID) error { return nil }
-func (*fakeSocialLinkHTTPSessions) GetSession(context.Context, applicationinstance.InternalID, string) (session.Record, error) { return session.Record{}, nil }
-func (*fakeSocialLinkHTTPSessions) RevokeSession(context.Context, applicationinstance.InternalID, string, audit.CorrelationID) error { return nil }
+func (*fakeSocialLinkHTTPSessions) SignOut(context.Context, applicationinstance.InternalID, string, string, audit.CorrelationID) error {
+	return nil
+}
+func (*fakeSocialLinkHTTPSessions) GetSession(context.Context, applicationinstance.InternalID, string) (session.Record, error) {
+	return session.Record{}, nil
+}
+func (*fakeSocialLinkHTTPSessions) RevokeSession(context.Context, applicationinstance.InternalID, string, audit.CorrelationID) error {
+	return nil
+}
 
 type fakeSocialLinkHTTPService struct {
-	createCalls int
-	current     authentication.SocialLinkSession
-	provider    authentication.Provider
-	redirect    string
-	create      authentication.SocialLinkResult
-	createErr   error
-	complete    authentication.SocialLinkCallbackResult
-	completeErr error
+	createCalls   int
+	current       authentication.SocialLinkSession
+	provider      authentication.Provider
+	redirect      string
+	create        authentication.SocialLinkResult
+	createErr     error
+	complete      authentication.SocialLinkCallbackResult
+	completeErr   error
 	completeCalls int
-	state       string
+	state         string
 }
 
 func (f *fakeSocialLinkHTTPService) CreateLinkAttempt(_ context.Context, _ applicationinstance.Instance, current authentication.SocialLinkSession, provider authentication.Provider, redirect string) (authentication.SocialLinkResult, error) {
@@ -64,7 +70,7 @@ func TestSocialLinkAttemptHTTPBindsAuthenticatedSessionAndRejectsClientPrincipal
 	sessions := &fakeSocialLinkHTTPSessions{record: session.Record{
 		PublicID: "ses_11111111-1111-4111-8111-111111111111", UserInternalID: 77,
 		ApplicationInstanceID: app.InternalID, ApplicationPublicID: string(app.PublicID),
-		CreatedAt: now.Add(-time.Minute), IdleExpiresAt: now.Add(time.Hour), ExpiresAt: now.Add(2*time.Hour),
+		CreatedAt: now.Add(-time.Minute), IdleExpiresAt: now.Add(time.Hour), ExpiresAt: now.Add(2 * time.Hour),
 	}}
 	links := &fakeSocialLinkHTTPService{create: authentication.SocialLinkResult{AuthorizationURL: "https://provider.example/authorize", ExpiresIn: 540}}
 	handler := WithSocialLinks(http.NotFoundHandler(), &socialHTTPApps{key: "bb_pk_fixture", app: app}, socialHTTPOrigins{appID: app.InternalID, origin: "https://app.example"}, sessions, links)
@@ -141,13 +147,13 @@ func TestSocialLinkAttemptMapsFreshnessAndSessionFailures(t *testing.T) {
 	baseSession := session.Record{PublicID: "ses_fixture", UserInternalID: 5, ApplicationInstanceID: 3, ApplicationPublicID: string(appPublicID), CreatedAt: now, IdleExpiresAt: now.Add(time.Hour), ExpiresAt: now.Add(time.Hour)}
 	for _, tc := range []struct {
 		name string
-		err error
+		err  error
 		want int
 		code string
 	}{
 		{name: "stale", err: authentication.ErrSocialLinkReverificationRequired, want: http.StatusForbidden, code: "reverification_required"},
 		{name: "invalid session", err: authentication.ErrSocialLinkInvalidSession, want: http.StatusUnauthorized, code: "invalid_session"},
-	}{
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sessions := &fakeSocialLinkHTTPSessions{record: baseSession}
 			links := &fakeSocialLinkHTTPService{createErr: tc.err}
