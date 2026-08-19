@@ -23,7 +23,7 @@ CREATE TABLE external_identities (
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT external_identities_user_scope_fk FOREIGN KEY (application_instance_id, user_id) REFERENCES users(application_instance_id, id),
     CONSTRAINT external_identities_application_instance_id_id_key UNIQUE (application_instance_id, id),
-    CONSTRAINT external_identities_provider_check CHECK (provider IN ('google','apple','microsoft','github','gitlab','facebook','discord','linkedin','x','tiktok')),
+    CONSTRAINT external_identities_provider_check CHECK (provider IN ('google','apple','microsoft','github','gitlab','facebook','slack','discord','linkedin','x','tiktok')),
     CONSTRAINT external_identities_subject_check CHECK (char_length(provider_subject) BETWEEN 1 AND 512),
     CONSTRAINT external_identities_subject_owner_key UNIQUE (application_instance_id, provider, provider_subject)
 );
@@ -42,7 +42,7 @@ CREATE TABLE social_auth_attempts (
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     expires_at TIMESTAMPTZ NOT NULL,
     consumed_at TIMESTAMPTZ,
-    CONSTRAINT social_auth_attempts_provider_check CHECK (provider IN ('google','apple','microsoft','github','gitlab','facebook','discord','linkedin','x','tiktok')),
+    CONSTRAINT social_auth_attempts_provider_check CHECK (provider IN ('google','apple','microsoft','github','gitlab','facebook','slack','discord','linkedin','x','tiktok')),
     CONSTRAINT social_auth_attempts_purpose_check CHECK (purpose = 'social_auth'),
     CONSTRAINT social_auth_attempts_state_hash_check CHECK (octet_length(state_hash) = 32),
     CONSTRAINT social_auth_attempts_state_hash_key UNIQUE (state_hash),
