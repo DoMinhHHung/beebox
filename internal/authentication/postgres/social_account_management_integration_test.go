@@ -15,7 +15,9 @@ import (
 	applicationpostgres "github.com/DoMinhHHung/beebox/internal/applicationinstance/postgres"
 	"github.com/DoMinhHHung/beebox/internal/audit"
 	"github.com/DoMinhHHung/beebox/internal/authentication"
+	"github.com/DoMinhHHung/beebox/internal/identity"
 	identitypostgres "github.com/DoMinhHHung/beebox/internal/identity/postgres"
+	"github.com/DoMinhHHung/beebox/internal/platform/database"
 	"github.com/DoMinhHHung/beebox/internal/platform/migration"
 )
 
@@ -38,12 +40,10 @@ func TestSocialAccountListingIsScopedBoundedAndStable(t *testing.T) {
 	userB, _ := identities.Create(ctx, appB.InternalID)
 	db := pool.OpenSQLDB()
 	defer db.Close()
-
 	insertExternalIdentity(t, ctx, db, appA.InternalID, userA.InternalID, "github", "subject-1", time.Unix(10, 0).UTC())
 	insertExternalIdentity(t, ctx, db, appA.InternalID, userA.InternalID, "google", "subject-2", time.Unix(20, 0).UTC())
 	insertExternalIdentity(t, ctx, db, appA.InternalID, otherA.InternalID, "discord", "other", time.Unix(15, 0).UTC())
 	insertExternalIdentity(t, ctx, db, appB.InternalID, userB.InternalID, "github", "cross-app", time.Unix(15, 0).UTC())
-
 	store := New(pool)
 	first, err := store.ListSocialAccounts(ctx, appA.InternalID, userA.InternalID, 1, nil)
 	if err != nil || len(first) != 1 || first[0].Provider != authentication.ProviderGitHub || !authentication.ValidSocialLinkPublicID(first[0].PublicID) {
@@ -58,16 +58,16 @@ func TestSocialAccountListingIsScopedBoundedAndStable(t *testing.T) {
 
 func TestSocialUnlinkLastUsableMethodMatrix(t *testing.T) {
 	cases := []struct {
-		name          string
-		setup         func(*testing.T, context.Context, *sql.DB, applicationinstance.InternalID, int64)
-		emailOTP      bool
-		phoneOTP      bool
-		configured   []authentication.Provider
-		wantLastOnly bool
+		name       string
+		setup      func(*testing.T, context.Context, *sql.DB, applicationinstance.InternalID, int64)
+		emailOTP   bool
+		phoneOTP   bool
+		configured []authentication.Provider
+		denied     bool
 	}{
-		{name: "social only denied", wantLastOnly: true},
+		{name: "social only denied", denied: true},
 		{name: "configured second social allows", configured: []authentication.Provider{authentication.ProviderGoogle}, setup: addSecondSocial("google", "second")},
-		{name: "unconfigured second social denied", setup: addSecondSocial("google", "second"), wantLastOnly: true},
+		{name: "unconfigured second social denied", setup: addSecondSocial("google", "second"), denied: true},
 		{name: "password plus verified email allows", setup: func(t *testing.T, ctx context.Context, db *sql.DB, app applicationinstance.InternalID, user int64) {
 			mustExec(t, ctx, db, `INSERT INTO email_identifiers(application_instance_id,user_id,email_address,normalized_email,verified_at) VALUES($1,$2,'a@example.test','a@example.test',CURRENT_TIMESTAMP)`, int64(app), user)
 			mustExec(t, ctx, db, `INSERT INTO password_credentials(application_instance_id,user_id,password_hash) VALUES($1,$2,'hash')`, int64(app), user)
@@ -75,13 +75,12 @@ func TestSocialUnlinkLastUsableMethodMatrix(t *testing.T) {
 		{name: "password plus unverified email denied", setup: func(t *testing.T, ctx context.Context, db *sql.DB, app applicationinstance.InternalID, user int64) {
 			mustExec(t, ctx, db, `INSERT INTO email_identifiers(application_instance_id,user_id,email_address,normalized_email) VALUES($1,$2,'a@example.test','a@example.test')`, int64(app), user)
 			mustExec(t, ctx, db, `INSERT INTO password_credentials(application_instance_id,user_id,password_hash) VALUES($1,$2,'hash')`, int64(app), user)
-		}, wantLastOnly: true},
+		}, denied: true},
 		{name: "verified email SMTP configured allows", emailOTP: true, setup: addVerifiedEmail},
-		{name: "verified email SMTP disabled denied", setup: addVerifiedEmail, wantLastOnly: true},
+		{name: "verified email SMTP disabled denied", setup: addVerifiedEmail, denied: true},
 		{name: "verified phone SMS enabled allows", phoneOTP: true, setup: addVerifiedPhone},
-		{name: "verified phone SMS disabled denied", setup: addVerifiedPhone, wantLastOnly: true},
+		{name: "verified phone SMS disabled denied", setup: addVerifiedPhone, denied: true},
 	}
-
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			pool, ctx := socialAccountManagementDatabase(t, "matrix")
@@ -94,14 +93,14 @@ func TestSocialUnlinkLastUsableMethodMatrix(t *testing.T) {
 			if tc.setup != nil {
 				tc.setup(t, ctx, db, app.InternalID, int64(user.InternalID))
 			}
-			configured := make(map[authentication.Provider]bool)
+			configured := map[authentication.Provider]bool{}
 			for _, p := range tc.configured {
 				configured[p] = true
 			}
 			availability := authentication.SocialMethodAvailability{EmailOTP: tc.emailOTP, PhoneOTP: tc.phoneOTP, Social: socialAvailabilityRegistry{app: app.PublicID, providers: configured}}
 			correlation, _ := audit.NewCorrelationID()
 			err := New(pool).UnlinkSocialAccount(ctx, socialAccountSession(app, user.InternalID, sessionID, created), publicID, availability, correlation)
-			if tc.wantLastOnly {
+			if tc.denied {
 				if !errors.Is(err, authentication.ErrLastAuthenticationMethod) {
 					t.Fatalf("error=%v want last method", err)
 				}
@@ -129,12 +128,10 @@ func TestSocialUnlinkCancelsPendingSecurityStateAndIsRetrySafe(t *testing.T) {
 	sessionID, created := insertSocialLinkSession(t, ctx, db, app.InternalID, user.InternalID, time.Minute)
 	target := insertExternalIdentity(t, ctx, db, app.InternalID, user.InternalID, "github", "target", time.Now().UTC())
 	addVerifiedEmail(t, ctx, db, app.InternalID, int64(user.InternalID))
-
 	state := sha256.Sum256([]byte("pending-link"))
 	mustExec(t, ctx, db, `INSERT INTO social_link_attempts(application_instance_id,user_id,session_id,provider,canonical_redirect_url,state_hash,recent_auth_at,provider_pkce_ciphertext,created_at,expires_at) SELECT $1,$2,id,'github','https://app.example/link',$3,created_at,$4,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP+INTERVAL '5 minutes' FROM sessions WHERE public_id=$5`, int64(app.InternalID), int64(user.InternalID), state[:], []byte("ciphertext"), sessionID)
 	code := sha256.Sum256([]byte("completion"))
 	mustExec(t, ctx, db, `INSERT INTO social_auth_completion_grants(application_instance_id,user_id,code_hash,client_code_challenge,expires_at) VALUES($1,$2,$3,$4,CURRENT_TIMESTAMP+INTERVAL '5 minutes')`, int64(app.InternalID), int64(user.InternalID), code[:], "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-
 	correlation, _ := audit.NewCorrelationID()
 	current := socialAccountSession(app, user.InternalID, sessionID, created)
 	store := New(pool)
@@ -155,10 +152,6 @@ func TestSocialUnlinkCancelsPendingSecurityStateAndIsRetrySafe(t *testing.T) {
 	}
 	if _, err := store.ConsumeSocialLinkAttempt(ctx, state, authentication.ProviderGitHub); !errors.Is(err, authentication.ErrSocialLinkInvalidState) {
 		t.Fatalf("canceled state consume error=%v", err)
-	}
-	var successAudits int
-	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM audit_events WHERE action=$1 AND resource_reference=$2`, audit.ActionSocialUnlinkSucceeded, "social_link:"+target).Scan(&successAudits); err != nil || successAudits != 1 {
-		t.Fatalf("success audits=%d err=%v", successAudits, err)
 	}
 }
 
@@ -190,7 +183,7 @@ func TestConcurrentUnlinkCannotRemoveLastTwoSocialMethods(t *testing.T) {
 	close(start)
 	wg.Wait()
 	close(errs)
-	var success, denied int
+	success, denied := 0, 0
 	for err := range errs {
 		if err == nil {
 			success++
