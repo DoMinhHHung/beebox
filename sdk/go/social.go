@@ -11,6 +11,7 @@ const (
 	SocialProviderGitHub    SocialProvider = "github"
 	SocialProviderGitLab    SocialProvider = "gitlab"
 	SocialProviderFacebook  SocialProvider = "facebook"
+	SocialProviderSlack     SocialProvider = "slack"
 	SocialProviderDiscord   SocialProvider = "discord"
 	SocialProviderLinkedIn  SocialProvider = "linkedin"
 	SocialProviderX         SocialProvider = "x"
