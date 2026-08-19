@@ -5,7 +5,7 @@ package migration
 import (
 	"context"
 	cryptosha256 "crypto/sha256"
-	"errors"
+	"database/sql"
 	"io/fs"
 	"testing"
 	"testing/fstest"
@@ -85,8 +85,8 @@ func TestSocialLinkMigrationUpgradesVersion15AndEnforcesBindings(t *testing.T) {
 	for i, provider := range providers {
 		state := cryptosha256.Sum256([]byte(provider))
 		if _, err := db.ExecContext(ctx, `
-			INSERT INTO social_link_attempts(application_instance_id,user_id,session_id,provider,canonical_redirect_url,state_hash,recent_auth_at,created_at,expires_at)
-			VALUES($1,$2,$3,$4,'https://app.example/link',$5,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP+INTERVAL '5 minutes')`,
+            INSERT INTO social_link_attempts(application_instance_id,user_id,session_id,provider,canonical_redirect_url,state_hash,recent_auth_at,created_at,expires_at)
+            VALUES($1,$2,$3,$4,'https://app.example/link',$5,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP+INTERVAL '5 minutes')`,
 			int64(appA.InternalID), int64(userA.InternalID), sessionA, provider, state[:]); err != nil {
 			t.Fatalf("provider[%d]=%s rejected: %v", i, provider, err)
 		}
@@ -94,40 +94,38 @@ func TestSocialLinkMigrationUpgradesVersion15AndEnforcesBindings(t *testing.T) {
 
 	invalidState := cryptosha256.Sum256([]byte("provider-12"))
 	if _, err := db.ExecContext(ctx, `
-		INSERT INTO social_link_attempts(application_instance_id,user_id,session_id,provider,canonical_redirect_url,state_hash,recent_auth_at,created_at,expires_at)
-		VALUES($1,$2,$3,'custom','https://app.example/link',$4,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP+INTERVAL '5 minutes')`,
+        INSERT INTO social_link_attempts(application_instance_id,user_id,session_id,provider,canonical_redirect_url,state_hash,recent_auth_at,created_at,expires_at)
+        VALUES($1,$2,$3,'custom','https://app.example/link',$4,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP+INTERVAL '5 minutes')`,
 		int64(appA.InternalID), int64(userA.InternalID), sessionA, invalidState[:]); err == nil {
 		t.Fatal("provider outside exact eleven-provider vocabulary was accepted")
 	}
 
 	shortState := make([]byte, 31)
 	if _, err := db.ExecContext(ctx, `
-		INSERT INTO social_link_attempts(application_instance_id,user_id,session_id,provider,canonical_redirect_url,state_hash,recent_auth_at,created_at,expires_at)
-		VALUES($1,$2,$3,'github','https://app.example/link',$4,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP+INTERVAL '5 minutes')`,
+        INSERT INTO social_link_attempts(application_instance_id,user_id,session_id,provider,canonical_redirect_url,state_hash,recent_auth_at,created_at,expires_at)
+        VALUES($1,$2,$3,'github','https://app.example/link',$4,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP+INTERVAL '5 minutes')`,
 		int64(appA.InternalID), int64(userA.InternalID), sessionA, shortState); err == nil {
 		t.Fatal("31-byte state hash was accepted")
 	}
 
 	crossState := cryptosha256.Sum256([]byte("cross-app-session"))
 	if _, err := db.ExecContext(ctx, `
-		INSERT INTO social_link_attempts(application_instance_id,user_id,session_id,provider,canonical_redirect_url,state_hash,recent_auth_at,created_at,expires_at)
-		VALUES($1,$2,$3,'github','https://app.example/link',$4,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP+INTERVAL '5 minutes')`,
+        INSERT INTO social_link_attempts(application_instance_id,user_id,session_id,provider,canonical_redirect_url,state_hash,recent_auth_at,created_at,expires_at)
+        VALUES($1,$2,$3,'github','https://app.example/link',$4,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP+INTERVAL '5 minutes')`,
 		int64(appA.InternalID), int64(userA.InternalID), sessionB, crossState[:]); err == nil {
 		t.Fatal("cross-application session binding was accepted")
 	}
 
 	lateState := cryptosha256.Sum256([]byte("late-expiry"))
 	if _, err := db.ExecContext(ctx, `
-		INSERT INTO social_link_attempts(application_instance_id,user_id,session_id,provider,canonical_redirect_url,state_hash,recent_auth_at,created_at,expires_at)
-		VALUES($1,$2,$3,'github','https://app.example/link',$4,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP+INTERVAL '11 minutes')`,
+        INSERT INTO social_link_attempts(application_instance_id,user_id,session_id,provider,canonical_redirect_url,state_hash,recent_auth_at,created_at,expires_at)
+        VALUES($1,$2,$3,'github','https://app.example/link',$4,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP+INTERVAL '11 minutes')`,
 		int64(appA.InternalID), int64(userA.InternalID), sessionA, lateState[:]); err == nil {
 		t.Fatal("attempt expiry beyond ten-minute bound was accepted")
 	}
 }
 
-func insertMigrationSession(t *testing.T, ctx context.Context, db interface {
-	QueryRowContext(context.Context, string, ...any) *sql.Row
-}, appID, userID int64) int64 {
+func insertMigrationSession(t *testing.T, ctx context.Context, db *sql.DB, appID, userID int64) int64 {
 	t.Helper()
 	publicID, err := session.NewPublicID()
 	if err != nil {
@@ -135,12 +133,10 @@ func insertMigrationSession(t *testing.T, ctx context.Context, db interface {
 	}
 	var id int64
 	if err := db.QueryRowContext(ctx, `
-		INSERT INTO sessions(public_id,application_instance_id,user_id,idle_expires_at,expires_at)
-		VALUES($1,$2,$3,CURRENT_TIMESTAMP+INTERVAL '30 minutes',CURRENT_TIMESTAMP+INTERVAL '1 hour')
-		RETURNING id`, publicID, appID, userID).Scan(&id); err != nil {
+        INSERT INTO sessions(public_id,application_instance_id,user_id,idle_expires_at,expires_at)
+        VALUES($1,$2,$3,CURRENT_TIMESTAMP+INTERVAL '30 minutes',CURRENT_TIMESTAMP+INTERVAL '1 hour')
+        RETURNING id`, publicID, appID, userID).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
 	return id
 }
-
-var _ = errors.Is
