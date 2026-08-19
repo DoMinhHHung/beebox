@@ -184,7 +184,7 @@ func TestSocialLinkHTTPLifecycleOverPostgreSQL(t *testing.T) {
 		if !ok {
 			t.Fatal("failed to build P2.3 code challenge")
 		}
-		authAttempt := socialE2EPost(t, handler, publishableA, originA, "", "/v1/social-auth/attempts", `{"provider":"github","redirect_url":"`+redirectA+`","code_challenge":"`+challenge+`","code_challenge_method":"S256"}`)
+		authAttempt := socialE2EPost(t, handler, publishableA, originA, "/v1/social-auth/attempts", `{"provider":"github","redirect_url":"`+redirectA+`","code_challenge":"`+challenge+`","code_challenge_method":"S256"}`)
 		if authAttempt.Code != http.StatusCreated {
 			t.Fatalf("P2.3 attempt status/body = %d %s", authAttempt.Code, authAttempt.Body.String())
 		}
