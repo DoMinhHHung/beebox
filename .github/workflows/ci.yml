@@ -68,6 +68,11 @@ jobs:
       - name: Go SDK tests
         run: go test ./sdk/go
 
+      - name: Social provider contract tests
+        run: |
+          go test ./internal/authentication/socialprovider -count=1
+          go test ./internal/authentication/socialprovider -count=20
+
       - name: Test
         run: go test ./...
 

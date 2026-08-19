@@ -19,6 +19,7 @@ import (
 	"github.com/DoMinhHHung/beebox/internal/authentication/metricsdelivery"
 	authpostgres "github.com/DoMinhHHung/beebox/internal/authentication/postgres"
 	"github.com/DoMinhHHung/beebox/internal/authentication/smtpdelivery"
+	"github.com/DoMinhHHung/beebox/internal/authentication/socialprovider"
 	"github.com/DoMinhHHung/beebox/internal/httpapi"
 	identitypostgres "github.com/DoMinhHHung/beebox/internal/identity/postgres"
 	"github.com/DoMinhHHung/beebox/internal/metrics"
@@ -95,6 +96,10 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 	if err != nil {
 		return nil, err
 	}
+	socialRegistry, socialProtector, err := socialprovider.Load(socialprovider.LookupEnv(lookup))
+	if err != nil {
+		return nil, errors.New("load social provider configuration")
+	}
 	recorder := metrics.New()
 	recorder.SetDatabaseStatsProvider(func() metrics.DatabaseStats {
 		stats := concretePool.Stats()
@@ -122,6 +127,9 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 
 	ring, err := session.KeyRingFromLookup(session.LookupEnv(lookup))
 	if errors.Is(err, session.ErrTokenDisabled) {
+		if socialRegistry.Enabled() {
+			return nil, errors.New("social authentication requires access token signing configuration")
+		}
 		base = httpapi.WithEmailOTP(base, integrationService, integrationStore, nil, nil)
 		base = httpapi.WithPhoneSMS(base, integrationService, integrationStore, nil, nil, nil, nil)
 		return httpapi.WithMetrics(base, recorder), nil
@@ -137,6 +145,11 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 	base = httpapi.WithSessions(base, integrationService, integrationStore, sessionService, ring)
 	base = httpapi.WithEmailOTP(base, integrationService, integrationStore, emailOTP, emailOTPSession)
 	base = httpapi.WithPhoneSMS(base, integrationService, integrationStore, phoneSignupIssuer, phoneSignupSession, phoneSigninIssuer, phoneOTPSession)
+	if socialRegistry.Enabled() {
+		socialCore := authentication.NewSocialService(authStore, integrationStore, authStore, socialRegistry, socialProtector)
+		socialCompletion := session.NewSocialCompletionService(authStore, authStore, ring)
+		base = httpapi.WithSocialAuth(base, integrationService, integrationStore, socialCore, socialCompletion)
+	}
 	base = httpapi.WithSessionManagement(base, integrationService, integrationService, sessionService)
 	return httpapi.WithMetrics(base, recorder), nil
 }
