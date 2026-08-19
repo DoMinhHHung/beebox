@@ -4,7 +4,7 @@ package postgres
 
 import (
 	"context"
-	"crypto/sha256"
+	cryptosha256 "crypto/sha256"
 	"database/sql"
 	"errors"
 	"sync"
@@ -128,9 +128,9 @@ func TestSocialUnlinkCancelsPendingSecurityStateAndIsRetrySafe(t *testing.T) {
 	sessionID, created := insertSocialLinkSession(t, ctx, db, app.InternalID, user.InternalID, time.Minute)
 	target := insertExternalIdentity(t, ctx, db, app.InternalID, user.InternalID, "github", "target", time.Now().UTC())
 	addVerifiedEmail(t, ctx, db, app.InternalID, int64(user.InternalID))
-	state := sha256.Sum256([]byte("pending-link"))
+	state := cryptosha256.Sum256([]byte("pending-link"))
 	mustExec(t, ctx, db, `INSERT INTO social_link_attempts(application_instance_id,user_id,session_id,provider,canonical_redirect_url,state_hash,recent_auth_at,provider_pkce_ciphertext,created_at,expires_at) SELECT $1,$2,id,'github','https://app.example/link',$3,created_at,$4,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP+INTERVAL '5 minutes' FROM sessions WHERE public_id=$5`, int64(app.InternalID), int64(user.InternalID), state[:], []byte("ciphertext"), sessionID)
-	code := sha256.Sum256([]byte("completion"))
+	code := cryptosha256.Sum256([]byte("completion"))
 	mustExec(t, ctx, db, `INSERT INTO social_auth_completion_grants(application_instance_id,user_id,code_hash,client_code_challenge,expires_at) VALUES($1,$2,$3,$4,CURRENT_TIMESTAMP+INTERVAL '5 minutes')`, int64(app.InternalID), int64(user.InternalID), code[:], "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
 	correlation, _ := audit.NewCorrelationID()
 	current := socialAccountSession(app, user.InternalID, sessionID, created)
