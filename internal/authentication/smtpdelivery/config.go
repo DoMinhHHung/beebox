@@ -28,6 +28,14 @@ func (unavailable) DeliverSignInCode(context.Context, string, string, time.Time)
 	return ErrDelivery
 }
 
+func Configured(sender Sender) bool {
+	if sender == nil {
+		return false
+	}
+	_, unavailableSender := sender.(unavailable)
+	return !unavailableSender
+}
+
 // FromLookup returns an unavailable sender when SMTP is intentionally not
 // configured. This keeps process startup independent of provider availability;
 // reachable authentication lifecycles still receive stable delivery-unavailable
