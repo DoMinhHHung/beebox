@@ -50,7 +50,7 @@ func TestSocialAccountManagementHTTPListUsesAuthenticatedPrincipalAndMinimizedMo
 		CreatedAt: now.Add(-30 * time.Minute), IdleExpiresAt: now.Add(time.Hour), ExpiresAt: now.Add(2 * time.Hour),
 	}}
 	management := &fakeSocialAccountHTTPService{page: authentication.SocialAccountPage{
-		Items: []authentication.LinkedSocialAccount{{PublicID: "sli_123e4567-e89b-42d3-a456-426614174000", Provider: authentication.ProviderGitHub, CreatedAt: now}},
+		Items:      []authentication.LinkedSocialAccount{{PublicID: "sli_123e4567-e89b-42d3-a456-426614174000", Provider: authentication.ProviderGitHub, CreatedAt: now}},
 		NextCursor: "opaque-cursor",
 	}}
 	handler := WithSocialAccountManagement(http.NotFoundHandler(), &socialHTTPApps{key: "pk", app: app}, socialHTTPOrigins{appID: app.InternalID, origin: "https://app.example"}, sessions, management)
