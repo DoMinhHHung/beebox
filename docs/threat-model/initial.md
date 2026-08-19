@@ -81,7 +81,7 @@ Metrics use fixed bounded vocabulary only and never label by email, phone, user/
 
 ## 7. P2.2 phone canonicalization and identity ownership controls
 
-P2.2 v1 accepts a BeeBox-owned strict international E.164 representation: `+` followed by 2–15 ASCII decimal digits, first digit non-zero. Surrounding ordinary whitespace may be trimmed; BeeBox does not infer a default region and does not accept national formatting, embedded whitespace, punctuation, `00`, `tel:`, extensions or alphabetic digits.
+P2.2 v1 accepts a BeeBox-owned strict international E.164 representation: `+` followed by 2–15 ASCII decimal digits, first digit non-zero. Surrounding ordinary whitespace may be trimmed; BeeBox does not infer a default region or accept national formatting, embedded whitespace, punctuation, `00`, `tel:`, extensions or alphabetic digits.
 
 `phone_identifiers` is explicitly application + user scoped and carries nullable `verified_at`. PostgreSQL enforces same-application ownership and uniqueness of a **verified** `(application_instance, phone_e164)` while allowing the same canonical phone in another application. Equality never selects, links, merges or adopts a principal.
 
