@@ -138,7 +138,7 @@ func (a *adapter) AuthorizationURL(state, nonce, providerCodeChallenge string) (
 		return u.String(), nil
 	}
 	oauthCfg := a.oauthConfig()
-	opts := make([]oauth2.AuthCodeOption, 0, 4)
+	opts := make([]oauth2.AuthCodeOption, 0, 5)
 	if a.usePKCE {
 		opts = append(opts,
 			oauth2.SetAuthURLParam("code_challenge", providerCodeChallenge),
@@ -147,6 +147,9 @@ func (a *adapter) AuthorizationURL(state, nonce, providerCodeChallenge string) (
 	}
 	if a.useNonce {
 		opts = append(opts, oauth2.SetAuthURLParam("nonce", nonce))
+	}
+	if a.provider == authentication.ProviderSlack {
+		opts = append(opts, oauth2.SetAuthURLParam("response_mode", "query"))
 	}
 	return oauthCfg.AuthCodeURL(state, opts...), nil
 }
@@ -439,6 +442,17 @@ func specFor(provider authentication.Provider, microsoftTenant string) (provider
 			userInfoURL: "https://graph.facebook.com/me?fields=id",
 			authStyle:   oauth2.AuthStyleInParams,
 			mode:        subjectTopLevelStringID,
+		}, nil
+	case authentication.ProviderSlack:
+		return providerSpec{
+			authURL:   "https://slack.com/openid/connect/authorize",
+			tokenURL:  "https://slack.com/api/openid.connect.token",
+			scopes:    []string{"openid"},
+			authStyle: oauth2.AuthStyleInHeader,
+			useNonce:  true,
+			mode:      subjectOIDC,
+			issuer:    "https://slack.com",
+			jwksURL:   "https://slack.com/openid/connect/keys",
 		}, nil
 	case authentication.ProviderDiscord:
 		return providerSpec{
