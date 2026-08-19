@@ -44,7 +44,7 @@ func TestPublicOpenAPIContract(t *testing.T) {
 		"operationId: createSocialAuthAttempt",
 		"operationId: completeSocialProviderCallback",
 		"operationId: exchangeSocialAuthCode",
-		"enum: [google, apple, microsoft, github, gitlab, facebook, discord, linkedin, x, tiktok]",
+		"enum: [google, apple, microsoft, github, gitlab, facebook, slack, discord, linkedin, x, tiktok]",
 		"code_challenge_method: {type: string, const: S256}",
 		"  /v1/sessions/refresh:",
 		"  /v1/sessions/current:",
