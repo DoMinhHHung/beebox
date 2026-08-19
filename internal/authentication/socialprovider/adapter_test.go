@@ -30,6 +30,7 @@ func TestAuthorizationURLProviderMatrix(t *testing.T) {
 		{authentication.ProviderGitHub, "", "github.com", "/login/oauth/authorize", nil, true, false},
 		{authentication.ProviderGitLab, "", "gitlab.com", "/oauth/authorize", []string{"read_user"}, true, false},
 		{authentication.ProviderFacebook, "", "www.facebook.com", "/dialog/oauth", nil, false, false},
+		{authentication.ProviderSlack, "", "slack.com", "/openid/connect/authorize", []string{"openid"}, false, true},
 		{authentication.ProviderDiscord, "", "discord.com", "/oauth2/authorize", []string{"identify"}, false, false},
 		{authentication.ProviderLinkedIn, "", "www.linkedin.com", "/oauth/v2/authorization", []string{"openid"}, false, true},
 		{authentication.ProviderX, "", "x.com", "/i/oauth2/authorize", []string{"tweet.read", "users.read"}, true, false},
@@ -40,7 +41,7 @@ func TestAuthorizationURLProviderMatrix(t *testing.T) {
 		t.Fatalf("matrix providers = %d, vocabulary = %d", len(tests), len(authentication.Providers))
 	}
 	for _, tt := range tests {
-		tt := tt
+		t := tt
 		t.Run(string(tt.provider), func(t *testing.T) {
 			t.Parallel()
 			adapter, err := newAdapter(adapterConfig{
