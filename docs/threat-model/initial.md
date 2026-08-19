@@ -120,7 +120,7 @@ Phone OTP sign-in is purpose-separated from signup and requires an existing `pho
 | Concurrent redemption | Phone identifier and challenge are rechecked under PostgreSQL row locks; only one current generation can commit challenge consumption/session creation. |
 | Partial session creation | Successful consume, ordinary session, refresh verifier and success audit share one transaction; failure rolls back challenge/session state. |
 | Replay | Consumed/replaced/expired/exhausted challenge returns safe invalid credentials and cannot create another session. |
-| Fake password/MFA authority | Phone OTP is an ADR 0005 **primary authentication method** only. It creates the current ordinary session class because no additional-assurance runtime is configured; it does not claim MFA bypass or permanent strength ordering against password/email OTP. |
+| Fake password/MFA authority | Phone OTP is an ADR 0005 **primary authentication method** only. It creates the current ordinary session class because no additional-assurance runtime is configured yet; it does not claim MFA bypass or permanent strength ordering against password/email OTP. |
 
 ## 10. P2.2 SMS provider and partial-failure controls
 
@@ -337,6 +337,6 @@ The suite does not prove real developer-console configuration, real credentials,
 - `internal/authentication/socialprovider/provider_contract_test.go` — exact independently encoded eleven-provider production literal matrix, including Facebook's dedicated token-exchange mode rather than misrepresenting it as an OAuth AuthStyle.
 - `internal/authentication/socialprovider/slack_contract_test.go`, `slack_subject_contract_test.go`, `slack_registry_test.go`, other `*_contract_test.go`, `protocol_test.go`, `adapter_test.go` and `registry_test.go` — deterministic provider-shaped success/error/protocol/subject/JWKS/config evidence; Slack remains shared OIDC with explicit query response mode and Basic token auth.
 - `internal/authentication/postgres/social_store_integration_test.go` — provider-email collision separation, existing subject reuse, cross-app isolation, concurrent first callback, state/completion replay, session/refresh and audit rollback evidence.
-- `internal/httpapi/social.go` and social HTTP tests — initiate/callback/exchange browser boundary, exact redirect behavior, generic provider failure and provider-token non-leakage.
+- `internal/httpapi/social.go`, `internal/httpapi/social_test.go` and `internal/httpapi/social_e2e_integration_test.go` — direct handler and PostgreSQL-backed initiate/callback/exchange browser-boundary evidence, including publishable-key/Origin/application redirect isolation, callback query/provider/state/replay handling, stored-redirect-only generic failure/success completion, exchange-only session issuance, client-PKCE/cross-app completion denial, CORS/no-store and provider-token non-leakage.
 - `api/openapi/v1.yaml` and `sdk/go/social.go` — BeeBox-owned public social contract and client operations with exact eleven-provider vocabulary.
 - `.github/workflows/ci.yml` — formatting, vet, vulnerability, OpenAPI, SDK, repeated social provider-contract, full unit, PostgreSQL integration and race gates.
