@@ -52,12 +52,8 @@ func (h *socialLinkHTTP) isLinkCallback(r *http.Request) bool {
 	if !strings.HasPrefix(r.URL.Path, "/v1/social-auth/callback/") {
 		return false
 	}
-	for _, state := range r.URL.Query()["state"] {
-		if strings.HasPrefix(state, authentication.SocialLinkStatePrefix) {
-			return true
-		}
-	}
-	return false
+	states := r.URL.Query()["state"]
+	return len(states) == 1 && authentication.ValidSocialLinkStateWire(states[0])
 }
 
 func (h *socialLinkHTTP) withSocialLinkSecurityContext(w http.ResponseWriter, r *http.Request) {
@@ -169,7 +165,7 @@ func (h *socialLinkHTTP) handleSocialLinkCallback(w http.ResponseWriter, r *http
 	}
 	query := r.URL.Query()
 	states := query["state"]
-	if len(states) != 1 || states[0] == "" || !strings.HasPrefix(states[0], authentication.SocialLinkStatePrefix) {
+	if len(states) != 1 || !authentication.ValidSocialLinkStateWire(states[0]) {
 		writeError(w, http.StatusBadRequest, "invalid_social_state", "The social callback state is invalid.", requestID)
 		return
 	}
