@@ -2,9 +2,11 @@ package authentication
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -19,11 +21,11 @@ const (
 )
 
 var (
-	ErrSocialAccountInvalidRequest       = errors.New("invalid social account management request")
-	ErrSocialAccountInvalidSession       = errors.New("invalid social account management session")
-	ErrSocialAccountReverification       = errors.New("social account management reverification required")
-	ErrLastAuthenticationMethod          = errors.New("last authentication method")
-	ErrSocialAccountPersistence          = errors.New("social account management persistence failure")
+	ErrSocialAccountInvalidRequest = errors.New("invalid social account management request")
+	ErrSocialAccountInvalidSession = errors.New("invalid social account management session")
+	ErrSocialAccountReverification = errors.New("social account management reverification required")
+	ErrLastAuthenticationMethod    = errors.New("last authentication method")
+	ErrSocialAccountPersistence    = errors.New("social account management persistence failure")
 )
 
 type SocialAccountSession struct {
@@ -119,6 +121,10 @@ func (s *SocialAccountService) Unlink(ctx context.Context, current SocialAccount
 		return ErrSocialAccountReverification
 	}
 	return s.persistence.UnlinkSocialAccount(ctx, current, publicID, s.availability, correlationID)
+}
+
+func SocialLinkManagementLockKey(appID applicationinstance.InternalID, userID identity.InternalID, provider Provider) [32]byte {
+	return sha256.Sum256([]byte(fmt.Sprintf("beebox-social-link-management-v1\x00%d\x00%d\x00%s", appID, userID, provider)))
 }
 
 func validSocialAccountSession(s SocialAccountSession) bool {
