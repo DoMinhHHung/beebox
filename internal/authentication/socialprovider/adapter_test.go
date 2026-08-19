@@ -29,7 +29,7 @@ func TestAuthorizationURLProviderMatrix(t *testing.T) {
 		{authentication.ProviderMicrosoft, "11111111-1111-4111-8111-111111111111", "login.microsoftonline.com", "/11111111-1111-4111-8111-111111111111/oauth2/v2.0/authorize", []string{"openid"}, true, true},
 		{authentication.ProviderGitHub, "", "github.com", "/login/oauth/authorize", nil, true, false},
 		{authentication.ProviderGitLab, "", "gitlab.com", "/oauth/authorize", []string{"read_user"}, true, false},
-		{authentication.ProviderFacebook, "", "www.facebook.com", "/dialog/oauth", nil, false, false},
+		{authentication.ProviderFacebook, "", "www.facebook.com", "/v25.0/dialog/oauth", nil, false, false},
 		{authentication.ProviderSlack, "", "slack.com", "/openid/connect/authorize", []string{"openid"}, false, true},
 		{authentication.ProviderDiscord, "", "discord.com", "/oauth2/authorize", []string{"identify"}, false, false},
 		{authentication.ProviderLinkedIn, "", "www.linkedin.com", "/oauth/v2/authorization", []string{"openid"}, false, true},
