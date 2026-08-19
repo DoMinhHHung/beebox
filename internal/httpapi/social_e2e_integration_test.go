@@ -29,8 +29,11 @@ type socialHTTPE2EProvider struct {
 }
 
 func (p *socialHTTPE2EProvider) Provider() authentication.Provider { return p.provider }
-func (*socialHTTPE2EProvider) UsesPKCE() bool                       { return false }
-func (*socialHTTPE2EProvider) UsesNonce() bool                      { return false }
+
+func (*socialHTTPE2EProvider) UsesPKCE() bool { return false }
+
+func (*socialHTTPE2EProvider) UsesNonce() bool { return false }
+
 func (*socialHTTPE2EProvider) AuthorizationURL(state, _, _ string) (string, error) {
 	u := &url.URL{Scheme: "https", Host: "provider.example.test", Path: "/authorize"}
 	q := u.Query()
