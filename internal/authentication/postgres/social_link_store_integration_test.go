@@ -5,14 +5,17 @@ package postgres
 import (
 	"context"
 	cryptosha256 "crypto/sha256"
+	"database/sql"
 	"errors"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
 	applicationpostgres "github.com/DoMinhHHung/beebox/internal/applicationinstance/postgres"
 	"github.com/DoMinhHHung/beebox/internal/audit"
 	"github.com/DoMinhHHung/beebox/internal/authentication"
+	"github.com/DoMinhHHung/beebox/internal/identity"
 	identitypostgres "github.com/DoMinhHHung/beebox/internal/identity/postgres"
 	"github.com/DoMinhHHung/beebox/internal/platform/migration"
 	"github.com/DoMinhHHung/beebox/internal/session"
@@ -217,6 +220,20 @@ func TestSocialLinkFinalizationFailsClosedWhenBoundSessionChanges(t *testing.T) 
 			}
 		})
 	}
+
+	t.Run("freshness deadline ignores later activity", func(t *testing.T) {
+		publicID, createdAt := insertSocialLinkSession(t, ctx, db, app.InternalID, user.InternalID, 9*time.Minute+58*time.Second)
+		attempt := createConsumedSocialLinkAttempt(t, ctx, store, app.InternalID, user.InternalID, publicID, createdAt, authentication.ProviderDiscord, "session-freshness")
+		if _, err := db.ExecContext(ctx, `UPDATE sessions SET last_seen_at=CURRENT_TIMESTAMP WHERE public_id=$1`, publicID); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(3 * time.Second)
+		correlation, _ := audit.NewCorrelationID()
+		err := store.FinalizeSocialLink(ctx, authentication.SocialLinkFinalize{AttemptID: attempt.AttemptID, ProviderSubject: "subject-freshness", CorrelationID: correlation})
+		if !errors.Is(err, authentication.ErrSocialLinkDenied) {
+			t.Fatalf("finalize after freshness deadline error = %v, want denied", err)
+		}
+	})
 }
 
 func TestSocialLinkAuditFailureRollsBackNewExternalIdentity(t *testing.T) {
@@ -235,17 +252,18 @@ func TestSocialLinkAuditFailureRollsBackNewExternalIdentity(t *testing.T) {
 	store := New(pool)
 	attempt := createConsumedSocialLinkAttempt(t, ctx, store, app.InternalID, user.InternalID, publicID, createdAt, authentication.ProviderSlack, "audit-rollback")
 
-	if _, err := db.ExecContext(ctx, `
-		CREATE FUNCTION reject_social_link_success_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+	if _, err := db.ExecContext(ctx, `CREATE FUNCTION reject_social_link_success_audit() RETURNS trigger LANGUAGE plpgsql AS $$
 		BEGIN
 			IF NEW.action = 'authentication.social.link_succeeded' THEN
 				RAISE EXCEPTION 'reject social link success audit';
 			END IF;
 			RETURN NEW;
-		END $$;
-		CREATE TRIGGER reject_social_link_success_audit_trigger
+		END $$`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TRIGGER reject_social_link_success_audit_trigger
 		BEFORE INSERT ON audit_events
-		FOR EACH ROW EXECUTE FUNCTION reject_social_link_success_audit();`); err != nil {
+		FOR EACH ROW EXECUTE FUNCTION reject_social_link_success_audit()`); err != nil {
 		t.Fatal(err)
 	}
 	correlation, _ := audit.NewCorrelationID()
@@ -262,9 +280,7 @@ func TestSocialLinkAuditFailureRollsBackNewExternalIdentity(t *testing.T) {
 	}
 }
 
-func insertSocialLinkSession(t *testing.T, ctx context.Context, db interface {
-	QueryRowContext(context.Context, string, ...any) *sql.Row
-}, appID applicationinstance.InternalID, userID identity.InternalID, age time.Duration) (string, time.Time) {
+func insertSocialLinkSession(t *testing.T, ctx context.Context, db *sql.DB, appID applicationinstance.InternalID, userID identity.InternalID, age time.Duration) (string, time.Time) {
 	t.Helper()
 	publicID, err := session.NewPublicID()
 	if err != nil {
@@ -273,8 +289,8 @@ func insertSocialLinkSession(t *testing.T, ctx context.Context, db interface {
 	var createdAt time.Time
 	if err := db.QueryRowContext(ctx, `
 		INSERT INTO sessions(public_id,application_instance_id,user_id,created_at,last_seen_at,idle_expires_at,expires_at)
-		VALUES($1,$2,$3,CURRENT_TIMESTAMP-$4::interval,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP+INTERVAL '30 minutes',CURRENT_TIMESTAMP+INTERVAL '1 hour')
-		RETURNING created_at`, publicID, int64(appID), int64(userID), age.String()).Scan(&createdAt); err != nil {
+		VALUES($1,$2,$3,CURRENT_TIMESTAMP-($4 * INTERVAL '1 second'),CURRENT_TIMESTAMP,CURRENT_TIMESTAMP+INTERVAL '30 minutes',CURRENT_TIMESTAMP+INTERVAL '1 hour')
+		RETURNING created_at`, publicID, int64(appID), int64(userID), age.Seconds()).Scan(&createdAt); err != nil {
 		t.Fatal(err)
 	}
 	return publicID, createdAt.UTC()
@@ -306,4 +322,15 @@ func createConsumedSocialLinkAttempt(t *testing.T, ctx context.Context, store *S
 		t.Fatalf("ConsumeSocialLinkAttempt() error = %v", err)
 	}
 	return snapshot
+}
+
+func assertExternalIdentityOwner(t *testing.T, ctx context.Context, db *sql.DB, appID applicationinstance.InternalID, provider authentication.Provider, subject string, want identity.InternalID) {
+	t.Helper()
+	var got int64
+	if err := db.QueryRowContext(ctx, `SELECT user_id FROM external_identities WHERE application_instance_id=$1 AND provider=$2 AND provider_subject=$3`, int64(appID), string(provider), subject).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != int64(want) {
+		t.Fatalf("external identity owner = %d, want %d", got, want)
+	}
 }
