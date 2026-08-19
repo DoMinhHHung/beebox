@@ -24,7 +24,7 @@ type socialAccountManagementHTTP struct {
 	applications ApplicationResolver
 	origins      OriginPolicy
 	sessions     SessionManagementService
-	management  SocialAccountManagementService
+	management   SocialAccountManagementService
 }
 
 type linkedSocialAccountResponse struct {
@@ -152,13 +152,13 @@ func (h *socialAccountManagementHTTP) authorize(w http.ResponseWriter, r *http.R
 	setCORSHeaders(w, canonical)
 	return authentication.SocialAccountSession{
 		ApplicationInstanceID: record.ApplicationInstanceID,
-		ApplicationPublicID: app.PublicID,
-		UserID: record.UserInternalID,
-		SessionPublicID: record.PublicID,
-		CreatedAt: record.CreatedAt,
-		IdleExpiresAt: record.IdleExpiresAt,
-		ExpiresAt: record.ExpiresAt,
-		Revoked: record.RevokedAt != nil,
+		ApplicationPublicID:   app.PublicID,
+		UserID:                record.UserInternalID,
+		SessionPublicID:       record.PublicID,
+		CreatedAt:             record.CreatedAt,
+		IdleExpiresAt:         record.IdleExpiresAt,
+		ExpiresAt:             record.ExpiresAt,
+		Revoked:               record.RevokedAt != nil,
 	}, true
 }
 
