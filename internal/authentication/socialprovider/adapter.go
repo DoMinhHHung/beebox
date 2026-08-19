@@ -33,6 +33,13 @@ const (
 	subjectTikTokOpenID
 )
 
+type tokenExchangeMode uint8
+
+const (
+	tokenExchangeStandard tokenExchangeMode = iota
+	tokenExchangeFacebookGETQuery
+)
+
 type adapterConfig struct {
 	provider        authentication.Provider
 	clientID        string
@@ -42,34 +49,36 @@ type adapterConfig struct {
 }
 
 type adapter struct {
-	provider     authentication.Provider
-	clientID     string
-	clientSecret string
-	redirectURL  string
-	authURL      string
-	tokenURL     string
-	userInfoURL  string
-	scopes       []string
-	authStyle    oauth2.AuthStyle
-	usePKCE      bool
-	useNonce     bool
-	mode         subjectMode
-	verifier     *oidc.IDTokenVerifier
-	httpClient   *http.Client
-	tikTok       bool
+	provider      authentication.Provider
+	clientID      string
+	clientSecret  string
+	redirectURL   string
+	authURL       string
+	tokenURL      string
+	userInfoURL   string
+	scopes        []string
+	authStyle     oauth2.AuthStyle
+	usePKCE       bool
+	useNonce      bool
+	mode          subjectMode
+	tokenExchange tokenExchangeMode
+	verifier      *oidc.IDTokenVerifier
+	httpClient    *http.Client
+	tikTok        bool
 }
 
 type providerSpec struct {
-	authURL     string
-	tokenURL    string
-	userInfoURL string
-	scopes      []string
-	authStyle   oauth2.AuthStyle
-	usePKCE     bool
-	useNonce    bool
-	mode        subjectMode
-	issuer      string
-	jwksURL     string
+	authURL       string
+	tokenURL      string
+	userInfoURL   string
+	scopes        []string
+	authStyle     oauth2.AuthStyle
+	usePKCE       bool
+	useNonce      bool
+	mode          subjectMode
+	tokenExchange tokenExchangeMode
+	issuer        string
+	jwksURL       string
 }
 
 func newAdapter(cfg adapterConfig) (*adapter, error) {
@@ -83,20 +92,21 @@ func newAdapter(cfg adapterConfig) (*adapter, error) {
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	a := &adapter{
-		provider:     cfg.provider,
-		clientID:     cfg.clientID,
-		clientSecret: cfg.clientSecret,
-		redirectURL:  cfg.redirectURL,
-		authURL:      spec.authURL,
-		tokenURL:     spec.tokenURL,
-		userInfoURL:  spec.userInfoURL,
-		scopes:       append([]string(nil), spec.scopes...),
-		authStyle:    spec.authStyle,
-		usePKCE:      spec.usePKCE,
-		useNonce:     spec.useNonce,
-		mode:         spec.mode,
-		httpClient:   client,
-		tikTok:       cfg.provider == authentication.ProviderTikTok,
+		provider:      cfg.provider,
+		clientID:      cfg.clientID,
+		clientSecret:  cfg.clientSecret,
+		redirectURL:   cfg.redirectURL,
+		authURL:       spec.authURL,
+		tokenURL:      spec.tokenURL,
+		userInfoURL:   spec.userInfoURL,
+		scopes:        append([]string(nil), spec.scopes...),
+		authStyle:     spec.authStyle,
+		usePKCE:       spec.usePKCE,
+		useNonce:      spec.useNonce,
+		mode:          spec.mode,
+		tokenExchange: spec.tokenExchange,
+		httpClient:    client,
+		tikTok:        cfg.provider == authentication.ProviderTikTok,
 	}
 	if spec.mode == subjectOIDC {
 		keyCtx := oidc.ClientContext(context.Background(), client)
@@ -166,9 +176,16 @@ func (a *adapter) ExchangeIdentity(ctx context.Context, code, providerVerifier s
 	}
 	var subject string
 	var err error
-	if a.tikTok {
+	switch {
+	case a.tikTok:
 		subject, err = a.exchangeTikTok(ctx, code)
-	} else {
+	case a.provider == authentication.ProviderFacebook && a.tokenExchange == tokenExchangeFacebookGETQuery:
+		accessToken, exchangeErr := a.exchangeFacebook(ctx, code)
+		if exchangeErr != nil {
+			return authentication.ExternalIdentityProof{}, authentication.ErrSocialProviderProof
+		}
+		subject, err = a.subjectFromFacebook(ctx, accessToken)
+	default:
 		token, exchangeErr := a.exchangeStandard(ctx, code, providerVerifier)
 		if exchangeErr != nil {
 			return authentication.ExternalIdentityProof{}, authentication.ErrSocialProviderProof
@@ -210,6 +227,46 @@ func (a *adapter) exchangeStandard(ctx context.Context, code, providerVerifier s
 		return nil, authentication.ErrSocialProviderProof
 	}
 	return token, nil
+}
+
+func (a *adapter) exchangeFacebook(ctx context.Context, code string) (string, error) {
+	if a.clientID == "" || a.clientSecret == "" || a.redirectURL == "" || a.tokenURL == "" || code == "" {
+		return "", authentication.ErrSocialProviderProof
+	}
+	u, err := url.Parse(a.tokenURL)
+	if err != nil {
+		return "", authentication.ErrSocialProviderProof
+	}
+	q := u.Query()
+	q.Set("client_id", a.clientID)
+	q.Set("redirect_uri", a.redirectURL)
+	q.Set("client_secret", a.clientSecret)
+	q.Set("code", code)
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return "", authentication.ErrSocialProviderProof
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := a.httpClient.Do(req)
+	if err != nil {
+		return "", authentication.ErrSocialProviderProof
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", authentication.ErrSocialProviderProof
+	}
+	var payload struct {
+		AccessToken string          `json:"access_token"`
+		TokenType   json.RawMessage `json:"token_type"`
+		ExpiresIn   json.RawMessage `json:"expires_in"`
+		Error       json.RawMessage `json:"error"`
+	}
+	if err := decodeProviderJSON(resp.Body, &payload); err != nil || providerErrorPresent(payload.Error) || payload.AccessToken == "" {
+		return "", authentication.ErrSocialProviderProof
+	}
+	return payload.AccessToken, nil
 }
 
 func (a *adapter) subjectFromIDToken(ctx context.Context, token *oauth2.Token, expectedNonce [32]byte) (string, error) {
@@ -287,6 +344,64 @@ func (a *adapter) subjectFromUserInfo(ctx context.Context, accessToken string) (
 	default:
 		return "", authentication.ErrSocialProviderProof
 	}
+}
+
+func (a *adapter) subjectFromFacebook(ctx context.Context, accessToken string) (string, error) {
+	if accessToken == "" || a.userInfoURL == "" {
+		return "", authentication.ErrSocialProviderProof
+	}
+	u, err := url.Parse(a.userInfoURL)
+	if err != nil {
+		return "", authentication.ErrSocialProviderProof
+	}
+	q := u.Query()
+	q.Set("access_token", accessToken)
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return "", authentication.ErrSocialProviderProof
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := a.httpClient.Do(req)
+	if err != nil {
+		return "", authentication.ErrSocialProviderProof
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", authentication.ErrSocialProviderProof
+	}
+	var payload struct {
+		ID      json.RawMessage `json:"id"`
+		Error   json.RawMessage `json:"error"`
+		Email   json.RawMessage `json:"email"`
+		Name    json.RawMessage `json:"name"`
+		Picture json.RawMessage `json:"picture"`
+	}
+	if err := decodeProviderJSON(resp.Body, &payload); err != nil || providerErrorPresent(payload.Error) {
+		return "", authentication.ErrSocialProviderProof
+	}
+	subject, err := rawStringID(payload.ID)
+	if err != nil || len(subject) > 512 {
+		return "", authentication.ErrSocialProviderProof
+	}
+	return subject, nil
+}
+
+func decodeProviderJSON(r io.Reader, dst any) error {
+	body, err := io.ReadAll(io.LimitReader(r, providerBodyLimit+1))
+	if err != nil || len(body) > providerBodyLimit {
+		return errors.New("invalid provider response")
+	}
+	if err := json.Unmarshal(body, dst); err != nil {
+		return errors.New("invalid provider response")
+	}
+	return nil
+}
+
+func providerErrorPresent(raw json.RawMessage) bool {
+	raw = bytes.TrimSpace(raw)
+	return len(raw) != 0 && !bytes.Equal(raw, []byte("null"))
 }
 
 func rawNumericID(raw json.RawMessage) (string, error) {
@@ -437,11 +552,11 @@ func specFor(provider authentication.Provider, microsoftTenant string) (provider
 		}, nil
 	case authentication.ProviderFacebook:
 		return providerSpec{
-			authURL:     "https://www.facebook.com/dialog/oauth",
-			tokenURL:    "https://graph.facebook.com/oauth/access_token",
-			userInfoURL: "https://graph.facebook.com/me?fields=id",
-			authStyle:   oauth2.AuthStyleInParams,
-			mode:        subjectTopLevelStringID,
+			authURL:       "https://www.facebook.com/v25.0/dialog/oauth",
+			tokenURL:      "https://graph.facebook.com/v25.0/oauth/access_token",
+			userInfoURL:   "https://graph.facebook.com/me?fields=id",
+			mode:          subjectTopLevelStringID,
+			tokenExchange: tokenExchangeFacebookGETQuery,
 		}, nil
 	case authentication.ProviderSlack:
 		return providerSpec{
