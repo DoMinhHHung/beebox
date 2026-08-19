@@ -103,7 +103,7 @@ func (h *socialLinkHTTP) handleSocialLinkAttempt(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusUnauthorized, "invalid_session", "The current session is invalid.", requestID)
 		return
 	}
-	current, err := h.sessions.Current(r.Context(), app.InternalID, app.PublicID, accessToken)
+	current, err := h.sessions.Current(r.Context(), app.InternalID, string(app.PublicID), accessToken)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "invalid_session", "The current session is invalid.", requestID)
 		return
