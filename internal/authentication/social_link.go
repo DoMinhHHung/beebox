@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
@@ -227,15 +226,14 @@ func (s *SocialLinkService) CreateLinkAttempt(ctx context.Context, app applicati
 }
 
 func (s *SocialLinkService) CompleteLinkCallback(ctx context.Context, callbackProvider Provider, rawState, providerCode string, providerDenied bool, correlationID audit.CorrelationID) (SocialLinkCallbackResult, error) {
-	if s == nil || s.persistence == nil || s.providers == nil || s.now == nil || !callbackProvider.Valid() || correlationID == (audit.CorrelationID{}) || !strings.HasPrefix(rawState, SocialLinkStatePrefix) {
+	if s == nil || s.persistence == nil || s.providers == nil || s.now == nil || !callbackProvider.Valid() || correlationID == (audit.CorrelationID{}) {
 		return SocialLinkCallbackResult{}, ErrSocialLinkInvalidState
 	}
-	encoded := strings.TrimPrefix(rawState, SocialLinkStatePrefix)
-	stateBytes, err := base64.RawURLEncoding.Strict().DecodeString(encoded)
-	if err != nil || len(stateBytes) != 32 {
+	stateBytes, ok := DecodeSocialLinkStateWire(rawState)
+	if !ok {
 		return SocialLinkCallbackResult{}, ErrSocialLinkInvalidState
 	}
-	stateHash := sha256.Sum256(stateBytes)
+	stateHash := sha256.Sum256(stateBytes[:])
 	attempt, err := s.persistence.ConsumeSocialLinkAttempt(ctx, stateHash, callbackProvider)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
