@@ -41,7 +41,7 @@ func TestAuthorizationURLProviderMatrix(t *testing.T) {
 		t.Fatalf("matrix providers = %d, vocabulary = %d", len(tests), len(authentication.Providers))
 	}
 	for _, tt := range tests {
-		t := tt
+		tt := tt
 		t.Run(string(tt.provider), func(t *testing.T) {
 			t.Parallel()
 			adapter, err := newAdapter(adapterConfig{
