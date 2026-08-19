@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -77,7 +78,11 @@ func NewSocialAccountService(p SocialAccountPersistence, availability SocialMeth
 }
 
 func (s *SocialAccountService) List(ctx context.Context, current SocialAccountSession, limit int, cursor string) (SocialAccountPage, error) {
-	if s == nil || s.persistence == nil || !validSocialAccountSession(current) {
+	if s == nil || s.persistence == nil || s.now == nil || !validSocialAccountSession(current) {
+		return SocialAccountPage{}, ErrSocialAccountInvalidSession
+	}
+	now := s.now().UTC()
+	if current.Revoked || !now.Before(current.IdleExpiresAt.UTC()) || !now.Before(current.ExpiresAt.UTC()) {
 		return SocialAccountPage{}, ErrSocialAccountInvalidSession
 	}
 	if limit == 0 {
@@ -176,6 +181,9 @@ func DecodeSocialAccountCursor(raw string) (*SocialAccountCursor, error) {
 	decoder := json.NewDecoder(strings.NewReader(string(payload)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&cursor); err != nil || cursor.CreatedAt.IsZero() || !ValidSocialLinkPublicID(cursor.PublicID) {
+		return nil, ErrSocialAccountInvalidRequest
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return nil, ErrSocialAccountInvalidRequest
 	}
 	return &cursor, nil
