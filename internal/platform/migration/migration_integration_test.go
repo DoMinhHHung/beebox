@@ -115,22 +115,22 @@ func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 	}
 	const secretMarker = "synthetic-provider-marker"
 	failingSources := fstest.MapFS{
-		"00001_runtime_baseline.sql":       {Data: []byte(validMigration)},
-		"00002_application_instances.sql":  {Data: []byte(validMigration)},
-		"00003_users.sql":                  {Data: []byte(validMigration)},
-		"00004_email_identifiers.sql":      {Data: []byte(validMigration)},
-		"00005_password_credentials.sql":   {Data: []byte(validMigration)},
-		"00006_audit_events.sql":           {Data: []byte(validMigration)},
+		"00001_runtime_baseline.sql":              {Data: []byte(validMigration)},
+		"00002_application_instances.sql":         {Data: []byte(validMigration)},
+		"00003_users.sql":                         {Data: []byte(validMigration)},
+		"00004_email_identifiers.sql":             {Data: []byte(validMigration)},
+		"00005_password_credentials.sql":          {Data: []byte(validMigration)},
+		"00006_audit_events.sql":                  {Data: []byte(validMigration)},
 		"00007_email_verification_challenges.sql": {Data: []byte(validMigration)},
-		"00008_phase1_public_integration.sql":      {Data: []byte(validMigration)},
-		"00009_public_auth_controls.sql":           {Data: []byte(validMigration)},
-		"00010_sessions.sql":                       {Data: []byte(validMigration)},
-		"00011_password_resets.sql":                {Data: []byte(validMigration)},
-		"00012_production_hardening.sql":           {Data: []byte(validMigration)},
-		"00013_email_otp_signin.sql":               {Data: []byte(validMigration)},
-		"00014_phone_sms.sql":                      {Data: []byte(validMigration)},
-		"00015_social_oauth.sql":                   {Data: []byte(validMigration)},
-		"00016_social_account_linking.sql":         {Data: []byte(validMigration)},
+		"00008_phase1_public_integration.sql":     {Data: []byte(validMigration)},
+		"00009_public_auth_controls.sql":          {Data: []byte(validMigration)},
+		"00010_sessions.sql":                      {Data: []byte(validMigration)},
+		"00011_password_resets.sql":               {Data: []byte(validMigration)},
+		"00012_production_hardening.sql":          {Data: []byte(validMigration)},
+		"00013_email_otp_signin.sql":              {Data: []byte(validMigration)},
+		"00014_phone_sms.sql":                     {Data: []byte(validMigration)},
+		"00015_social_oauth.sql":                  {Data: []byte(validMigration)},
+		"00016_social_account_linking.sql":        {Data: []byte(validMigration)},
 		"00017_failure_probe.sql": {Data: []byte(
 			"-- +goose Up\n" +
 				"-- " + secretMarker + "\n" +
