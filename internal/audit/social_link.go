@@ -5,5 +5,5 @@ const (
 	ActionSocialLinkDenied    = "authentication.social.link_denied"
 
 	ResourceCategorySocialLink = "social_link"
-	SourceInternalSocialLink    = "internal_social_link"
+	SourceInternalSocialLink   = "internal_social_link"
 )
