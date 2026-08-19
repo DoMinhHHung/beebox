@@ -5,10 +5,10 @@ info:
   description: >-
     BeeBox-owned B2C authentication contract. Phase 1 email/password behavior,
     P2.1 passwordless email OTP, P2.2 phone-first signup plus verified-phone
-    SMS OTP primary authentication, and P2.3 headless social authentication are
-    implemented. BeeBox is not an OAuth or OpenID Connect authorization server.
-    Public resource identifiers are opaque locators and never establish
-    authorization by themselves.
+    SMS OTP primary authentication, P2.3 headless social authentication, and
+    P2.4A explicit authenticated social account linking are implemented. BeeBox
+    is not an OAuth or OpenID Connect authorization server. Public resource
+    identifiers are opaque locators and never establish authorization by themselves.
 servers:
   - url: /
 paths:
@@ -330,25 +330,74 @@ paths:
         '429': {$ref: '#/components/responses/RateLimited'}
         '503': {$ref: '#/components/responses/Unavailable'}
 
+  /v1/social-links/attempts:
+    post:
+      operationId: createSocialLinkAttempt
+      summary: Start explicit linking from an existing authenticated BeeBox session
+      description: >-
+        Requires one publishable key, one exact allowed browser Origin, and one ordinary
+        BeeBox bearer access token. BeeBox resolves and persists the exact current
+        application, user, and session; the request cannot choose a user or session.
+        The initiating persisted session must still be active and its created_at must
+        be within the accepted ten-minute recent-authentication window. A fresh access
+        token produced by refreshing that same older session does not reset this
+        freshness evidence; an older session receives reverification_required and the
+        user may authenticate again to obtain a new ordinary session. The provider and
+        exact application-scoped allowlisted redirect are bound into one-time
+        purpose-separated server state. Provider email/profile data has no ownership
+        authority and provider tokens are never returned or retained by this API.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SocialLinkAttemptRequest'}
+      responses:
+        '201':
+          description: Provider authorization URL for the exact initiation-bound social link attempt.
+          headers:
+            Cache-Control: {$ref: '#/components/headers/NoStore'}
+            X-Request-ID: {$ref: '#/components/headers/RequestID'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SocialLinkAttemptResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/SocialLinkUnauthorized'}
+        '403': {$ref: '#/components/responses/SocialLinkForbidden'}
+        '422': {$ref: '#/components/responses/InvalidInput'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
   /v1/social-auth/callback/{provider}:
     get:
       operationId: completeSocialProviderCallback
       summary: Receive a configured social provider authorization callback
       description: >-
-        The callback trusts only BeeBox state persisted at initiation. The callback
-        path, browser state, provider email, and any browser-supplied application or
-        redirect input are not account authority. A valid provider proof resolves an
-        existing external identity or creates one new provider-first BeeBox principal,
-        then redirects only to the exact stored allowlisted redirect. Success carries
-        only a short-lived one-time opaque beebox_code. Provider denial after valid
-        state carries only beebox_error=social_auth_failed. Provider access, refresh,
-        and ID tokens are never redirected to or exposed to the application.
+        Shared callback for BeeBox-issued P2.3 social-auth and P2.4A social-link state.
+        Purpose is resolved from server-issued state and dedicated persisted attempt
+        state; a prefix alone is never account authority. For P2.3, a valid provider
+        proof may resolve an existing external identity or create one provider-first
+        BeeBox principal and a one-time completion grant. For P2.4A, the callback can
+        only attach an unowned provider subject to the exact application, user, and
+        initiating session bound at link initiation; it never creates a principal,
+        BeeBox session, or social-auth completion grant, never merges accounts, and
+        never imports provider email/profile data. The callback-time browser session,
+        callback query user/session/application/redirect values, and provider email are
+        not linking authority. Provider access, refresh, and ID tokens are never
+        redirected to or exposed to the application. Valid link success redirects only
+        to the stored redirect with beebox_link=success; resolved link failures collapse
+        to beebox_error=social_link_failed. Unknown state never enables an untrusted
+        redirect.
       security: []
       parameters:
         - {$ref: '#/components/parameters/SocialProviderPath'}
       responses:
         '303':
-          description: Exact stored application redirect with one bounded BeeBox completion result query parameter.
+          description: Exact stored application redirect with one bounded BeeBox authentication or linking result query parameter.
           headers:
             Cache-Control: {$ref: '#/components/headers/NoStore'}
             X-Request-ID: {$ref: '#/components/headers/RequestID'}
@@ -562,7 +611,7 @@ components:
       in: header
       required: true
       schema: {type: string, format: uri}
-      description: Browser origin that must be exactly allowed for the resolved application. Social initiation additionally requires it to equal redirect_url origin.
+      description: Browser origin that must be exactly allowed for the resolved application. Social authentication and social-link initiation additionally require it to equal redirect_url origin.
     SocialProviderPath:
       name: provider
       in: path
@@ -671,7 +720,7 @@ components:
     SocialProvider:
       type: string
       enum: [google, apple, microsoft, github, gitlab, facebook, slack, discord, linkedin, x, tiktok]
-      description: Fixed P2.3 provider vocabulary. Provider-specific wire models are not part of the BeeBox public contract.
+      description: Fixed P2.3/P2.4A provider vocabulary. Provider-specific wire models are not part of the BeeBox public contract.
     SocialAuthAttemptRequest:
       type: object
       additionalProperties: false
@@ -698,6 +747,31 @@ components:
           format: uri
           description: Fixed-provider authorization URL carrying BeeBox-generated state and any provider protocol PKCE/nonce material required for proof.
         expires_in: {type: integer, const: 600}
+    SocialLinkAttemptRequest:
+      type: object
+      additionalProperties: false
+      required: [provider, redirect_url]
+      properties:
+        provider: {$ref: '#/components/schemas/SocialProvider'}
+        redirect_url:
+          type: string
+          format: uri
+          maxLength: 2048
+          description: Exact application-scoped allowlisted redirect. It is trusted server-side state after initiation and cannot be replaced by callback query input.
+    SocialLinkAttemptResponse:
+      type: object
+      additionalProperties: false
+      required: [authorization_url, expires_in]
+      properties:
+        authorization_url:
+          type: string
+          format: uri
+          description: Provider authorization URL carrying purpose-separated BeeBox state plus provider protocol nonce/PKCE material when required.
+        expires_in:
+          type: integer
+          minimum: 1
+          maximum: 600
+          description: Actual bounded lifetime in seconds, capped by both the link-attempt TTL and the initiating session recent-authentication deadline.
     SocialAuthExchangeRequest:
       type: object
       additionalProperties: false
@@ -826,6 +900,16 @@ components:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
     InvalidSession:
       description: Access token or persisted current session state is invalid/revoked.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    SocialLinkUnauthorized:
+      description: Social-link initiation returns invalid_application for an invalid application credential or invalid_session for an invalid, revoked, expired, cross-application, or otherwise non-current BeeBox session.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    SocialLinkForbidden:
+      description: Social-link initiation returns origin_not_allowed for a disallowed Origin or reverification_required when the persisted initiating session is outside the accepted ten-minute recent-authentication window.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
