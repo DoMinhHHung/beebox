@@ -49,15 +49,15 @@ type SocialLinkSession struct {
 type SocialLinkAttemptWrite struct {
 	ApplicationInstanceID  applicationinstance.InternalID
 	UserID                 identity.InternalID
-	SessionPublicID         string
-	Provider                Provider
-	CanonicalRedirectURL    string
-	StateHash               [32]byte
-	RecentAuthAt            time.Time
-	OIDCNonceHash           *[32]byte
-	ProviderPKCECiphertext  []byte
-	CreatedAt               time.Time
-	ExpiresAt               time.Time
+	SessionPublicID        string
+	Provider               Provider
+	CanonicalRedirectURL   string
+	StateHash              [32]byte
+	RecentAuthAt           time.Time
+	OIDCNonceHash          *[32]byte
+	ProviderPKCECiphertext []byte
+	CreatedAt              time.Time
+	ExpiresAt              time.Time
 }
 
 type SocialLinkAttemptSnapshot struct {
@@ -73,10 +73,10 @@ type SocialLinkAttemptSnapshot struct {
 }
 
 type SocialLinkFinalize struct {
-	AttemptID        int64
-	ProviderSubject  string
-	Now              time.Time
-	CorrelationID    audit.CorrelationID
+	AttemptID       int64
+	ProviderSubject string
+	Now             time.Time
+	CorrelationID   audit.CorrelationID
 }
 
 type SocialLinkPersistence interface {
@@ -199,17 +199,17 @@ func (s *SocialLinkService) CreateLinkAttempt(ctx context.Context, app applicati
 		return SocialLinkResult{}, ErrSocialLinkInvalidSession
 	}
 	if err := s.persistence.CreateSocialLinkAttempt(ctx, SocialLinkAttemptWrite{
-		ApplicationInstanceID: app.InternalID,
-		UserID: current.UserID,
-		SessionPublicID: current.PublicID,
-		Provider: provider,
-		CanonicalRedirectURL: canonicalRedirect,
-		StateHash: stateHash,
-		RecentAuthAt: createdAt,
-		OIDCNonceHash: nonceHash,
+		ApplicationInstanceID:  app.InternalID,
+		UserID:                 current.UserID,
+		SessionPublicID:        current.PublicID,
+		Provider:               provider,
+		CanonicalRedirectURL:   canonicalRedirect,
+		StateHash:              stateHash,
+		RecentAuthAt:           createdAt,
+		OIDCNonceHash:          nonceHash,
 		ProviderPKCECiphertext: providerCiphertext,
-		CreatedAt: now,
-		ExpiresAt: expiresAt,
+		CreatedAt:              now,
+		ExpiresAt:              expiresAt,
 	}); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return SocialLinkResult{}, ctxErr
@@ -277,10 +277,10 @@ func (s *SocialLinkService) CompleteLinkCallback(ctx context.Context, callbackPr
 		return fail()
 	}
 	if err := s.persistence.FinalizeSocialLink(ctx, SocialLinkFinalize{
-		AttemptID: attempt.AttemptID,
+		AttemptID:       attempt.AttemptID,
 		ProviderSubject: proof.Subject,
-		Now: s.now().UTC(),
-		CorrelationID: correlationID,
+		Now:             s.now().UTC(),
+		CorrelationID:   correlationID,
 	}); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return SocialLinkCallbackResult{}, ctxErr
