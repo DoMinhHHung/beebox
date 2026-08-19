@@ -34,7 +34,7 @@ CREATE TABLE social_link_attempts (
         AND created_at < expires_at
         AND expires_at <= created_at + INTERVAL '10 minutes'
         AND expires_at <= recent_auth_at + INTERVAL '10 minutes'
-        AND (consumed_at IS NULL OR created_at <= consumed_at)
+        AND (consumed_at IS NULL OR (created_at <= consumed_at AND consumed_at <= expires_at))
     )
 );
 CREATE INDEX social_link_attempts_expiry_idx ON social_link_attempts(expires_at);
