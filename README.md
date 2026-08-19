@@ -2,7 +2,7 @@
 
 BeeBox is an open-source identity and access platform implemented primarily in Go. Clerk's public product capabilities are a benchmark only; BeeBox owns its contracts, implementation, identifiers, persistence and security decisions.
 
-BeeBox's merged Phase 1 B2C foundation provides application-scoped email/password signup and verification, signin, rotating sessions/refresh credentials, Ed25519 access JWTs/JWKS, password reset, backend session management, a minimal Go SDK, operational metrics and reproducible local dependencies. The merged Phase 2 increments include the P2.0 trust/contract baseline, P2.1 passwordless email OTP primary authentication for existing verified email identifiers, and P2.2 phone-first signup plus verified-phone SMS OTP primary authentication. This branch implements P2.3 social OAuth/OIDC for the fixed ten-provider vocabulary described below. It does **not** claim P2.4 account linking or later Phase 2 checkpoints are implemented.
+BeeBox's merged Phase 1 B2C foundation provides application-scoped email/password signup and verification, signin, rotating sessions/refresh credentials, Ed25519 access JWTs/JWKS, password reset, backend session management, a minimal Go SDK, operational metrics and reproducible local dependencies. The merged Phase 2 increments include the P2.0 trust/contract baseline, P2.1 passwordless email OTP primary authentication for existing verified email identifiers, and P2.2 phone-first signup plus verified-phone SMS OTP primary authentication. This branch implements P2.3 social OAuth/OIDC for the fixed eleven-provider vocabulary described below. It does **not** claim P2.4 account linking or later Phase 2 checkpoints are implemented.
 
 ## Project documentation
 
@@ -176,6 +176,7 @@ P2.3 implements one BeeBox-owned lifecycle for exactly these provider keys:
 - `github`
 - `gitlab`
 - `facebook`
+- `slack`
 - `discord`
 - `linkedin`
 - `x`
@@ -211,7 +212,7 @@ The redirect representation is exact after BeeBox canonicalization: production r
 The browser lifecycle is:
 
 1. the client generates a completion PKCE verifier and its S256 challenge;
-2. `POST /v1/social-auth/attempts` uses `X-BeeBox-Publishable-Key`, the browser `Origin`, one of the ten provider keys, an exact allowlisted application redirect URL, and the client S256 challenge;
+2. `POST /v1/social-auth/attempts` uses `X-BeeBox-Publishable-Key`, the browser `Origin`, one of the eleven provider keys, an exact allowlisted application redirect URL, and the client S256 challenge;
 3. BeeBox stores a one-time 10-minute social attempt with only a SHA-256 state hash plus the validated redirect/application/provider bindings, then returns the provider authorization URL;
 4. the provider returns to `GET /v1/social-auth/callback/{provider}`; BeeBox consumes state before provider proof, performs the configured OAuth/OIDC proof, and redirects only to the stored allowlisted application redirect;
 5. on success the redirect contains a short-lived opaque BeeBox completion code, not provider tokens or an ordinary BeeBox session;
@@ -219,13 +220,15 @@ The browser lifecycle is:
 
 Provider-side PKCE and OIDC nonce behavior is provider-specific and enforced by the provider adapter. OIDC providers validate the configured issuer boundary, RS256 signature/JWKS, client audience, expiry/not-before where present, nonce and non-empty subject. Provider HTTP/JWKS I/O is bounded, has explicit timeouts/body limits, performs no automatic retry, and maps vendor failures to BeeBox-owned safe errors.
 
+Slack uses Sign in with Slack OIDC through the same shared provider lifecycle. BeeBox requests exactly `openid`, explicitly requests `response_mode=query` for the existing GET callback, verifies the Slack issuer/audience/RS256 signature/JWKS/expiry/nonce and uses only the verified ID-token `sub` as provider subject. The selected confidential Website flow uses HTTP Basic client authentication at the token endpoint and does not enable provider-side PKCE; Slack `email`, `profile`, legacy `identity.*` scopes and the userinfo endpoint are not used. This does not change the mandatory client-owned S256 completion PKCE between the application and BeeBox.
+
 ADR 0007 defines social signup ownership. A successfully verified `(application, provider, provider_subject)` that is not already owned creates a **new separate application-scoped BeeBox principal** plus exactly that external identity. If the external identity already exists, it resolves its existing BeeBox user. PostgreSQL uniqueness on `(application_instance_id, provider, provider_subject)` and transaction/advisory-lock behavior serialize concurrent first callbacks.
 
 Provider email is deliberately non-authoritative: P2.3 does not import provider email into `email_identifiers`, does not mark a BeeBox email verified from a provider claim, and never uses email equality to link, attach, merge, adopt or transfer a principal. Provider email/name/avatar/profile claims are discarded after any transient proof parsing. Provider access, refresh and ID tokens remain adapter-local and are not persisted, logged, exposed to the application, or returned as BeeBox credentials.
 
 P2.4 explicit authenticated account linking is **not implemented**. P2.3 never attaches a newly seen external identity to an already-existing BeeBox user based on provider email or browser session coincidence.
 
-The deterministic provider-contract suite uses synthetic local HTTP/OIDC/JWKS fixtures and does not require live social accounts or live provider credentials. It proves BeeBox request/response compatibility with the provider wire contracts that were independently documented for the suite, not developer-console setup, real credentials, provider app review, user consent/account availability, or provider production uptime. Current Facebook Graph stable-subject behavior has deterministic coverage, but full current Facebook Login authorization/token protocol acceptance remains blocked because the current Meta-owned documentation pages are not retrievable from the verification environment (HTTP 429). The implementation exists; that documentation acceptance gate remains explicitly unresolved and must not be represented as live-account or full Meta protocol verification.
+The deterministic provider-contract suite uses synthetic local HTTP/OIDC/JWKS fixtures and does not require live social accounts or live provider credentials. It proves BeeBox request/response compatibility with provider wire contracts independently encoded from current provider-owned evidence, not developer-console setup, real credentials, provider app review, user consent/account availability, or provider production uptime. Slack has deterministic authorization, confidential token exchange, RS256 ID-token/nonce, subject-boundary, safe-error, no-userinfo and no-retry coverage based on current Slack first-party SIWS/token/discovery evidence. Facebook Graph stable-subject behavior also has deterministic coverage, but full current Facebook Website confidential-client authorization/token acceptance remains blocked because accessible current Meta-owned artifacts do not establish the complete Website wire contract without crossing the native-vs-Website applicability boundary.
 
 The SDK offline verifier intentionally requires the configured HTTPS issuer. For local plaintext HTTP development, use the local JWKS endpoint for inspection/testing or place BeeBox behind a local TLS endpoint rather than weakening production issuer semantics.
 
@@ -336,7 +339,7 @@ Core runtime values include:
 - SMTP settings (`BEEBOX_SMTP_ADDR`, `BEEBOX_SMTP_FROM`, TLS/auth/timeout settings)
 - optional SMS mode `BEEBOX_SMS_MODE=disabled|twilio|vonage|plivo|telnyx` plus exactly one selected provider's credentials/sender and optional bounded timeout;
 - signing settings (`BEEBOX_ISSUER`, `BEEBOX_SIGNING_KID`, `BEEBOX_SIGNING_PRIVATE_KEY`, `BEEBOX_SIGNING_PUBLIC_KEY`, optional retiring public keys);
-- optional social connection JSON `BEEBOX_SOCIAL_CONNECTIONS` keyed by application public ID + one of the exact ten provider keys;
+- optional social connection JSON `BEEBOX_SOCIAL_CONNECTIONS` keyed by application public ID + one of the exact eleven provider keys;
 - `BEEBOX_SOCIAL_STATE_KEY`, an unpadded base64url 32-byte key required when the configured social provider set uses provider PKCE;
 - `BEEBOX_ISSUER` also defines the social provider callback base when social connections are enabled.
 
@@ -346,7 +349,7 @@ Production credential-bearing SMTP requires secure transport. `insecure_localhos
 
 Migrations `00001` through `00014` are immutable, embedded, forward-only history and remain unchanged by P2.3. Migration `00013_email_otp_signin.sql` additively introduced the purpose-separated email OTP sign-in challenge table and OTP-specific public-auth admission vocabulary. Migration `00014_phone_sms.sql` additively introduced application-scoped phone identifiers, purpose-separated phone signup and phone sign-in challenges, bounded cleanup indexes and phone-specific public-auth admission vocabulary while preserving every earlier limiter operation.
 
-P2.3 adds `00015_social_oauth.sql`. It additively introduces the exact application redirect allowlist, application-scoped external identities, one-time social attempts, one-time social completion grants, bounded social public-auth limiter namespaces, and bounded audit resource references. PostgreSQL enforces provider vocabulary and uniqueness of `(application_instance_id, provider, provider_subject)`. Applied migrations are immutable. Serve mode does not auto-migrate. Schema corrections after dependent data exists use a reviewed forward migration; no destructive automatic rollback is claimed.
+P2.3 adds `00015_social_oauth.sql`. It additively introduces the exact application redirect allowlist, application-scoped external identities, one-time social attempts, one-time social completion grants, bounded social public-auth limiter namespaces, and bounded audit resource references. PostgreSQL enforces the exact eleven-provider vocabulary and uniqueness of `(application_instance_id, provider, provider_subject)`. Applied migrations are immutable. Serve mode does not auto-migrate. Schema corrections after dependent data exists use a reviewed forward migration; no destructive automatic rollback is claimed.
 
 ## Verification
 
@@ -374,7 +377,7 @@ go test -race ./...
 
 GitHub Actions runs the same gates on pull-request heads. The P2.3 provider gate deliberately runs `go test ./internal/authentication/socialprovider -count=1` and then `-count=20` to exercise deterministic provider contracts repeatedly. P2.3 PostgreSQL/HTTP coverage includes application-scoped redirect policy, provider-email collision separation, existing-subject reuse, cross-application independence, concurrent first-subject convergence, one-time state/completion redemption, ordinary session/refresh creation and transactional audit rollback. Provider-contract tests use synthetic credentials, local HTTP servers, local RSA/JWKS fixtures and provider-shaped success/error bodies only; CI does not use live provider accounts or credentials.
 
-For nine providers, current provider-owned documentation was independently available to pin the production protocol literals represented by the deterministic suite. Facebook's Graph stable-subject boundary has deterministic tests, but the current Meta-owned Facebook Login manual-flow/access-token pages remain inaccessible from the verification environment (HTTP 429). Therefore implementation and CI health must be distinguished from the still-blocked full Facebook Login documentation acceptance gate.
+For ten providers, current provider-owned evidence was independently available to pin the production protocol literals represented by the deterministic suite, including Slack's live OIDC discovery plus current Sign in with Slack and token-method documentation. Facebook's Graph stable-subject boundary remains deterministically covered, but full current Facebook Website confidential-client authorization/token acceptance remains blocked because accessible current Meta-owned artifacts do not establish the complete Website endpoint/version, provider-PKCE, confidential token-exchange and final Graph identity-proof contract without crossing the native-vs-Website applicability boundary. HTTP 429 on child documentation pages is not by itself the blocker under the Human-ratified evidence policy.
 
 ## Health endpoints
 
@@ -387,4 +390,4 @@ For nine providers, current provider-owned documentation was independently avail
 
 P2.4 explicit authenticated social account linking/unlinking remains **unimplemented**. Existing-account phone add/change/remove/switch, passkeys/WebAuthn, MFA/TOTP, recovery codes, step-up/reverification runtime, device management, hosted authentication, organizations, machine authentication, webhooks, billing, OAuth/OIDC authorization-server behavior and compliance certification also remain unimplemented. Social authentication must not be listed among those future slices anymore.
 
-P2.3's Facebook production adapter exists, but full current Facebook Login authorization/token **documentation acceptance** remains blocked until accessible current Meta-owned documentation can substantiate that wire contract. That evidence limitation does not authorize guessing, substituting third-party documentation, or starting P2.4.
+P2.3's Facebook production adapter exists, but full current Facebook Website confidential-client authorization/token **protocol-evidence acceptance** remains blocked until applicable current Meta-owned Website evidence substantiates that wire contract. The Human-ratified Meta artifact policy means child-page HTTP 429 is not itself the decision blocker. The remaining evidence limitation does not authorize guessing, promoting native-only behavior into Website authority, substituting third-party documentation, or starting P2.4.
