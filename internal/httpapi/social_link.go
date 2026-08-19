@@ -11,7 +11,6 @@ import (
 	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
 	"github.com/DoMinhHHung/beebox/internal/audit"
 	"github.com/DoMinhHHung/beebox/internal/authentication"
-	"github.com/DoMinhHHung/beebox/internal/session"
 )
 
 type SocialLinkService interface {
@@ -126,7 +125,7 @@ func (h *socialLinkHTTP) handleSocialLinkAttempt(w http.ResponseWriter, r *http.
 	result, err := h.links.CreateLinkAttempt(r.Context(), app, authentication.SocialLinkSession{
 		ApplicationInstanceID: current.ApplicationInstanceID,
 		UserID:                current.UserInternalID,
-		PublicID:              string(current.PublicID),
+		PublicID:              current.PublicID,
 		CreatedAt:             current.CreatedAt,
 		IdleExpiresAt:         current.IdleExpiresAt,
 		ExpiresAt:             current.ExpiresAt,
@@ -266,5 +265,3 @@ func (h *socialLinkHTTP) handleSocialLinkPreflight(w http.ResponseWriter, r *htt
 	w.Header().Set("Access-Control-Max-Age", "300")
 	w.WriteHeader(http.StatusNoContent)
 }
-
-var _ session.ManagementService = (SessionManagementService)(nil)
