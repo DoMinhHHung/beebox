@@ -24,14 +24,14 @@ import (
 )
 
 const (
-	createReadyKey      int64 = 810001
-	createBarrierKey    int64 = 810002
-	finalReadyKey       int64 = 810011
-	finalBarrierKey     int64 = 810012
-	proofReadyKey       int64 = 810021
-	proofBarrierKey     int64 = 810022
-	exchangeReadyKey    int64 = 810031
-	exchangeBarrierKey  int64 = 810032
+	createReadyKey     int64 = 810001
+	createBarrierKey   int64 = 810002
+	finalReadyKey      int64 = 810011
+	finalBarrierKey    int64 = 810012
+	proofReadyKey      int64 = 810021
+	proofBarrierKey    int64 = 810022
+	exchangeReadyKey   int64 = 810031
+	exchangeBarrierKey int64 = 810032
 )
 
 func TestSocialUnlinkNoKeyUpdateAllowsFKProtectionAndStillSerializesInventory(t *testing.T) {
