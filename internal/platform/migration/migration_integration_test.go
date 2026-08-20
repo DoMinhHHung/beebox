@@ -32,11 +32,11 @@ func TestMigrationFirstApplyAndRerunAreIdempotent(t *testing.T) {
 	if err := firstAdapter.PingContext(ctx); err == nil || err.Error() != "sql: database is closed" {
 		t.Fatalf("first adapter remained open after Up: %v", err)
 	}
-	assertMigrationState(t, ctx, pool, 18)
+	assertMigrationState(t, ctx, pool, 19)
 	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
 		t.Fatalf("second Up() error = %v", err)
 	}
-	assertMigrationState(t, ctx, pool, 18)
+	assertMigrationState(t, ctx, pool, 19)
 	assertSchemaTables(t, ctx, pool)
 }
 
@@ -67,7 +67,7 @@ func TestConcurrentMigrationRunnersSerializeAndConverge(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	assertMigrationState(t, ctx, firstPool, 18)
+	assertMigrationState(t, ctx, firstPool, 19)
 	assertSchemaTables(t, ctx, firstPool)
 }
 
@@ -133,7 +133,8 @@ func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 		"00016_social_account_linking.sql":        {Data: []byte(validMigration)},
 		"00017_social_account_management.sql":     {Data: []byte(validMigration)},
 		"00018_passkeys.sql":                      {Data: []byte(validMigration)},
-		"00019_failure_probe.sql": {Data: []byte(
+		"00019_totp_mfa.sql":                      {Data: []byte(validMigration)},
+		"00020_failure_probe.sql": {Data: []byte(
 			"-- +goose Up\n" +
 				"-- " + secretMarker + "\n" +
 				"CREATE TABLE migration_failure_probe (id bigint PRIMARY KEY);\n" +
@@ -156,12 +157,12 @@ func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 	if probeTable.Valid {
 		t.Fatalf("failing migration left probe table %q", probeTable.String)
 	}
-	var versionNineteenCount int
-	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM goose_db_version WHERE version_id = 19 AND is_applied").Scan(&versionNineteenCount); err != nil {
-		t.Fatalf("query version 19 error = %v", err)
+	var versionTwentyCount int
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM goose_db_version WHERE version_id = 20 AND is_applied").Scan(&versionTwentyCount); err != nil {
+		t.Fatalf("query version 20 error = %v", err)
 	}
-	if versionNineteenCount != 0 {
-		t.Fatalf("applied version 19 rows = %d, want 0", versionNineteenCount)
+	if versionTwentyCount != 0 {
+		t.Fatalf("applied version 20 rows = %d, want 0", versionTwentyCount)
 	}
 }
 
@@ -263,6 +264,7 @@ func assertSchemaTables(t *testing.T, ctx context.Context, pool *database.Pool) 
 		"passkey_credentials",
 		"password_credentials",
 		"password_reset_challenges",
+		"pending_mfa_authentications",
 		"phone_identifiers",
 		"phone_otp_signin_challenges",
 		"phone_signup_challenges",
@@ -273,6 +275,8 @@ func assertSchemaTables(t *testing.T, ctx context.Context, pool *database.Pool) 
 		"social_auth_attempts",
 		"social_auth_completion_grants",
 		"social_link_attempts",
+		"totp_credentials",
+		"totp_enrollments",
 		"users",
 	}
 	if !reflect.DeepEqual(tables, want) {
