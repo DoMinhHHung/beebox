@@ -87,7 +87,8 @@ func TestPasskeyMigrationUpgradesVersion17(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `UPDATE passkey_attempts SET consumed_at=expires_at+INTERVAL '1 second' WHERE public_id=$1`, attemptID); err == nil {
 		t.Fatal("consumption after expiry accepted")
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO passkey_attempts(application_instance_id,purpose,origin,rp_id,session_data,challenge_hash,created_at,expires_at) VALUES($1,'registration','https://app.example','app.example','{}'::jsonb,$2,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP+INTERVAL '1 minute')`, int64(app.InternalID), sha256.Sum256([]byte("bad-binding"))[:]); err == nil {
+	badBinding := sha256.Sum256([]byte("bad-binding"))
+	if _, err := db.ExecContext(ctx, `INSERT INTO passkey_attempts(application_instance_id,purpose,origin,rp_id,session_data,challenge_hash,created_at,expires_at) VALUES($1,'registration','https://app.example','app.example','{}'::jsonb,$2,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP+INTERVAL '1 minute')`, int64(app.InternalID), badBinding[:]); err == nil {
 		t.Fatal("registration attempt without user/session accepted")
 	}
 }
