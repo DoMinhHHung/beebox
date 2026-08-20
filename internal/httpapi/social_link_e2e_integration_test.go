@@ -157,14 +157,14 @@ func TestSocialLinkHTTPLifecycleOverPostgreSQL(t *testing.T) {
 
 	t.Run("initiation rejects untrusted application origin redirect provider and principal input", func(t *testing.T) {
 		cases := []struct {
-			name                 string
-			publishable          string
-			origin               string
-			token                string
-			body                 string
-			needsReverification  bool
-			status               int
-			code                 string
+			name                string
+			publishable         string
+			origin              string
+			token               string
+			body                string
+			needsReverification bool
+			status              int
+			code                string
 		}{
 			{name: "wrong audience", publishable: publishableB, origin: originB, token: tokenA, body: `{"provider":"github","redirect_url":"https://app-b.example/link"}`, status: http.StatusUnauthorized, code: "invalid_session"},
 			{name: "wrong origin", publishable: publishableA, origin: originB, token: tokenA, body: `{"provider":"github","redirect_url":"` + redirectA + `"}`, status: http.StatusForbidden, code: "origin_not_allowed"},
