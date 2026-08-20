@@ -73,6 +73,8 @@ CREATE UNIQUE INDEX totp_enrollments_application_user_pending_key
     WHERE consumed_at IS NULL;
 CREATE INDEX totp_enrollments_expiry_idx
     ON totp_enrollments(expires_at) WHERE consumed_at IS NULL;
+CREATE INDEX totp_enrollments_cleanup_idx
+    ON totp_enrollments(expires_at, consumed_at);
 CREATE INDEX totp_enrollments_key_reference_idx
     ON totp_enrollments(encryption_key_id, encryption_version) WHERE consumed_at IS NULL;
 
@@ -113,5 +115,7 @@ CREATE TABLE pending_mfa_authentications (
 
 CREATE INDEX pending_mfa_authentications_expiry_idx
     ON pending_mfa_authentications(expires_at) WHERE consumed_at IS NULL;
+CREATE INDEX pending_mfa_authentications_cleanup_idx
+    ON pending_mfa_authentications(expires_at, consumed_at);
 CREATE INDEX pending_mfa_authentications_application_user_idx
     ON pending_mfa_authentications(application_instance_id, user_id, created_at);
