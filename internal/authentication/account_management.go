@@ -2,7 +2,11 @@ package authentication
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -15,7 +19,10 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-const AccountIdentifierListLimit = 100
+const (
+	AccountIdentifierListDefaultLimit = 20
+	AccountIdentifierListMaxLimit     = 100
+)
 
 var (
 	ErrAccountManagementInvalid        = errors.New("invalid account management request")
@@ -54,6 +61,22 @@ type ManagedPhoneIdentifier struct {
 	CreatedAt  time.Time
 }
 
+type AccountIdentifierCursor struct {
+	Kind      string    `json:"k"`
+	CreatedAt time.Time `json:"t"`
+	PublicID  string    `json:"i"`
+}
+
+type ManagedEmailPage struct {
+	Items      []ManagedEmailIdentifier
+	NextCursor string
+}
+
+type ManagedPhonePage struct {
+	Items      []ManagedPhoneIdentifier
+	NextCursor string
+}
+
 type AccountProfile struct {
 	DisplayName *string
 	GivenName   *string
@@ -81,8 +104,8 @@ type PhoneIdentifierVerificationSnapshot struct {
 }
 
 type AccountManagementPersistence interface {
-	ListManagedEmails(context.Context, applicationinstance.InternalID, identity.InternalID, int) ([]ManagedEmailIdentifier, error)
-	ListManagedPhones(context.Context, applicationinstance.InternalID, identity.InternalID, int) ([]ManagedPhoneIdentifier, error)
+	ListManagedEmails(context.Context, applicationinstance.InternalID, identity.InternalID, int, *AccountIdentifierCursor) ([]ManagedEmailIdentifier, error)
+	ListManagedPhones(context.Context, applicationinstance.InternalID, identity.InternalID, int, *AccountIdentifierCursor) ([]ManagedPhoneIdentifier, error)
 	AddManagedEmail(context.Context, AccountManagementSession, identity.NormalizedEmail, audit.CorrelationID) (ManagedEmailIdentifier, error)
 	AddManagedPhone(context.Context, AccountManagementSession, identity.CanonicalPhone, audit.CorrelationID) (ManagedPhoneIdentifier, error)
 	ResolveManagedEmail(context.Context, applicationinstance.InternalID, identity.InternalID, string) (ManagedEmailIdentifier, error)
@@ -91,9 +114,9 @@ type AccountManagementPersistence interface {
 	SetPrimaryManagedPhone(context.Context, AccountManagementSession, string, audit.CorrelationID) error
 	RemoveManagedEmail(context.Context, AccountManagementSession, string, audit.CorrelationID) error
 	RemoveManagedPhone(context.Context, AccountManagementSession, string, audit.CorrelationID) error
-	IssuePhoneIdentifierVerification(context.Context, applicationinstance.InternalID, identity.PhoneIdentifierInternalID, VerificationCodeHash, audit.CorrelationID) (string, time.Time, error)
-	LoadPhoneIdentifierVerification(context.Context, applicationinstance.InternalID, identity.PhoneIdentifierInternalID) (PhoneIdentifierVerificationSnapshot, error)
-	FinalizePhoneIdentifierVerification(context.Context, applicationinstance.InternalID, identity.InternalID, identity.PhoneIdentifierInternalID, int64, bool, audit.CorrelationID) (ManagedPhoneIdentifier, error)
+	IssuePhoneIdentifierVerification(context.Context, AccountManagementSession, identity.PhoneIdentifierInternalID, VerificationCodeHash, audit.CorrelationID) (string, time.Time, error)
+	LoadPhoneIdentifierVerification(context.Context, applicationinstance.InternalID, identity.InternalID, identity.PhoneIdentifierInternalID) (PhoneIdentifierVerificationSnapshot, error)
+	FinalizePhoneIdentifierVerification(context.Context, AccountManagementSession, identity.PhoneIdentifierInternalID, int64, bool, audit.CorrelationID) (ManagedPhoneIdentifier, error)
 	GetAccountProfile(context.Context, applicationinstance.InternalID, identity.InternalID) (AccountProfile, error)
 	UpdateAccountProfile(context.Context, AccountManagementSession, AccountProfile, audit.CorrelationID) (AccountProfile, error)
 }
@@ -104,32 +127,75 @@ type PhoneIdentifierVerificationDelivery interface {
 
 type AccountManagementService struct {
 	persistence       AccountManagementPersistence
+	limiter           PublicVerificationRateLimiter
 	emailVerification *EmailVerificationService
 	phoneDelivery     PhoneIdentifierVerificationDelivery
 	now               func() time.Time
 }
 
 func NewAccountManagementService(p AccountManagementPersistence, emailVerification *EmailVerificationService, phoneDelivery PhoneIdentifierVerificationDelivery) *AccountManagementService {
+	limiter, _ := p.(PublicVerificationRateLimiter)
 	return &AccountManagementService{
 		persistence:       p,
+		limiter:           limiter,
 		emailVerification: emailVerification,
 		phoneDelivery:     phoneDelivery,
 		now:               time.Now,
 	}
 }
 
-func (s *AccountManagementService) ListEmails(ctx context.Context, current AccountManagementSession) ([]ManagedEmailIdentifier, error) {
+func (s *AccountManagementService) ListEmails(ctx context.Context, current AccountManagementSession, limit int, cursor string) (ManagedEmailPage, error) {
 	if err := s.validateSession(current); err != nil {
-		return nil, err
+		return ManagedEmailPage{}, err
 	}
-	return s.persistence.ListManagedEmails(ctx, current.ApplicationInstanceID, current.UserID, AccountIdentifierListLimit)
+	limit, decoded, err := accountIdentifierPageInput(limit, cursor, "emails")
+	if err != nil {
+		return ManagedEmailPage{}, err
+	}
+	rows, err := s.persistence.ListManagedEmails(ctx, current.ApplicationInstanceID, current.UserID, limit+1, decoded)
+	if err != nil {
+		return ManagedEmailPage{}, err
+	}
+	page := ManagedEmailPage{Items: rows}
+	if len(page.Items) > limit {
+		page.Items = page.Items[:limit]
+		last := page.Items[len(page.Items)-1]
+		page.NextCursor, err = EncodeAccountIdentifierCursor(AccountIdentifierCursor{Kind: "emails", CreatedAt: last.CreatedAt.UTC(), PublicID: last.PublicID})
+		if err != nil {
+			return ManagedEmailPage{}, ErrAccountManagementPersistence
+		}
+	}
+	if page.Items == nil {
+		page.Items = []ManagedEmailIdentifier{}
+	}
+	return page, nil
 }
 
-func (s *AccountManagementService) ListPhones(ctx context.Context, current AccountManagementSession) ([]ManagedPhoneIdentifier, error) {
+func (s *AccountManagementService) ListPhones(ctx context.Context, current AccountManagementSession, limit int, cursor string) (ManagedPhonePage, error) {
 	if err := s.validateSession(current); err != nil {
-		return nil, err
+		return ManagedPhonePage{}, err
 	}
-	return s.persistence.ListManagedPhones(ctx, current.ApplicationInstanceID, current.UserID, AccountIdentifierListLimit)
+	limit, decoded, err := accountIdentifierPageInput(limit, cursor, "phones")
+	if err != nil {
+		return ManagedPhonePage{}, err
+	}
+	rows, err := s.persistence.ListManagedPhones(ctx, current.ApplicationInstanceID, current.UserID, limit+1, decoded)
+	if err != nil {
+		return ManagedPhonePage{}, err
+	}
+	page := ManagedPhonePage{Items: rows}
+	if len(page.Items) > limit {
+		page.Items = page.Items[:limit]
+		last := page.Items[len(page.Items)-1]
+		page.NextCursor, err = EncodeAccountIdentifierCursor(AccountIdentifierCursor{Kind: "phones", CreatedAt: last.CreatedAt.UTC(), PublicID: last.PublicID})
+		if err != nil {
+			return ManagedPhonePage{}, ErrAccountManagementPersistence
+		}
+	}
+	if page.Items == nil {
+		page.Items = []ManagedPhoneIdentifier{}
+	}
+	return page, nil
 }
 
 func (s *AccountManagementService) AddEmail(ctx context.Context, current AccountManagementSession, raw string, correlationID audit.CorrelationID) (ManagedEmailIdentifier, error) {
@@ -154,11 +220,11 @@ func (s *AccountManagementService) AddPhone(ctx context.Context, current Account
 	return s.persistence.AddManagedPhone(ctx, current, phone, correlationID)
 }
 
-func (s *AccountManagementService) IssueEmailVerification(ctx context.Context, current AccountManagementSession, publicID string) error {
+func (s *AccountManagementService) IssueEmailVerification(ctx context.Context, current AccountManagementSession, publicID string, correlationID audit.CorrelationID) error {
 	if err := s.validateSession(current); err != nil {
 		return err
 	}
-	if !publicid.IsUUIDv4(publicID, "eml") || s.emailVerification == nil {
+	if correlationID == (audit.CorrelationID{}) || !publicid.IsUUIDv4(publicID, "eml") || s.emailVerification == nil || s.limiter == nil {
 		return ErrAccountIdentifierNotFound
 	}
 	item, err := s.persistence.ResolveManagedEmail(ctx, current.ApplicationInstanceID, current.UserID, publicID)
@@ -168,18 +234,26 @@ func (s *AccountManagementService) IssueEmailVerification(ctx context.Context, c
 	if item.Verified {
 		return nil
 	}
-	if err := s.emailVerification.IssueEmailVerification(ctx, current.ApplicationInstanceID, item.InternalID); err != nil {
+	normalized, err := identity.NormalizeEmail(item.Email)
+	if err != nil {
+		return ErrAccountManagementPersistence
+	}
+	fingerprint := sha256.Sum256([]byte("account-email-verification-issue\x00" + normalized.ComparisonKey))
+	if err := s.limiter.AllowPublicVerificationIssue(ctx, current.ApplicationInstanceID, fingerprint); err != nil {
+		return mapAccountVerificationError(err)
+	}
+	if err := s.emailVerification.IssueEmailVerificationWithCorrelation(ctx, current.ApplicationInstanceID, item.InternalID, correlationID); err != nil {
 		return mapAccountVerificationError(err)
 	}
 	return nil
 }
 
-func (s *AccountManagementService) ConfirmEmailVerification(ctx context.Context, current AccountManagementSession, publicID, code string) (ManagedEmailIdentifier, error) {
+func (s *AccountManagementService) ConfirmEmailVerification(ctx context.Context, current AccountManagementSession, publicID, code string, correlationID audit.CorrelationID) (ManagedEmailIdentifier, error) {
 	if err := s.validateSession(current); err != nil {
 		return ManagedEmailIdentifier{}, err
 	}
-	if !publicid.IsUUIDv4(publicID, "eml") || s.emailVerification == nil {
-		return ManagedEmailIdentifier{}, ErrAccountIdentifierNotFound
+	if correlationID == (audit.CorrelationID{}) || !publicid.IsUUIDv4(publicID, "eml") || s.emailVerification == nil || s.limiter == nil || !validVerificationCode(code) {
+		return ManagedEmailIdentifier{}, ErrAccountManagementInvalid
 	}
 	item, err := s.persistence.ResolveManagedEmail(ctx, current.ApplicationInstanceID, current.UserID, publicID)
 	if err != nil {
@@ -188,7 +262,15 @@ func (s *AccountManagementService) ConfirmEmailVerification(ctx context.Context,
 	if item.Verified {
 		return item, nil
 	}
-	if _, err := s.emailVerification.VerifyEmailCode(ctx, current.ApplicationInstanceID, item.InternalID, code); err != nil {
+	normalized, err := identity.NormalizeEmail(item.Email)
+	if err != nil {
+		return ManagedEmailIdentifier{}, ErrAccountManagementPersistence
+	}
+	fingerprint := sha256.Sum256([]byte("account-email-verification-confirm\x00" + normalized.ComparisonKey))
+	if err := s.limiter.AllowPublicVerificationConfirm(ctx, current.ApplicationInstanceID, fingerprint); err != nil {
+		return ManagedEmailIdentifier{}, mapAccountVerificationError(err)
+	}
+	if _, err := s.emailVerification.VerifyEmailCodeWithCorrelation(ctx, current.ApplicationInstanceID, item.InternalID, code, correlationID); err != nil {
 		return ManagedEmailIdentifier{}, mapAccountVerificationError(err)
 	}
 	return s.persistence.ResolveManagedEmail(ctx, current.ApplicationInstanceID, current.UserID, publicID)
@@ -198,7 +280,7 @@ func (s *AccountManagementService) IssuePhoneVerification(ctx context.Context, c
 	if err := s.validateSession(current); err != nil {
 		return err
 	}
-	if correlationID == (audit.CorrelationID{}) || !publicid.IsUUIDv4(publicID, "phn") || s.phoneDelivery == nil {
+	if correlationID == (audit.CorrelationID{}) || !publicid.IsUUIDv4(publicID, "phn") || s.phoneDelivery == nil || s.limiter == nil {
 		return ErrAccountIdentifierNotFound
 	}
 	item, err := s.persistence.ResolveManagedPhone(ctx, current.ApplicationInstanceID, current.UserID, publicID)
@@ -208,15 +290,23 @@ func (s *AccountManagementService) IssuePhoneVerification(ctx context.Context, c
 	if item.Verified {
 		return nil
 	}
+	phone, err := identity.NormalizePhone(item.Phone)
+	if err != nil {
+		return ErrAccountManagementPersistence
+	}
+	fingerprint := sha256.Sum256([]byte("account-phone-verification-issue\x00" + phone.E164))
+	if err := s.limiter.AllowPublicVerificationIssue(ctx, current.ApplicationInstanceID, fingerprint); err != nil {
+		return mapAccountVerificationError(err)
+	}
 	code, err := GenerateVerificationCode()
 	if err != nil {
 		return ErrAccountManagementPersistence
 	}
 	hash, err := HashVerificationCodeContext(ctx, code)
 	if err != nil {
-		return ErrAccountManagementPersistence
+		return mapAccountVerificationError(err)
 	}
-	destination, expiresAt, err := s.persistence.IssuePhoneIdentifierVerification(ctx, current.ApplicationInstanceID, item.InternalID, hash, correlationID)
+	destination, expiresAt, err := s.persistence.IssuePhoneIdentifierVerification(ctx, current, item.InternalID, hash, correlationID)
 	if err != nil {
 		return mapAccountVerificationError(err)
 	}
@@ -233,7 +323,7 @@ func (s *AccountManagementService) ConfirmPhoneVerification(ctx context.Context,
 	if err := s.validateSession(current); err != nil {
 		return ManagedPhoneIdentifier{}, err
 	}
-	if correlationID == (audit.CorrelationID{}) || !publicid.IsUUIDv4(publicID, "phn") || !validVerificationCode(code) {
+	if correlationID == (audit.CorrelationID{}) || !publicid.IsUUIDv4(publicID, "phn") || !validVerificationCode(code) || s.limiter == nil {
 		return ManagedPhoneIdentifier{}, ErrAccountManagementInvalid
 	}
 	item, err := s.persistence.ResolveManagedPhone(ctx, current.ApplicationInstanceID, current.UserID, publicID)
@@ -243,19 +333,34 @@ func (s *AccountManagementService) ConfirmPhoneVerification(ctx context.Context,
 	if item.Verified {
 		return item, nil
 	}
-	snapshot, err := s.persistence.LoadPhoneIdentifierVerification(ctx, current.ApplicationInstanceID, item.InternalID)
+	phone, err := identity.NormalizePhone(item.Phone)
+	if err != nil {
+		return ManagedPhoneIdentifier{}, ErrAccountManagementPersistence
+	}
+	fingerprint := sha256.Sum256([]byte("account-phone-verification-confirm\x00" + phone.E164))
+	if err := s.limiter.AllowPublicVerificationConfirm(ctx, current.ApplicationInstanceID, fingerprint); err != nil {
+		return ManagedPhoneIdentifier{}, mapAccountVerificationError(err)
+	}
+	snapshot, err := s.persistence.LoadPhoneIdentifierVerification(ctx, current.ApplicationInstanceID, current.UserID, item.InternalID)
 	if err != nil {
 		return ManagedPhoneIdentifier{}, mapAccountVerificationError(err)
 	}
 	matched := true
-	if err := VerifyVerificationCode(snapshot.CodeHash, code); err != nil {
-		if errors.Is(err, ErrVerificationCodeMismatch) {
+	if err := VerifyVerificationCodeContext(ctx, snapshot.CodeHash, code); err != nil {
+		switch {
+		case errors.Is(err, ErrVerificationCodeMismatch):
 			matched = false
-		} else {
+		case errors.Is(err, ErrKDFAdmissionLimited):
+			return ManagedPhoneIdentifier{}, ErrPublicRateLimited
+		default:
 			return ManagedPhoneIdentifier{}, ErrAccountManagementPersistence
 		}
 	}
-	return s.persistence.FinalizePhoneIdentifierVerification(ctx, current.ApplicationInstanceID, current.UserID, item.InternalID, snapshot.Generation, matched, correlationID)
+	item, err = s.persistence.FinalizePhoneIdentifierVerification(ctx, current, item.InternalID, snapshot.Generation, matched, correlationID)
+	if err != nil {
+		return ManagedPhoneIdentifier{}, mapAccountVerificationError(err)
+	}
+	return item, nil
 }
 
 func (s *AccountManagementService) SetPrimaryEmail(ctx context.Context, current AccountManagementSession, publicID string, correlationID audit.CorrelationID) error {
@@ -359,6 +464,69 @@ func (s *AccountManagementService) requireMutation(ctx context.Context, current 
 	return nil
 }
 
+func accountIdentifierPageInput(limit int, cursor, kind string) (int, *AccountIdentifierCursor, error) {
+	if limit == 0 {
+		limit = AccountIdentifierListDefaultLimit
+	}
+	if limit < 1 || limit > AccountIdentifierListMaxLimit {
+		return 0, nil, ErrAccountManagementInvalid
+	}
+	decoded, err := DecodeAccountIdentifierCursor(cursor, kind)
+	if err != nil {
+		return 0, nil, err
+	}
+	return limit, decoded, nil
+}
+
+func EncodeAccountIdentifierCursor(cursor AccountIdentifierCursor) (string, error) {
+	if !validAccountIdentifierCursor(cursor, cursor.Kind) {
+		return "", ErrAccountManagementInvalid
+	}
+	payload, err := json.Marshal(cursor)
+	if err != nil || len(payload) > 256 {
+		return "", ErrAccountManagementInvalid
+	}
+	return base64.RawURLEncoding.EncodeToString(payload), nil
+}
+
+func DecodeAccountIdentifierCursor(raw, expectedKind string) (*AccountIdentifierCursor, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	if len(raw) > 512 {
+		return nil, ErrAccountManagementInvalid
+	}
+	payload, err := base64.RawURLEncoding.Strict().DecodeString(raw)
+	if err != nil || len(payload) > 256 {
+		return nil, ErrAccountManagementInvalid
+	}
+	var cursor AccountIdentifierCursor
+	decoder := json.NewDecoder(strings.NewReader(string(payload)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&cursor); err != nil || !validAccountIdentifierCursor(cursor, expectedKind) {
+		return nil, ErrAccountManagementInvalid
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return nil, ErrAccountManagementInvalid
+	}
+	cursor.CreatedAt = cursor.CreatedAt.UTC()
+	return &cursor, nil
+}
+
+func validAccountIdentifierCursor(cursor AccountIdentifierCursor, expectedKind string) bool {
+	if cursor.Kind != expectedKind || cursor.CreatedAt.IsZero() {
+		return false
+	}
+	switch expectedKind {
+	case "emails":
+		return publicid.IsUUIDv4(cursor.PublicID, "eml")
+	case "phones":
+		return publicid.IsUUIDv4(cursor.PublicID, "phn")
+	default:
+		return false
+	}
+}
+
 func normalizeProfileName(value *string) (*string, error) {
 	if value == nil {
 		return nil, nil
@@ -393,7 +561,9 @@ func mapAccountVerificationError(err error) error {
 		return nil
 	}
 	switch {
-	case errors.Is(err, ErrEmailVerificationResendCooldown),
+	case errors.Is(err, ErrPublicRateLimited),
+		errors.Is(err, ErrKDFAdmissionLimited),
+		errors.Is(err, ErrEmailVerificationResendCooldown),
 		errors.Is(err, ErrEmailVerificationIssueLimit),
 		errors.Is(err, ErrPhoneOTPRateLimited):
 		return ErrPublicRateLimited
