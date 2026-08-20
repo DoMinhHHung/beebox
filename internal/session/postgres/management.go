@@ -22,13 +22,13 @@ func (s *Store) ResolveSession(ctx context.Context, appID applicationinstance.In
 	var revokedAt sql.NullTime
 	err := db.QueryRowContext(ctx, `
 		SELECT s.public_id, u.public_id, u.id, a.public_id, s.application_instance_id,
-		       s.created_at, s.last_seen_at, s.idle_expires_at, s.expires_at, s.revoked_at
+		       s.created_at, s.last_seen_at, s.idle_expires_at, s.expires_at, s.revoked_at, COALESCE(s.mfa_method, '')
 		FROM sessions s
 		JOIN users u ON u.application_instance_id = s.application_instance_id AND u.id = s.user_id
 		JOIN application_instances a ON a.id = s.application_instance_id
 		WHERE s.application_instance_id = $1 AND s.public_id = $2`, int64(appID), publicID).Scan(
 		&record.PublicID, &record.UserPublicID, &userID, &record.ApplicationPublicID, &record.ApplicationInstanceID,
-		&record.CreatedAt, &record.LastSeenAt, &record.IdleExpiresAt, &record.ExpiresAt, &revokedAt,
+		&record.CreatedAt, &record.LastSeenAt, &record.IdleExpiresAt, &record.ExpiresAt, &revokedAt, &record.MFAMethod,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return session.Record{}, session.ErrSessionNotFound
