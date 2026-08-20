@@ -14,7 +14,11 @@ const totpEncryptionStartupTimeout = 5 * time.Second
 
 var errTOTPEncryptionReadiness = errors.New("verify TOTP secret encryption readiness")
 
-func loadTOTPSecretEncryption(lookup config.LookupEnv, store *authpostgres.Store) (*secretencryption.Keyring, error) {
+type totpSecretReferenceStore interface {
+	TOTPSecretEncryptionReferences(context.Context) ([]authpostgres.SecretEncryptionReference, error)
+}
+
+func loadTOTPSecretEncryption(lookup config.LookupEnv, store totpSecretReferenceStore) (*secretencryption.Keyring, error) {
 	if lookup == nil || store == nil {
 		return nil, errTOTPEncryptionReadiness
 	}
