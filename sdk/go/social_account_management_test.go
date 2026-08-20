@@ -31,6 +31,32 @@ func TestListSocialLinksSendsBoundedPaginationAndSessionContext(t *testing.T) {
 	}
 }
 
+func TestListSocialLinksEscapesReservedCursorCharactersAsQueryData(t *testing.T) {
+	t.Parallel()
+	const cursor = "opaque?next=a&other=/+%"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/social-links" {
+			t.Fatalf("path=%q", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("cursor"); got != cursor {
+			t.Fatalf("cursor=%q want=%q rawQuery=%q", got, cursor, r.URL.RawQuery)
+		}
+		if got := r.URL.Query().Get("limit"); got != "7" {
+			t.Fatalf("limit=%q rawQuery=%q", got, r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, "pk_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ListSocialLinks(context.Background(), "access-token", "https://app.example.test", ListSocialLinksOptions{Limit: 7, Cursor: cursor}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestUnlinkSocialLinkSendsOneDeleteAndNoProviderMaterial(t *testing.T) {
 	t.Parallel()
 	var calls atomic.Int32
