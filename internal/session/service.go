@@ -43,8 +43,12 @@ type CredentialLookup interface {
 
 type Store interface {
 	AllowSignInAttempt(context.Context, applicationinstance.InternalID, [32]byte) error
-	CreateSession(context.Context, applicationinstance.InternalID, identity.InternalID, int64, string, [32]byte, time.Time, time.Time, authentication.PendingMFAWrite, audit.CorrelationID) (authentication.PrimaryAssuranceResult, error)
+	CreateSession(context.Context, applicationinstance.InternalID, identity.InternalID, int64, string, [32]byte, time.Time, time.Time, audit.CorrelationID) error
 	RotateRefresh(context.Context, applicationinstance.InternalID, [32]byte, [32]byte, time.Time, time.Time, audit.CorrelationID) (CredentialRecord, string, error)
+}
+
+type PrimaryAssuranceStore interface {
+	FinalizePrimarySession(context.Context, applicationinstance.InternalID, identity.InternalID, int64, string, [32]byte, time.Time, time.Time, authentication.PendingMFAWrite, audit.CorrelationID) (authentication.PrimaryAssuranceResult, error)
 }
 
 type TokenPair struct {
@@ -119,15 +123,19 @@ func (s *Service) issueNewSession(ctx context.Context, appID applicationinstance
 	if err != nil {
 		return TokenPair{}, ErrSessionUnavailable
 	}
-	result, err := s.store.CreateSession(ctx, appID, record.UserInternalID, record.CredentialGeneration, sessionID, refreshHash, now.Add(InactivityLifetime), now.Add(AbsoluteLifetime), pending, correlationID)
-	if err != nil {
-		return TokenPair{}, err
-	}
-	if result.MFARequired {
-		if result.PendingMFAPublicID != pending.PublicID || !result.PendingMFAExpiresAt.Equal(pending.ExpiresAt) {
-			return TokenPair{}, ErrSessionUnavailable
+	if assuranceStore, ok := s.store.(PrimaryAssuranceStore); ok {
+		result, err := assuranceStore.FinalizePrimarySession(ctx, appID, record.UserInternalID, record.CredentialGeneration, sessionID, refreshHash, now.Add(InactivityLifetime), now.Add(AbsoluteLifetime), pending, correlationID)
+		if err != nil {
+			return TokenPair{}, err
 		}
-		return TokenPair{PendingMFA: &PendingMFA{Token: pendingToken, ExpiresIn: int64(authentication.PendingMFATTL / time.Second)}}, nil
+		if result.MFARequired {
+			if result.PendingMFAPublicID != pending.PublicID || !result.PendingMFAExpiresAt.Equal(pending.ExpiresAt) {
+				return TokenPair{}, ErrSessionUnavailable
+			}
+			return TokenPair{PendingMFA: &PendingMFA{Token: pendingToken, ExpiresIn: int64(authentication.PendingMFATTL / time.Second)}}, nil
+		}
+	} else if err := s.store.CreateSession(ctx, appID, record.UserInternalID, record.CredentialGeneration, sessionID, refreshHash, now.Add(InactivityLifetime), now.Add(AbsoluteLifetime), correlationID); err != nil {
+		return TokenPair{}, err
 	}
 	access, err := s.ring.Sign(record.UserPublicID, record.ApplicationPublicID, sessionID, now)
 	if err != nil {
