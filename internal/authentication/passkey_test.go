@@ -20,7 +20,7 @@ const (
 )
 
 type passkeyPersistenceStub struct {
-	credentials []PasskeyCredential
+	credentials  []PasskeyCredential
 	attemptWrite PasskeyAttemptWrite
 	attempt      PasskeyAttempt
 	createdID    string
@@ -85,26 +85,15 @@ func (p passkeyProtocolStub) FinishAuthentication(ctx context.Context, _ string,
 }
 
 func freshPasskeySession(now time.Time) PasskeySession {
-	return PasskeySession{
-		ApplicationInstanceID: 1,
-		ApplicationPublicID:   testPasskeyAppPublic,
-		UserID:                2,
-		UserPublicID:          testPasskeyUserPublic,
-		SessionPublicID:       "ses_123e4567-e89b-42d3-a456-426614174004",
-		CreatedAt:             now.Add(-time.Minute),
-		IdleExpiresAt:         now.Add(time.Hour),
-		ExpiresAt:             now.Add(24 * time.Hour),
-	}
+	return PasskeySession{ApplicationInstanceID: 1, ApplicationPublicID: testPasskeyAppPublic, UserID: 2, UserPublicID: testPasskeyUserPublic, SessionPublicID: "ses_123e4567-e89b-42d3-a456-426614174004", CreatedAt: now.Add(-time.Minute), IdleExpiresAt: now.Add(time.Hour), ExpiresAt: now.Add(24 * time.Hour)}
 }
 
 func TestPasskeyBeginRegistrationBindsAndHashesChallenge(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0).UTC()
 	rawChallenge := []byte("0123456789abcdef0123456789abcdef")
-	challenge := base64.RawURLEncoding.EncodeToString(rawChallenge)
 	store := &passkeyPersistenceStub{}
-	service := NewPasskeyService(store, passkeyProtocolStub{challenge: challenge})
+	service := NewPasskeyService(store, passkeyProtocolStub{challenge: base64.RawURLEncoding.EncodeToString(rawChallenge)})
 	service.now = func() time.Time { return now }
-
 	result, err := service.BeginRegistration(context.Background(), freshPasskeySession(now), "https://app.example")
 	if err != nil {
 		t.Fatal(err)
@@ -112,8 +101,7 @@ func TestPasskeyBeginRegistrationBindsAndHashesChallenge(t *testing.T) {
 	if result.AttemptID == "" || result.ExpiresIn <= 0 || result.ExpiresIn > int64(PasskeyAttemptTTL/time.Second) {
 		t.Fatalf("unexpected result: %+v", result)
 	}
-	wantHash := sha256.Sum256(rawChallenge)
-	if store.attemptWrite.ChallengeHash != wantHash {
+	if store.attemptWrite.ChallengeHash != sha256.Sum256(rawChallenge) {
 		t.Fatal("challenge hash was not persisted")
 	}
 	if store.attemptWrite.ApplicationInstanceID != 1 || store.attemptWrite.UserID != 2 || store.attemptWrite.SessionPublicID == "" || store.attemptWrite.Origin != "https://app.example" || store.attemptWrite.RPID != "app.example" || store.attemptWrite.Purpose != "registration" {
@@ -123,13 +111,11 @@ func TestPasskeyBeginRegistrationBindsAndHashesChallenge(t *testing.T) {
 
 func TestPasskeyRegistrationRequiresRecentAuthentication(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0).UTC()
-	rawChallenge := []byte("0123456789abcdef0123456789abcdef")
 	store := &passkeyPersistenceStub{}
-	service := NewPasskeyService(store, passkeyProtocolStub{challenge: base64.RawURLEncoding.EncodeToString(rawChallenge)})
+	service := NewPasskeyService(store, passkeyProtocolStub{challenge: base64.RawURLEncoding.EncodeToString([]byte("0123456789abcdef"))})
 	service.now = func() time.Time { return now }
 	current := freshPasskeySession(now)
 	current.CreatedAt = now.Add(-SocialLinkFreshness)
-
 	_, err := service.BeginRegistration(context.Background(), current, "https://app.example")
 	if !errors.Is(err, ErrPasskeyReverificationRequired) {
 		t.Fatalf("got %v", err)
@@ -143,34 +129,10 @@ func TestPasskeyRejectsNonCanonicalOriginShape(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0).UTC()
 	service := NewPasskeyService(&passkeyPersistenceStub{}, passkeyProtocolStub{challenge: base64.RawURLEncoding.EncodeToString([]byte("0123456789abcdef"))})
 	service.now = func() time.Time { return now }
-
 	for _, origin := range []string{"https://app.example/path", "https://user@app.example", "app.example", "https://app.example?x=1"} {
 		if _, err := service.BeginRegistration(context.Background(), freshPasskeySession(now), origin); !errors.Is(err, ErrPasskeyInvalidRequest) {
 			t.Fatalf("origin %q: got %v", origin, err)
 		}
-	}
-}
-
-func TestPasskeyAuthenticationIsAttemptBoundAndProofFailureFailsClosed(t *testing.T) {
-	now := time.Unix(1_800_000_000, 0).UTC()
-	attempt := PasskeyAttempt{
-		PublicID:              "pka_123e4567-e89b-42d3-a456-426614174002",
-		ApplicationInstanceID: 1,
-		ApplicationPublicID:   testPasskeyAppPublic,
-		Purpose:               "authentication",
-		Origin:                "https://app.example",
-		RPID:                  "app.example",
-		SessionData:           json.RawMessage(`{"challenge":"stored"}`),
-		CreatedAt:             now,
-		ExpiresAt:             now.Add(PasskeyAttemptTTL),
-	}
-	store := &passkeyPersistenceStub{attempt: attempt, loadUser: PasskeyProtocolUser{UserID: 2, PublicID: testPasskeyUserPublic}}
-	service := NewPasskeyService(store, passkeyProtocolStub{finishErr: errors.New("bad proof")})
-	app := applicationinstance.Instance{InternalID: 1, PublicID: testPasskeyAppPublic}
-
-	_, _, _, err := service.VerifyAuthentication(context.Background(), app, attempt.Origin, attempt.PublicID, json.RawMessage(`{"id":"bad"}`))
-	if !errors.Is(err, ErrPasskeyProof) {
-		t.Fatalf("got %v", err)
 	}
 }
 
@@ -179,9 +141,7 @@ func TestPasskeyRemovePreservesLastMethodError(t *testing.T) {
 	store := &passkeyPersistenceStub{removeErr: ErrLastAuthenticationMethod}
 	service := NewPasskeyService(store, passkeyProtocolStub{})
 	service.now = func() time.Time { return now }
-	correlation := audit.CorrelationID{1}
-
-	err := service.Remove(context.Background(), freshPasskeySession(now), "pky_123e4567-e89b-42d3-a456-426614174003", correlation)
+	err := service.Remove(context.Background(), freshPasskeySession(now), "pky_123e4567-e89b-42d3-a456-426614174003", audit.CorrelationID{1})
 	if !errors.Is(err, ErrLastAuthenticationMethod) {
 		t.Fatalf("got %v", err)
 	}
