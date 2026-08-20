@@ -266,11 +266,12 @@ func (s *Store) FinalizeEmailOTP(ctx context.Context, finalize authentication.Em
 		return authentication.EmailOTPFinalizeResult{}, classifyEmailOTP(ctx, err)
 	}
 	return authentication.EmailOTPFinalizeResult{
-		UserPublicID:        assurance.UserPublicID,
-		ApplicationPublicID: assurance.ApplicationPublicID,
-		MFARequired:         assurance.MFARequired,
-		PendingMFAPublicID:  assurance.PendingMFAPublicID,
-		PendingMFAExpiresAt: assurance.PendingMFAExpiresAt,
+		UserPublicID:          assurance.UserPublicID,
+		ApplicationPublicID:   assurance.ApplicationPublicID,
+		MFARequired:           assurance.MFARequired,
+		PendingMFAPublicID:    assurance.PendingMFAPublicID,
+		PendingMFAExpiresAt:   assurance.PendingMFAExpiresAt,
+		RecoveryCodeAvailable: assurance.RecoveryCodeAvailable,
 	}, nil
 }
 

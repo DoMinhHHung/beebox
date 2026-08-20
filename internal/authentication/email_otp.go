@@ -68,11 +68,12 @@ type EmailOTPFinalize struct {
 }
 
 type EmailOTPFinalizeResult struct {
-	UserPublicID        string
-	ApplicationPublicID string
-	MFARequired         bool
-	PendingMFAPublicID  string
-	PendingMFAExpiresAt time.Time
+	UserPublicID          string
+	ApplicationPublicID   string
+	MFARequired           bool
+	PendingMFAPublicID    string
+	PendingMFAExpiresAt   time.Time
+	RecoveryCodeAvailable bool
 }
 
 type EmailOTPPersistence interface {
