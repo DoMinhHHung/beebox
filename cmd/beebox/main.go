@@ -126,10 +126,12 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 
 	var phoneSignupIssuer httpapi.PhoneIssueService
 	var phoneSigninIssuer httpapi.PhoneIssueService
+	var phoneIdentifierDelivery authentication.PhoneIdentifierVerificationDelivery
 	if smsEnabled {
 		phoneDelivery := metricsdelivery.NewPhone(smsSender, recorder)
 		phoneSignupIssuer = authentication.NewPhoneSignupService(authStore, phoneDelivery)
 		phoneSigninIssuer = authentication.NewPhoneOTPService(authStore, phoneDelivery)
+		phoneIdentifierDelivery = phoneDelivery
 	}
 
 	ring, err := session.KeyRingFromLookup(session.LookupEnv(lookup))
@@ -178,6 +180,8 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 	managementCore := authentication.NewSocialAccountService(authStore, availability)
 	base = httpapi.WithSocialAccountManagement(base, integrationService, integrationStore, sessionService, managementCore)
 	base = httpapi.WithSessionManagement(base, integrationService, integrationService, sessionService)
+	accountCore := authentication.NewAccountManagementService(authStore, verificationCore, phoneIdentifierDelivery)
+	base = httpapi.WithAccountManagement(base, integrationService, integrationStore, sessionService, accountCore)
 	reverificationCore := authentication.NewReverificationService(authStore)
 	base = httpapi.WithReverification(base, integrationService, integrationStore, sessionService, reverificationCore)
 	return httpapi.WithMetrics(base, recorder), nil
