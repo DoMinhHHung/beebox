@@ -1,0 +1,93 @@
+package authentication
+
+import (
+	"context"
+	"time"
+
+	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
+	"github.com/DoMinhHHung/beebox/internal/audit"
+	"github.com/DoMinhHHung/beebox/internal/identity"
+)
+
+type PendingTOTPAuthenticationSnapshot struct {
+	PendingPublicID       string
+	TokenHash             [32]byte
+	ApplicationInstanceID applicationinstance.InternalID
+	UserID                identity.InternalID
+	PrimaryMethod         string
+	PrimaryContext        string
+	CredentialID          string
+	Envelope              TOTPSecretEnvelope
+	LastAcceptedTimestep  *int64
+	ExpiresAt             time.Time
+}
+
+type TOTPAuthenticationFinalize struct {
+	PendingPublicID string
+	TokenHash       [32]byte
+	Snapshot        PendingTOTPAuthenticationSnapshot
+	Timestep        int64
+	SessionPublicID string
+	RefreshVerifier [32]byte
+	IdleExpiresAt   time.Time
+	ExpiresAt       time.Time
+	CorrelationID   audit.CorrelationID
+}
+
+type TOTPAuthenticationResult struct {
+	UserPublicID        identity.PublicID
+	ApplicationPublicID applicationinstance.PublicID
+}
+
+type TOTPAuthenticationPersistence interface {
+	LoadPendingTOTPAuthentication(context.Context, string, [32]byte) (PendingTOTPAuthenticationSnapshot, error)
+	FinalizePendingTOTPAuthentication(context.Context, TOTPAuthenticationFinalize) (TOTPAuthenticationResult, error)
+}
+
+func (s *TOTPService) CompletePendingAuthentication(
+	ctx context.Context,
+	pendingPublicID string,
+	tokenHash [32]byte,
+	code string,
+	final TOTPAuthenticationFinalize,
+) (TOTPAuthenticationResult, error) {
+	if s == nil || s.protocol == nil || s.protector == nil || s.now == nil || !s.protector.Enabled() || pendingPublicID == "" || tokenHash == ([32]byte{}) || code == "" || final.CorrelationID == (audit.CorrelationID{}) {
+		return TOTPAuthenticationResult{}, ErrTOTPInvalidCode
+	}
+	persistence, ok := s.persistence.(TOTPAuthenticationPersistence)
+	if !ok {
+		return TOTPAuthenticationResult{}, ErrTOTPUnavailable
+	}
+	snapshot, err := persistence.LoadPendingTOTPAuthentication(ctx, pendingPublicID, tokenHash)
+	if err != nil {
+		return TOTPAuthenticationResult{}, mapTOTPError(ctx, err)
+	}
+	now := s.now().UTC()
+	if snapshot.PendingPublicID != pendingPublicID || snapshot.TokenHash != tokenHash || !snapshot.ApplicationInstanceID.Valid() || !snapshot.UserID.Valid() || snapshot.PrimaryMethod == "" || snapshot.PrimaryContext == "" || snapshot.CredentialID == "" || !now.Before(snapshot.ExpiresAt.UTC()) {
+		return TOTPAuthenticationResult{}, ErrTOTPEnrollmentInvalid
+	}
+	secretRaw, err := s.protector.DecryptTOTP(TOTPSecretContext{
+		ApplicationID: snapshot.ApplicationInstanceID,
+		UserID:        snapshot.UserID,
+		CredentialID:  snapshot.CredentialID,
+	}, snapshot.Envelope)
+	if err != nil {
+		return TOTPAuthenticationResult{}, ErrTOTPUnavailable
+	}
+	timestep, valid, err := s.protocol.Verify(secretRaw, code, now)
+	if err != nil || !valid {
+		return TOTPAuthenticationResult{}, ErrTOTPInvalidCode
+	}
+	if snapshot.LastAcceptedTimestep != nil && timestep <= *snapshot.LastAcceptedTimestep {
+		return TOTPAuthenticationResult{}, ErrTOTPReplay
+	}
+	final.PendingPublicID = pendingPublicID
+	final.TokenHash = tokenHash
+	final.Snapshot = snapshot
+	final.Timestep = timestep
+	result, err := persistence.FinalizePendingTOTPAuthentication(ctx, final)
+	if err != nil {
+		return TOTPAuthenticationResult{}, mapTOTPError(ctx, err)
+	}
+	return result, nil
+}
