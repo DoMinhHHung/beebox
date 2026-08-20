@@ -77,12 +77,20 @@ type StatusResponse struct {
 	Status string `json:"status"`
 }
 
+type PendingMFA struct {
+	Factor    string `json:"factor"`
+	Token     string `json:"token"`
+	ExpiresIn int64  `json:"expires_in"`
+}
+
 type TokenResponse struct {
-	AccessToken  string `json:"access_token"`
-	TokenType    string `json:"token_type"`
-	ExpiresIn    int64  `json:"expires_in"`
-	SessionID    string `json:"session_id"`
-	RefreshToken string `json:"refresh_token,omitempty"`
+	Status       string      `json:"status,omitempty"`
+	AccessToken  string      `json:"access_token,omitempty"`
+	TokenType    string      `json:"token_type,omitempty"`
+	ExpiresIn    int64       `json:"expires_in,omitempty"`
+	SessionID    string      `json:"session_id,omitempty"`
+	RefreshToken string      `json:"refresh_token,omitempty"`
+	PendingMFA   *PendingMFA `json:"pending_mfa,omitempty"`
 }
 
 type Session struct {
