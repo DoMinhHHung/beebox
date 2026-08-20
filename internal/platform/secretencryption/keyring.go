@@ -25,10 +25,10 @@ const (
 )
 
 var (
-	ErrConfig     = errors.New("invalid secret encryption configuration")
+	ErrConfig      = errors.New("invalid secret encryption configuration")
 	ErrUnavailable = errors.New("secret encryption unavailable")
-	ErrDecrypt    = errors.New("secret decryption failed")
-	keyIDPattern  = regexp.MustCompile(`^[A-Za-z0-9._-]{1,32}$`)
+	ErrDecrypt     = errors.New("secret decryption failed")
+	keyIDPattern   = regexp.MustCompile(`^[A-Za-z0-9._-]{1,32}$`)
 )
 
 type LookupEnv func(string) (string, bool)
@@ -95,12 +95,18 @@ func Load(lookup LookupEnv) (*Keyring, error) {
 }
 
 func (k *Keyring) Enabled() bool { return k != nil && len(k.keys) > 0 && k.active != "" }
+
 func (k *Keyring) ActiveKeyID() string {
-	if k == nil { return "" }
+	if k == nil {
+		return ""
+	}
 	return k.active
 }
+
 func (k *Keyring) HasKey(id string) bool {
-	if k == nil { return false }
+	if k == nil {
+		return false
+	}
 	_, ok := k.keys[id]
 	return ok
 }
