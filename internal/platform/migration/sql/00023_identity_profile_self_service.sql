@@ -92,6 +92,65 @@ CREATE UNIQUE INDEX phone_identifiers_application_user_primary_key
 CREATE INDEX phone_identifiers_application_user_created_public_idx
     ON phone_identifiers(application_instance_id, user_id, created_at DESC, public_id DESC);
 
+-- First-possession verification and primary selection share the same database
+-- write boundary. The triggers run only for insertion or verified_at changes,
+-- so explicit primary switching is not intercepted. Under concurrent first
+-- verification, the partial primary unique indexes serialize the winner and a
+-- losing transaction rolls back without exposing a verified primary-less row.
+CREATE FUNCTION beebox_assign_first_email_primary() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NEW.verified_at IS NOT NULL
+       AND NOT NEW.is_primary
+       AND NOT EXISTS (
+           SELECT 1
+           FROM email_identifiers e
+           WHERE e.application_instance_id = NEW.application_instance_id
+             AND e.user_id = NEW.user_id
+             AND e.is_primary
+             AND e.id <> NEW.id
+       ) THEN
+        NEW.is_primary := TRUE;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER email_identifiers_first_primary_insert
+    BEFORE INSERT ON email_identifiers
+    FOR EACH ROW EXECUTE FUNCTION beebox_assign_first_email_primary();
+CREATE TRIGGER email_identifiers_first_primary_verify
+    BEFORE UPDATE OF verified_at ON email_identifiers
+    FOR EACH ROW EXECUTE FUNCTION beebox_assign_first_email_primary();
+
+CREATE FUNCTION beebox_assign_first_phone_primary() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NEW.verified_at IS NOT NULL
+       AND NOT NEW.is_primary
+       AND NOT EXISTS (
+           SELECT 1
+           FROM phone_identifiers p
+           WHERE p.application_instance_id = NEW.application_instance_id
+             AND p.user_id = NEW.user_id
+             AND p.is_primary
+             AND p.id <> NEW.id
+       ) THEN
+        NEW.is_primary := TRUE;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER phone_identifiers_first_primary_insert
+    BEFORE INSERT ON phone_identifiers
+    FOR EACH ROW EXECUTE FUNCTION beebox_assign_first_phone_primary();
+CREATE TRIGGER phone_identifiers_first_primary_verify
+    BEFORE UPDATE OF verified_at ON phone_identifiers
+    FOR EACH ROW EXECUTE FUNCTION beebox_assign_first_phone_primary();
+
 CREATE TABLE phone_identifier_verification_challenges (
     application_instance_id BIGINT NOT NULL,
     phone_identifier_id BIGINT NOT NULL,
