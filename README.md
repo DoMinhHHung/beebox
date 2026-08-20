@@ -2,7 +2,7 @@
 
 BeeBox is an open-source identity and access platform implemented primarily in Go. Clerk's public product capabilities are a benchmark only; BeeBox owns its contracts, implementation, identifiers, persistence and security decisions.
 
-BeeBox's merged Phase 1 B2C foundation provides application-scoped email/password signup and verification, signin, rotating sessions/refresh credentials, Ed25519 access JWTs/JWKS, password reset, backend session management, a minimal Go SDK, operational metrics and reproducible local dependencies. The merged Phase 2 increments include the P2.0 trust/contract baseline, P2.1 passwordless email OTP primary authentication for existing verified email identifiers, P2.2 phone-first signup plus verified-phone SMS OTP primary authentication, and P2.3 social OAuth/OIDC for the fixed eleven-provider vocabulary described below. This branch completes P2.4A explicit authenticated social account linking and P2.4B self-service linked social account listing/unlink for an already-authenticated BeeBox user. It does **not** claim principal merge, provider-side OAuth consent revocation, generic P2.8 step-up/reverification, passkeys/MFA/recovery, or later Phase 2 checkpoints are implemented.
+BeeBox's merged Phase 1 B2C foundation provides application-scoped email/password signup and verification, signin, rotating sessions/refresh credentials, Ed25519 access JWTs/JWKS, password reset, backend session management, a minimal Go SDK, operational metrics and reproducible local dependencies. The merged Phase 2 increments include the P2.0 trust/contract baseline, P2.1 passwordless email OTP primary authentication for existing verified email identifiers, P2.2 phone-first signup plus verified-phone SMS OTP primary authentication, P2.3 social OAuth/OIDC, P2.4A explicit authenticated social account linking, and P2.4B self-service linked social account listing/unlink. This integration branch implements P2.5 Passkeys/WebAuthn as another primary authentication method with registration, authentication, listing and removal. It does **not** claim principal merge, provider-side OAuth consent revocation, TOTP/MFA, recovery codes, generic P2.8 step-up/reverification, device management, hosted authentication, or later Phase 2 checkpoints are implemented yet.
 
 ## Project documentation
 
@@ -15,6 +15,7 @@ BeeBox's merged Phase 1 B2C foundation provides application-scoped email/passwor
 - [ADR 0006: Phase 2 device privacy and hosted-auth trust](docs/adr/0006-phase2-device-privacy-hosted-auth.md)
 - [ADR 0007: Phase 2 social signup claims and principal creation](docs/adr/0007-phase2-social-signup-claims.md)
 - [Initial threat model](docs/threat-model/initial.md)
+- [P2.5 passkey threat-model delta](docs/threat-model/passkeys.md)
 - [Contract and tenancy conventions](docs/contracts/conventions.md)
 - [Phase 1 exit evidence](docs/phase1-exit.md)
 - [OpenAPI v1](api/openapi/v1.yaml)
@@ -248,13 +249,25 @@ A successful link callback redirects only to the stored trusted redirect with `b
 
 `DELETE /v1/social-links/{social_link_id}` targets only that opaque locator under the current application/user scope. Unlink requires the exact persisted current session to remain valid and fresh while `now < session.created_at + 10 minutes`; refreshing an access/refresh credential for the same old session does not reset this freshness. A syntactically valid absent, already removed, other-user or cross-application ID returns the same idempotent `204 No Content` and does not disclose ownership.
 
-A real unlink is denied with `409 last_authentication_method` unless at least one currently usable path remains after removal. Password counts only when both a password credential and a verified email exist. Email OTP counts only when SMTP/email OTP delivery is configured and a verified email exists. Phone OTP counts only when SMS mode is enabled and a verified phone exists. A remaining social identity counts only when its provider connection is configured for that exact application. Unimplemented recovery codes, passkeys and MFA count as zero; the current session itself and merely possible password reset are not authentication methods for this predicate.
+A real unlink is denied with `409 last_authentication_method` unless at least one currently usable path remains after removal. Password counts only when both a password credential and a verified email exist. Email OTP counts only when SMTP/email OTP delivery is configured and a verified email exists. Phone OTP counts only when SMS mode is enabled and a verified phone exists. A remaining social identity counts only when its provider connection is configured for that exact application. A stored passkey counts only when it belongs to the exact same application/user under the implemented passkey authentication contract; cross-application credentials never count. Recovery codes and MFA are still unimplemented at P2.5 and count as zero; the current session itself and merely possible password reset are not authentication methods for this predicate.
 
 Unlink serializes with concurrent unlink, P2.4A create/finalize and P2.3 provider-subject proof. Successful removal cancels still-relevant same-user/provider P2.4A link attempts and clears their provider PKCE ciphertext, and conservatively consumes all still-unexchanged P2.3 social completion grants for the same application/user. Last-method denial performs none of that success cleanup. Deletion and success audit share one PostgreSQL transaction; audit failure rolls the identity deletion and pending-state cleanup back. Existing ordinary BeeBox sessions are **not** revoked by unlink.
 
 P2.4B removes only BeeBox's external-identity ownership association. BeeBox does not retain provider access/refresh tokens for this lifecycle and therefore does not call Google/GitHub/etc. provider-side disconnect, consent or token-revocation APIs. Principal/account merge remains absent; provider email is still never linking authority.
 
-The deterministic provider-contract suite uses synthetic local HTTP/OIDC/JWKS fixtures and does not require live social accounts or live provider credentials. It proves BeeBox request/response compatibility with provider wire contracts independently encoded from current provider-owned evidence, not developer-console setup, real credentials, provider app review, user consent/account availability, or provider production uptime. Slack has deterministic authorization, confidential token exchange, RS256 ID-token/nonce, subject-boundary, safe-error, no-userinfo and no-retry coverage based on current Slack first-party SIWS/token/discovery evidence. Facebook now has deterministic authorization, dedicated GET/query token exchange, Graph query-token identity proof, strict opaque-string subject, provider-shaped error collapse, redirect/no-retry and secret/token non-leakage coverage based on the accepted current Meta manual-flow/access-token/User evidence plus the current Meta consumer `/me` sample.
+### P2.5 Passkeys / WebAuthn
+
+P2.5 uses the maintained `github.com/go-webauthn/webauthn` verifier behind BeeBox-owned interfaces; BeeBox does not implement WebAuthn cryptography or protocol parsing itself and does not expose library structs as public API models. The browser contract transports WebAuthn creation/assertion JSON opaquely.
+
+Registration is an authenticated sensitive mutation. `POST /v1/passkeys/registration/attempts` requires the exact resolved application, canonical allowed `Origin`, current persisted BeeBox session and accepted recent-authentication window. BeeBox derives the RP ID server-side from the trusted Origin, binds application/user/session/Origin/RP/purpose into a short-lived one-time `pka_<uuid-v4>` ceremony, persists only a SHA-256 challenge hash plus verifier session data, and never receives the authenticator-owned private key. `POST /v1/passkeys/registration/complete` consumes the exact ceremony and verifies challenge, Origin, RP ID, user handle, authenticator response and required user verification through the maintained verifier before atomically storing credential verification state and audit evidence. Duplicate/cross-application/wrong-user/replayed/expired proofs fail closed.
+
+Authentication is discoverable/resident-credential based. `POST /v1/passkeys/authentication/attempts` issues an application/Origin/RP-bound one-time ceremony. `POST /v1/passkeys/authentication/complete` resolves a credential only inside the exact application and RP scope, requires WebAuthn user verification, updates verifier-owned credential state such as signature-counter state, creates an ordinary BeeBox session/refresh verifier and appends audit coherently in one PostgreSQL transaction. A passkey is a **primary authentication method** in the current assurance model; it is not automatically an MFA factor and will not bypass configured TOTP once P2.6 is implemented.
+
+`GET /v1/passkeys` returns at most the bounded current-user passkey set with only opaque `pky_<uuid-v4>` ID, optional user-visible name and creation time. It never exposes credential ID, public-key blob, counter state, user handle, internal ID or authenticator response. `DELETE /v1/passkeys/{passkey_id}` requires the exact current application/user/session plus recent authentication and is rejected with `last_authentication_method` when no other usable authentication path remains. Removal and required audit evidence are atomic.
+
+Passkey ceremonies have a maximum five-minute lifetime and are one-time even if maintenance has not yet deleted them. Expired/consumed attempts are cleaned by the existing bounded security-state maintenance primitive using dedicated expiry/consumption indexes; cleanup is not a correctness dependency. The threat and transaction details are recorded in `docs/threat-model/passkeys.md`.
+
+The deterministic provider-contract suite uses synthetic local HTTP/OIDC/JWKS fixtures and does not require live social accounts or live provider credentials. It proves BeeBox request/response compatibility with provider wire contracts independently encoded from current provider-owned evidence, not developer-console setup, real credentials, provider app review, user consent/account availability, or provider production uptime. Slack has deterministic authorization, confidential token exchange, RS256 ID-token/nonce, subject-boundary, safe-error, no-userinfo and no-retry coverage based on current Slack first-party SIWS/token/discovery evidence. Facebook has deterministic authorization, dedicated GET/query token exchange, Graph query-token identity proof, strict opaque-string subject, provider-shaped error collapse, redirect/no-retry and secret/token non-leakage coverage.
 
 The SDK offline verifier intentionally requires the configured HTTPS issuer. For local plaintext HTTP development, use the local JWKS endpoint for inspection/testing or place BeeBox behind a local TLS endpoint rather than weakening production issuer semantics.
 
@@ -282,6 +295,10 @@ Reachable endpoints include:
 - `DELETE /v1/social-links/{social_link_id}` — fresh-session self-service unlink with anti-enumerating idempotent 204 and last-usable-method protection;
 - `GET /v1/social-auth/callback/{provider}` — shared provider callback that purpose-routes only BeeBox-issued auth/link state and redirects to only the previously stored allowlisted application redirect;
 - `POST /v1/social-auth/exchange` — one-time completion-code + client PKCE verifier exchange producing the ordinary BeeBox session/access/refresh transport for P2.3 social authentication only;
+- `POST /v1/passkeys/registration/attempts` and `/v1/passkeys/registration/complete` — recent-auth bound passkey enrollment using opaque WebAuthn browser JSON;
+- `POST /v1/passkeys/authentication/attempts` and `/v1/passkeys/authentication/complete` — discoverable passkey primary authentication with required user verification and ordinary BeeBox session issuance;
+- `GET /v1/passkeys` — bounded current-user passkey metadata list;
+- `DELETE /v1/passkeys/{passkey_id}` — fresh-auth passkey removal with last-usable-method protection;
 - `POST /v1/sessions/refresh` — one-time refresh rotation; replay revokes the session;
 - `GET /v1/sessions/current` — access JWT plus current database session-state validation;
 - `POST /v1/sessions/sign-out` — current-session revoke/signout;
@@ -291,7 +308,7 @@ Reachable endpoints include:
 - `GET /.well-known/jwks.json` — active and retiring public Ed25519 verification keys;
 - `GET /metrics` — bounded operational counters and database-pool occupancy gauges. Protect this operational endpoint at the deployment/network boundary as appropriate.
 
-See `api/openapi/v1.yaml` for the BeeBox-owned public contract. No public response exposes internal BIGINT IDs, challenge rows, provider models, provider credentials or provider tokens.
+See `api/openapi/v1.yaml` for the BeeBox-owned public contract. No public response exposes internal BIGINT IDs, challenge rows, WebAuthn library structs, provider models, provider credentials or provider tokens.
 
 ## Security semantics
 
@@ -319,7 +336,7 @@ Successful phone signup confirmation commits new user + verified phone + ordinar
 
 P2.3 treats the provider proof as a primary authentication method, not MFA and not account-link authority. Every attempt is bound to trusted application scope, one provider, one exact prevalidated application redirect, one purpose, one client completion S256 challenge, and an unpredictable one-time state. Provider-side PKCE verifiers, where used, are encrypted in persisted attempt state and cleared on consumption; OIDC nonces are persisted only as hashes. Callback state is consumed before provider token/profile exchange so replay cannot repeat provider proof or principal/session creation.
 
-A successful provider proof returns only `{provider, subject}` into the BeeBox application layer. Subject ownership is database-enforced inside the application/provider namespace. Provider email/name/avatar/profile claims and access/refresh/ID tokens are not account identifiers, are not persisted as profile convenience, and do not cross the adapter proof boundary. Facebook's documented query credentials/token transport is handled without logging request URLs or provider error material; provider-specific failures still collapse to the same BeeBox-owned proof error. Completion codes are one-time, five-minute, hash-only in PostgreSQL and require the original client PKCE verifier before normal session issuance. Concurrent redemption yields at most one committed session.
+A successful provider proof returns only `{provider, subject}` into the BeeBox application layer. Subject ownership is database-enforced inside the application/provider namespace. Provider email/name/avatar/profile claims and access/refresh/ID tokens are not account identifiers, are not persisted as profile convenience, and do not cross the adapter proof boundary. Completion codes are one-time, five-minute, hash-only in PostgreSQL and require the original client PKCE verifier before normal session issuance. Concurrent redemption yields at most one committed session.
 
 ### Explicit social account linking
 
@@ -331,9 +348,17 @@ The provider-subject advisory lock and database uniqueness remain the final owne
 
 P2.4B listing is ordinary authenticated account metadata access: it is scoped by exact application + current persisted BeeBox user/session, bounded and paginated, and exposes only provider + opaque `sli_` ID + creation time. Unlink is a security mutation: the exact session must still be valid and its original `created_at` must remain within ten minutes. Access-token/refresh rotation for that same session does not manufacture new freshness.
 
-Last-method protection is configuration-aware. Password requires a password credential and verified email; email OTP additionally requires configured SMTP delivery; phone OTP additionally requires enabled SMS delivery; remaining social identities require an active provider connection for the exact application. Unconfigured methods, unverified identifiers, current-session existence, future recovery/MFA/passkey features and password-reset possibility do not count. Concurrent removal is serialized so two racing social unlinks cannot strand the account.
+Last-method protection is configuration-aware. Password requires a password credential and verified email; email OTP additionally requires configured SMTP delivery; phone OTP additionally requires enabled SMS delivery; remaining social identities require an active provider connection for the exact application; and P2.5 passkeys count only when stored for the exact application/user. Unconfigured methods, unverified identifiers, cross-application passkeys, current-session existence, future recovery/MFA features and password-reset possibility do not count. Concurrent removal is serialized so racing removals cannot strand the account.
 
 Successful unlink cancels pending same-user/provider P2.4A link state, clears provider PKCE ciphertext, conservatively invalidates still-unexchanged P2.3 social completion grants for the same user/application, deletes the identity and records success audit atomically. Denial commits only its safe audit and preserves all pending state. Existing ordinary sessions remain active. Provider-side consent/token revocation and account merge are separate unimplemented lifecycles.
+
+### Passkeys / WebAuthn
+
+Passkey private keys always remain inside the authenticator. BeeBox stores only the server-side credential state necessary to verify future assertions. The selected maintained WebAuthn library owns protocol validation including challenge, RP ID hash, Origin, authenticator data/signature, user handle, user verification and signature-counter/clone semantics; BeeBox maps failures into stable application errors instead of exposing verifier internals.
+
+Registration/removal require a valid current persisted session and accepted recent authentication; refreshing an old session does not reset its original `created_at`. One-time ceremony state is exact application/Origin/RP/purpose scoped, expires within five minutes and is consumed atomically before replay can succeed. Authentication resolves the credential owner only through the exact application/RP credential mapping and creates the same ordinary BeeBox session class as the other primary methods. P2.5 deliberately does not classify WebAuthn user verification as an independent second factor.
+
+Successful registration + audit, successful authentication credential-state update + session/refresh + audit, and successful removal + audit each have transactional rollback evidence. Passkey list responses are intentionally minimized. Last-method checks are symmetric with social unlink: a usable passkey may preserve social unlink, and passkey removal requires another usable method.
 
 ### Sessions and tokens
 
@@ -358,19 +383,23 @@ Password reset revokes all current sessions for the application-scoped user. Alr
 - list linked social accounts with bounded pagination;
 - unlink one opaque social-link ID from the caller's current BeeBox session context;
 - exchange a social completion code using the client PKCE verifier;
+- begin/complete passkey registration by transporting opaque browser WebAuthn JSON;
+- begin/complete passkey authentication without exposing go-webauthn types;
+- list current-user passkey metadata;
+- remove one opaque passkey resource from the current session context;
 - current session;
 - refresh;
 - signout;
 - request/confirm password reset;
 - backend get/revoke session.
 
-The SDK intentionally does not open a browser or follow provider authorization/callback redirects for the application. It also does not automatically retry the one-time social completion exchange, social-link attempt creation, or unlink request. Server-side unlink is idempotent for a valid already-absent/not-owned ID, so callers can explicitly retry after an ambiguous response without the SDK manufacturing a retry loop. The SDK never exposes provider subjects or handles provider access/refresh/ID tokens.
+The SDK intentionally does not open a browser or invoke an authenticator itself. It transports browser-generated WebAuthn JSON opaquely and does not automatically retry one-time passkey completion or passkey removal security mutations. It also does not follow provider authorization/callback redirects or automatically retry one-time social completion/linking operations. The SDK never exposes provider subjects or handles provider access/refresh/ID tokens.
 
 It provides a concurrency-safe offline Ed25519 JWT verifier with bounded HTTP access, JWKS caching, one controlled refresh on unknown `kid`, strict EdDSA/public-JWK validation and issuer/audience/time checks. The SDK does not log OTPs/credentials/tokens, persist browser credentials, automatically resend email/SMS OTPs, automatically retry OTP confirmation, automatically retry signin, or blindly replay refresh credentials.
 
 ## Operational metrics
 
-`GET /metrics` emits bounded OpenMetrics/Prometheus text without high-cardinality identity labels. Current metrics include authentication operation outcomes, SMTP delivery outcome, SMS delivery purpose/outcome and PostgreSQL pool acquired/idle/total/max connection gauges. Email/phone, user/session/application IDs, OTP/challenge IDs, provider subject/SID, provider tokens, provider credential values/error bodies, tokens/JTI, credential IDs, IP addresses and raw errors are not metric labels.
+`GET /metrics` emits bounded OpenMetrics/Prometheus text without high-cardinality identity labels. Current metrics include authentication operation outcomes, SMTP delivery outcome, SMS delivery purpose/outcome and PostgreSQL pool acquired/idle/total/max connection gauges. Email/phone, user/session/application IDs, OTP/challenge IDs, provider subject/SID, provider tokens, provider credential values/error bodies, tokens/JTI, passkey credential IDs, IP addresses and raw errors are not metric labels.
 
 ## Configuration
 
@@ -389,17 +418,13 @@ Core runtime values include:
 - `BEEBOX_SOCIAL_STATE_KEY`, an unpadded base64url 32-byte key required when the configured social provider set uses provider PKCE;
 - `BEEBOX_ISSUER` also defines the social provider callback base when social connections are enabled.
 
-Production credential-bearing SMTP requires secure transport. `insecure_localhost` is explicit local/test behavior only. Signing private material, all SMS provider authentication material, social provider client secrets and the social state key are configuration-only and are not stored as BeeBox identity/session data or exposed through metrics/public errors.
+Passkeys require no BeeBox-held authenticator private key or extra provider credential. They reuse the configured application Origin allowlist and normal signing/session runtime. Production credential-bearing SMTP requires secure transport. `insecure_localhost` is explicit local/test behavior only. Signing private material, all SMS provider authentication material, social provider client secrets and the social state key are configuration-only and are not stored as BeeBox identity/session data or exposed through metrics/public errors.
 
 ## Migration policy
 
-Migrations `00001` through `00016` are immutable, embedded, forward-only history and remain unchanged by P2.4B. Migration `00013_email_otp_signin.sql` additively introduced the purpose-separated email OTP sign-in challenge table and OTP-specific public-auth admission vocabulary. Migration `00014_phone_sms.sql` additively introduced application-scoped phone identifiers, purpose-separated phone signup and phone sign-in challenges, bounded cleanup indexes and phone-specific public-auth admission vocabulary while preserving every earlier limiter operation.
+Migrations `00001` through `00017` are immutable merged history. Migration `00013_email_otp_signin.sql` introduced the purpose-separated email OTP sign-in challenge table. Migration `00014_phone_sms.sql` introduced application-scoped phone identifiers and purpose-separated phone challenge state. Migration `00015_social_oauth.sql` introduced redirect allowlists, external identities, social attempts/completion grants and social limiter/audit vocabulary. Migration `00016_social_account_linking.sql` introduced exact-session-bound social-link attempts. Migration `00017_social_account_management.sql` introduced opaque `sli_` IDs, scoped listing and link cancellation state.
 
-P2.3 added `00015_social_oauth.sql`, which introduced the exact application redirect allowlist, application-scoped external identities, one-time social attempts, one-time social completion grants, bounded social public-auth limiter namespaces, and bounded audit resource references. PostgreSQL enforces the exact eleven-provider vocabulary and uniqueness of `(application_instance_id, provider, provider_subject)`.
-
-P2.4A added `00016_social_account_linking.sql`, introducing a dedicated one-time social-link attempt table bound by application/user/session foreign keys, purpose, provider, exact redirect, hash-only state, trusted recent-authentication timestamp, optional nonce hash and purpose-separated encrypted provider PKCE state. It also added fixed social-link admission operation names and bounded cleanup support. No provider subject is persisted before provider proof.
-
-P2.4B adds only `00017_social_account_management.sql`. It additively gives every existing/future external identity a unique BeeBox-owned `sli_<uuid-v4>` public ID with strict format constraint/default/backfill, adds the scoped listing index, and adds nullable `social_link_attempts.canceled_at` with bounded timestamp constraints. Existing P2.3/P2.4A inserts continue through the database default. Applied migrations are immutable. Serve mode does not auto-migrate. Schema corrections after dependent data exists use a reviewed forward migration; no destructive automatic rollback is claimed.
+P2.5 adds only `00018_passkeys.sql`. It additively introduces application/user-scoped passkey credentials with opaque `pky_<uuid-v4>` IDs, application-unique credential IDs and RP scope; short-lived one-time passkey ceremonies with opaque `pka_<uuid-v4>` IDs, SHA-256 challenge hashes, exact registration-vs-authentication binding constraints, session/application/user foreign keys where applicable, and indexed expiry/consumption cleanup paths. It also adds the composite session key required to enforce exact application/user/session foreign-key scope. Migration tests cover clean application, upgrade from exact version 17, public-ID/uniqueness constraints, challenge-hash/raw-secret boundary and required indexes. No merged SQL migration is modified. Serve mode does not auto-migrate.
 
 ## Verification
 
@@ -409,6 +434,8 @@ go vet ./...
 govulncheck ./...
 go test ./api/openapi
 go test ./sdk/go
+go test ./internal/authentication/... -count=1
+go test ./internal/httpapi -count=1
 go test ./internal/authentication/socialprovider -count=1
 go test ./internal/authentication/socialprovider -count=20
 go test ./...
@@ -425,9 +452,7 @@ BEEBOX_TEST_DATABASE_URL='postgres://beebox:test-password@127.0.0.1:5432/beebox_
 go test -race ./...
 ```
 
-GitHub Actions runs the same gates on pull-request heads. The P2.3 provider gate deliberately runs `go test ./internal/authentication/socialprovider -count=1` and then `-count=20` to exercise deterministic provider contracts repeatedly. P2.3 PostgreSQL/HTTP coverage includes application-scoped redirect policy, provider-email collision separation, existing-subject reuse, cross-application independence, concurrent first-subject convergence, one-time state/completion redemption, ordinary session/refresh creation and transactional audit rollback. P2.4A adds dedicated PostgreSQL and real-handler coverage for exact-session binding and 10-minute freshness, link/auth purpose separation, callback session-switch resistance, revoked/expired/stale session failure, unowned/same-owner/other-owner subject rules, concurrent claims, cross-application independence, provider-email non-authority, audit atomicity, bounded admission, attempt cleanup and migration upgrade/constraints. P2.4B adds scoped/paginated listing, opaque public-ID/migration checks, exact-session freshness, runtime-aware last-method matrix, concurrent unlink, P2.4A create/finalize versus unlink, P2.3 proof/completion versus unlink, pending-state preservation/invalidation, existing-session retention and induced unlink-audit rollback coverage. Provider-contract tests use synthetic credentials, local HTTP servers, local RSA/JWKS fixtures and provider-shaped success/error bodies only; CI does not use live provider accounts or credentials.
-
-All eleven selected providers now have independently pinned deterministic production-contract coverage. Facebook's normal Website auth/token literals are pinned to v25.0 because the applicable current Meta manual-flow examples directly demonstrate v25.0 for both authorization and authorization-code exchange; BeeBox does not claim that rendering is Meta's globally latest API version. The separately documented Meta OIDC+PKCE extension is not selected for this base flow. Current Meta access-token/User evidence plus the audited current `fbsamples/fedcm-example-app` consumer sample support the unversioned `/me?fields=id` query-token identity proof and app-scoped opaque-string subject. CI remains synthetic and does not require live Facebook credentials.
+GitHub Actions runs the same gates on pull-request heads. The social-provider contract gate runs both single and repeated deterministic provider tests. P2.3/P2.4 coverage remains in place for tenant isolation, callback/linking state, cross-flow serialization, pending-state invalidation, last-method protection and audit rollback. P2.5 adds WebAuthn protocol negative coverage, HTTP application/Origin/session binding, one-time expiry/replay checks, cross-application credential isolation, passkey/social last-method matrix, migration upgrade/constraints/index checks, bounded ceremony cleanup, SDK parity and induced audit-failure rollback for registration/authentication/removal. Provider-contract tests remain synthetic and require no live provider accounts or credentials.
 
 ## Health endpoints
 
@@ -436,8 +461,6 @@ All eleven selected providers now have independently pinned deterministic produc
 
 ## Phase boundary
 
-`docs/phase1-exit.md` remains the evidence matrix for the completed Phase 1 baseline. The merged P2.0 trust baseline, P2.1 email OTP, P2.2 phone-first/SMS OTP and P2.3 social OAuth/OIDC increments plus this branch's P2.4A explicit authenticated social linking and P2.4B linked-account listing/unlink are the implemented Phase 2 increments represented by the repository.
+`docs/phase1-exit.md` remains the evidence matrix for the completed Phase 1 baseline. The merged P2.0 trust baseline, P2.1 email OTP, P2.2 phone-first/SMS OTP, P2.3 social OAuth/OIDC, P2.4A explicit authenticated social linking and P2.4B linked-account management are established Phase 2 increments. This integration branch additionally implements P2.5 Passkeys/WebAuthn.
 
-Principal/account merge, existing-account phone add/change/remove/switch, passkeys/WebAuthn, MFA/TOTP, recovery codes, generic P2.8 step-up/reverification runtime, provider-side social consent/token revocation, device management, hosted authentication, organizations, machine authentication, webhooks, billing, OAuth/OIDC authorization-server behavior and compliance certification remain unimplemented. P2.4B does not silently pull any of those trust boundaries forward.
-
-P2.3's Facebook provider contract remains implemented against the accepted current Meta evidence packet: the base manual Website authorization/token examples are pinned to v25.0, the separately documented OIDC+PKCE extension is not selected, and the current consumer `/me` proof stays unversioned with documented query-token presentation. Conflicting global Meta version renderings are not resolved or generalized beyond these selected literals. Bearer support for the exact `/me` flow is not required by BeeBox and is not claimed unsupported.
+Principal/account merge, existing-account phone add/change/remove/switch, TOTP/MFA (P2.6), recovery codes (P2.7), generic P2.8 step-up/reverification runtime, provider-side social consent/token revocation, device/session self-management beyond the existing Phase 1 session endpoints, self-service profile, hosted authentication/theme/localization, organizations, machine authentication, webhooks, billing, OAuth/OIDC authorization-server behavior and compliance certification remain outside the completed P2.5 boundary.
