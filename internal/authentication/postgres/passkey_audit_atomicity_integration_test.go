@@ -65,7 +65,7 @@ func TestPasskeyAuthenticationAuditFailureRollsBackSessionAndCredentialState(t *
 	refresh := sha256.Sum256([]byte("refresh-verifier"))
 	_, err = store.FinalizePasskeyAuthentication(ctx, authentication.PasskeyAuthFinalize{
 		AttemptPublicID: attemptID, UserID: user.InternalID,
-		Credential: authentication.PasskeyCredential{RPID: "app.example", CredentialID: credentialID, CredentialJSON: json.RawMessage(`{"id":"credential","authenticator":{"signCount":2}}`)},
+		Credential:      authentication.PasskeyCredential{RPID: "app.example", CredentialID: credentialID, CredentialJSON: json.RawMessage(`{"id":"credential","authenticator":{"signCount":2}}`)},
 		SessionPublicID: "ses_123e4567-e89b-42d3-a456-426614174099", RefreshVerifier: refresh,
 		IdleExpiresAt: now.Add(time.Hour), ExpiresAt: now.Add(24 * time.Hour), CorrelationID: correlation,
 	})
