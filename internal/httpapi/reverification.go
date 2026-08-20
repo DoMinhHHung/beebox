@@ -10,15 +10,14 @@ import (
 	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
 	"github.com/DoMinhHHung/beebox/internal/audit"
 	"github.com/DoMinhHHung/beebox/internal/authentication"
-	"github.com/DoMinhHHung/beebox/internal/identity"
 	"github.com/DoMinhHHung/beebox/internal/session"
 )
 
 const ReverificationHeader = "X-BeeBox-Reverification"
 
 type ReverificationApplicationService interface {
-	Mint(context.Context, applicationinstance.InternalID, identity.InternalID, string, string, string, audit.CorrelationID) (authentication.ReverificationGrant, error)
-	Consume(context.Context, applicationinstance.InternalID, identity.InternalID, string, string, string, audit.CorrelationID) error
+	Mint(context.Context, authentication.ReverificationSessionEvidence, authentication.ReverificationSessionEvidence, string, audit.CorrelationID) (authentication.ReverificationGrant, error)
+	Consume(context.Context, authentication.ReverificationSessionEvidence, string, string, audit.CorrelationID) (context.Context, error)
 }
 
 type reverificationHTTP struct {
@@ -87,11 +86,11 @@ func (h *reverificationHTTP) mint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	proof, err := h.sessions.Current(r.Context(), app.InternalID, string(app.PublicID), input.ProofAccessToken)
-	if err != nil || proof.UserInternalID != current.UserInternalID || proof.ApplicationInstanceID != current.ApplicationInstanceID || proof.PublicID != current.PublicID {
+	if err != nil {
 		writeError(w, http.StatusForbidden, "reverification_failed", "The reverification proof is invalid.", requestID)
 		return
 	}
-	grant, err := h.service.Mint(r.Context(), app.InternalID, current.UserInternalID, current.PublicID, proof.PublicID, input.Purpose, correlationID)
+	grant, err := h.service.Mint(r.Context(), reverificationEvidence(current), reverificationEvidence(proof), input.Purpose, correlationID)
 	if err != nil {
 		h.writeReverificationError(w, requestID, err)
 		return
@@ -108,7 +107,7 @@ func (h *reverificationHTTP) authorizeMutation(w http.ResponseWriter, r *http.Re
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
 	r = r.WithContext(ctx)
-	app, current, ok := h.current(w, r, requestID)
+	_, current, ok := h.current(w, r, requestID)
 	if !ok {
 		return
 	}
@@ -121,11 +120,25 @@ func (h *reverificationHTTP) authorizeMutation(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusForbidden, "reverification_required", "Recent reverification is required for this operation.", requestID)
 		return
 	}
-	if err := h.service.Consume(r.Context(), app.InternalID, current.UserInternalID, current.PublicID, purpose, strings.TrimSpace(values[0]), correlationID); err != nil {
+	authorizedCtx, err := h.service.Consume(r.Context(), reverificationEvidence(current), purpose, strings.TrimSpace(values[0]), correlationID)
+	if err != nil {
 		h.writeReverificationError(w, requestID, err)
 		return
 	}
-	h.base.ServeHTTP(w, r)
+	h.base.ServeHTTP(w, r.WithContext(authorizedCtx))
+}
+
+func reverificationEvidence(record session.Record) authentication.ReverificationSessionEvidence {
+	return authentication.ReverificationSessionEvidence{
+		ApplicationInstanceID: record.ApplicationInstanceID,
+		UserID:                record.UserInternalID,
+		SessionPublicID:       record.PublicID,
+		AuthenticatedAt:       record.CreatedAt.UTC(),
+		IdleExpiresAt:         record.IdleExpiresAt.UTC(),
+		ExpiresAt:             record.ExpiresAt.UTC(),
+		Revoked:               record.RevokedAt != nil,
+		MFAMethod:             record.MFAMethod,
+	}
 }
 
 func (h *reverificationHTTP) current(w http.ResponseWriter, r *http.Request, requestID string) (applicationinstance.Instance, session.Record, bool) {
@@ -261,6 +274,12 @@ func requiredReverificationPurposeFor(method, path string) string {
 		return authentication.ReverificationPurposeSessionRevokeOthers
 	case method == http.MethodPost && path == "/v1/sessions/sign-out-everywhere":
 		return authentication.ReverificationPurposeSignOutEverywhere
+	case method == http.MethodPost && (path == "/v1/identifiers/emails" || path == "/v1/identifiers/phones"):
+		return authentication.ReverificationPurposeIdentifierAdd
+	case method == http.MethodDelete && (strings.HasPrefix(path, "/v1/identifiers/emails/") || strings.HasPrefix(path, "/v1/identifiers/phones/")):
+		return authentication.ReverificationPurposeIdentifierRemove
+	case method == http.MethodPost && strings.HasSuffix(path, "/primary") && (strings.HasPrefix(path, "/v1/identifiers/emails/") || strings.HasPrefix(path, "/v1/identifiers/phones/")):
+		return authentication.ReverificationPurposeIdentifierPrimary
 	default:
 		return ""
 	}
