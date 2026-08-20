@@ -32,6 +32,21 @@ func runCleanupOperator(ctx context.Context, lookup config.LookupEnv, output io.
 	if err != nil {
 		return errors.New("cleanup security state")
 	}
-	_, err = fmt.Fprintf(output, "rate_limits=%d\nidempotency=%d\nemail_verification_challenges=%d\npassword_reset_challenges=%d\n", result.RateLimits, result.Idempotency, result.EmailChallenges, result.PasswordResetChallenges)
+	_, err = fmt.Fprintf(output,
+		"rate_limits=%d\nidempotency=%d\nemail_verification_challenges=%d\nemail_otp_challenges=%d\npassword_reset_challenges=%d\nphone_signup_challenges=%d\nphone_otp_challenges=%d\nsocial_auth_attempts=%d\nsocial_link_attempts=%d\nsocial_completion_grants=%d\npasskey_attempts=%d\ntotp_enrollments=%d\npending_mfa=%d\n",
+		result.RateLimits,
+		result.Idempotency,
+		result.EmailChallenges,
+		result.EmailOTPChallenges,
+		result.PasswordResetChallenges,
+		result.PhoneSignupChallenges,
+		result.PhoneOTPChallenges,
+		result.SocialAuthAttempts,
+		result.SocialLinkAttempts,
+		result.SocialCompletionGrants,
+		result.PasskeyAttempts,
+		result.TOTPEnrollments,
+		result.PendingMFA,
+	)
 	return err
 }
