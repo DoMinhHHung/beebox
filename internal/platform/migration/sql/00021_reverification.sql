@@ -5,6 +5,9 @@ ALTER TABLE sessions
     ADD CONSTRAINT sessions_mfa_method_check CHECK (
         mfa_method IS NULL OR mfa_method IN ('totp', 'recovery_code')
     );
+ALTER TABLE sessions
+    ADD CONSTRAINT sessions_application_user_public_id_key
+        UNIQUE (application_instance_id, user_id, public_id);
 
 CREATE TABLE reverification_grants (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -12,8 +15,8 @@ CREATE TABLE reverification_grants (
     verifier_hash BYTEA NOT NULL,
     application_instance_id BIGINT NOT NULL,
     user_id BIGINT NOT NULL,
-    target_session_public_id TEXT NOT NULL REFERENCES sessions(public_id) ON DELETE CASCADE,
-    proof_session_public_id TEXT NOT NULL REFERENCES sessions(public_id) ON DELETE CASCADE,
+    target_session_public_id TEXT NOT NULL,
+    proof_session_public_id TEXT NOT NULL,
     purpose TEXT NOT NULL,
     failed_attempts SMALLINT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -27,6 +30,12 @@ CREATE TABLE reverification_grants (
     CONSTRAINT reverification_grants_verifier_hash_key UNIQUE (verifier_hash),
     CONSTRAINT reverification_grants_user_scope_fk FOREIGN KEY (application_instance_id, user_id)
         REFERENCES users(application_instance_id, id),
+    CONSTRAINT reverification_grants_target_session_scope_fk FOREIGN KEY (
+        application_instance_id, user_id, target_session_public_id
+    ) REFERENCES sessions(application_instance_id, user_id, public_id) ON DELETE CASCADE,
+    CONSTRAINT reverification_grants_proof_session_scope_fk FOREIGN KEY (
+        application_instance_id, user_id, proof_session_public_id
+    ) REFERENCES sessions(application_instance_id, user_id, public_id) ON DELETE CASCADE,
     CONSTRAINT reverification_grants_purpose_check CHECK (
         purpose IN (
             'totp_enroll','totp_remove','totp_replace','recovery_regenerate',
