@@ -178,6 +178,8 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 	managementCore := authentication.NewSocialAccountService(authStore, availability)
 	base = httpapi.WithSocialAccountManagement(base, integrationService, integrationStore, sessionService, managementCore)
 	base = httpapi.WithSessionManagement(base, integrationService, integrationService, sessionService)
+	reverificationCore := authentication.NewReverificationService(authStore)
+	base = httpapi.WithReverification(base, integrationService, integrationStore, sessionService, reverificationCore)
 	return httpapi.WithMetrics(base, recorder), nil
 }
 
@@ -203,7 +205,7 @@ func parseMode(args []string) (processMode, error) {
 	}
 }
 
-func runServeMode(ctx context.Context, logger *slog.Logger, lookup config.LookupEnv, dependencies runtimeDependencies) error {
+func runServeMode(ctx context.Context, logger *slog.Logger, lookup config.LookupEnv, dependencies runtimeDependencies, args []string) error {
 	cfg, err := config.Load(lookup)
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
