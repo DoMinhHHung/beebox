@@ -10,7 +10,6 @@ import (
 	"github.com/DoMinhHHung/beebox/internal/audit"
 	"github.com/DoMinhHHung/beebox/internal/authentication"
 	"github.com/DoMinhHHung/beebox/internal/identity"
-	"github.com/DoMinhHHung/beebox/internal/session"
 )
 
 func (s *Store) IssueEmailOTP(ctx context.Context, issue authentication.EmailOTPIssue) (authentication.EmailOTPIssueResult, error) {
@@ -234,7 +233,7 @@ func (s *Store) FinalizeEmailOTP(ctx context.Context, finalize authentication.Em
 		}
 		return authentication.EmailOTPFinalizeResult{}, authentication.ErrEmailOTPInvalid
 	}
-	if !session.ValidPublicID(finalize.SessionPublicID) || finalize.IdleExpiresAt.IsZero() || finalize.ExpiresAt.IsZero() || finalize.IdleExpiresAt.After(finalize.ExpiresAt) {
+	if !finalize.PendingMFA.Valid() || finalize.PendingMFA.PrimaryMethod != authentication.PrimaryMethodEmailOTP {
 		return authentication.EmailOTPFinalizeResult{}, authentication.ErrEmailOTPPersistence
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -245,31 +244,34 @@ func (s *Store) FinalizeEmailOTP(ctx context.Context, finalize authentication.Em
 	); err != nil {
 		return authentication.EmailOTPFinalizeResult{}, classifyEmailOTP(ctx, err)
 	}
-	var sessionID int64
-	if err := tx.QueryRowContext(ctx, `
-		INSERT INTO sessions(public_id,application_instance_id,user_id,idle_expires_at,expires_at)
-		VALUES($1,$2,$3,$4,$5) RETURNING id`, finalize.SessionPublicID, int64(finalize.ApplicationInstanceID), int64(finalize.UserID), finalize.IdleExpiresAt, finalize.ExpiresAt,
-	).Scan(&sessionID); err != nil {
-		return authentication.EmailOTPFinalizeResult{}, classifyEmailOTP(ctx, err)
+	assurance, err := finalizePrimaryAssurance(ctx, tx, finalize.ApplicationInstanceID, finalize.UserID, primarySessionMaterial{
+		PublicID:       finalize.SessionPublicID,
+		RefreshHash:    finalize.RefreshVerifier,
+		IdleExpiresAt:  finalize.IdleExpiresAt,
+		ExpiresAt:      finalize.ExpiresAt,
+		Pending:        finalize.PendingMFA,
+		ExpectedMethod: authentication.PrimaryMethodEmailOTP,
+	})
+	if err != nil {
+		return authentication.EmailOTPFinalizeResult{}, authentication.ErrEmailOTPPersistence
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO session_refresh_credentials(session_id,verifier_hash) VALUES($1,$2)`, sessionID, finalize.RefreshVerifier[:]); err != nil {
-		return authentication.EmailOTPFinalizeResult{}, classifyEmailOTP(ctx, err)
+	resource := "session"
+	if assurance.MFARequired {
+		resource = "pending_mfa"
 	}
-	if err := insertEmailOTPAudit(ctx, tx, finalize.ApplicationInstanceID, finalize.UserID, "authentication.email_otp.confirm", "success", finalize.CorrelationID, "session"); err != nil {
+	if err := insertEmailOTPAudit(ctx, tx, finalize.ApplicationInstanceID, finalize.UserID, "authentication.email_otp.confirm", "success", finalize.CorrelationID, resource); err != nil {
 		return authentication.EmailOTPFinalizeResult{}, err
-	}
-	var result authentication.EmailOTPFinalizeResult
-	if err := tx.QueryRowContext(ctx, `
-		SELECT u.public_id,a.public_id
-		FROM users u JOIN application_instances a ON a.id=u.application_instance_id
-		WHERE u.application_instance_id=$1 AND u.id=$2`, int64(finalize.ApplicationInstanceID), int64(finalize.UserID),
-	).Scan(&result.UserPublicID, &result.ApplicationPublicID); err != nil {
-		return authentication.EmailOTPFinalizeResult{}, classifyEmailOTP(ctx, err)
 	}
 	if err := tx.Commit(); err != nil {
 		return authentication.EmailOTPFinalizeResult{}, classifyEmailOTP(ctx, err)
 	}
-	return result, nil
+	return authentication.EmailOTPFinalizeResult{
+		UserPublicID:        assurance.UserPublicID,
+		ApplicationPublicID: assurance.ApplicationPublicID,
+		MFARequired:         assurance.MFARequired,
+		PendingMFAPublicID:  assurance.PendingMFAPublicID,
+		PendingMFAExpiresAt: assurance.PendingMFAExpiresAt,
+	}, nil
 }
 
 func insertEmailOTPAudit(ctx context.Context, tx *sql.Tx, appID applicationinstance.InternalID, userID identity.InternalID, action, outcome string, correlationID audit.CorrelationID, resource string) error {
