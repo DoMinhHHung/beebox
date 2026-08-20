@@ -156,7 +156,7 @@ func TestPublicOpenAPIContract(t *testing.T) {
 		"original rfc 7636 verifier",
 		"tagged authenticated result",
 		"account linking",
-		"exact current application, user, and session",
+		"exact target application/user/session",
 		"authorization bearer identifies the target session",
 		"proof_access_token identifies an independently authenticated proof session",
 		"proof session may differ from the target session",
