@@ -32,11 +32,11 @@ func TestMigrationFirstApplyAndRerunAreIdempotent(t *testing.T) {
 	if err := firstAdapter.PingContext(ctx); err == nil || err.Error() != "sql: database is closed" {
 		t.Fatalf("first adapter remained open after Up: %v", err)
 	}
-	assertMigrationState(t, ctx, pool, 21)
+	assertMigrationState(t, ctx, pool, 22)
 	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
 		t.Fatalf("second Up() error = %v", err)
 	}
-	assertMigrationState(t, ctx, pool, 21)
+	assertMigrationState(t, ctx, pool, 22)
 	assertSchemaTables(t, ctx, pool)
 }
 
@@ -67,7 +67,7 @@ func TestConcurrentMigrationRunnersSerializeAndConverge(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	assertMigrationState(t, ctx, firstPool, 21)
+	assertMigrationState(t, ctx, firstPool, 22)
 	assertSchemaTables(t, ctx, firstPool)
 }
 
@@ -136,7 +136,8 @@ func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 		"00019_totp_mfa.sql":                      {Data: []byte(validMigration)},
 		"00020_recovery_codes.sql":                {Data: []byte(validMigration)},
 		"00021_reverification.sql":                {Data: []byte(validMigration)},
-		"00022_failure_probe.sql": {Data: []byte(
+		"00022_session_self_service.sql":          {Data: []byte(validMigration)},
+		"00023_failure_probe.sql": {Data: []byte(
 			"-- +goose Up\n" +
 				"-- " + secretMarker + "\n" +
 				"CREATE TABLE migration_failure_probe (id bigint PRIMARY KEY);\n" +
@@ -159,12 +160,12 @@ func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 	if probeTable.Valid {
 		t.Fatalf("failing migration left probe table %q", probeTable.String)
 	}
-	var versionTwentyTwoCount int
-	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM goose_db_version WHERE version_id = 22 AND is_applied").Scan(&versionTwentyTwoCount); err != nil {
-		t.Fatalf("query version 22 error = %v", err)
+	var versionTwentyThreeCount int
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM goose_db_version WHERE version_id = 23 AND is_applied").Scan(&versionTwentyThreeCount); err != nil {
+		t.Fatalf("query version 23 error = %v", err)
 	}
-	if versionTwentyTwoCount != 0 {
-		t.Fatalf("applied version 22 rows = %d, want 0", versionTwentyTwoCount)
+	if versionTwentyThreeCount != 0 {
+		t.Fatalf("applied version 23 rows = %d, want 0", versionTwentyThreeCount)
 	}
 }
 
