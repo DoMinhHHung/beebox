@@ -3,7 +3,6 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -66,16 +65,16 @@ func (passkeySessionManagementStub) RevokeSession(context.Context, applicationin
 }
 
 type passkeyHTTPServiceStub struct {
-	beginRegistrationCalls int
+	beginRegistrationCalls   int
 	beginAuthenticationCalls int
-	listCalls int
-	removeCalls int
-	finishRegistrationCalls int
-	lastSession authentication.PasskeySession
-	lastApp applicationinstance.Instance
-	lastOrigin string
-	lastID string
-	err error
+	listCalls                int
+	removeCalls              int
+	finishRegistrationCalls  int
+	lastSession              authentication.PasskeySession
+	lastApp                  applicationinstance.Instance
+	lastOrigin               string
+	lastID                   string
+	err                      error
 }
 
 func (s *passkeyHTTPServiceStub) BeginRegistration(_ context.Context, current authentication.PasskeySession, origin string) (authentication.PasskeyBeginResult, error) {
@@ -117,11 +116,11 @@ func (s *passkeyHTTPServiceStub) Remove(_ context.Context, current authenticatio
 }
 
 type passkeyCompletionStub struct {
-	calls int
-	lastApp applicationinstance.Instance
+	calls      int
+	lastApp    applicationinstance.Instance
 	lastOrigin string
-	lastID string
-	err error
+	lastID     string
+	err        error
 }
 
 func (s *passkeyCompletionStub) CompleteAuthentication(_ context.Context, app applicationinstance.Instance, origin, attemptID string, _ json.RawMessage, _ audit.CorrelationID) (session.TokenPair, error) {
@@ -175,9 +174,9 @@ func TestPasskeyHTTPRegistrationBindsResolvedApplicationSessionAndOrigin(t *test
 	}
 
 	for name, mutate := range map[string]func(*http.Request){
-		"missing bearer": func(r *http.Request) { r.Header.Del("Authorization") },
-		"wrong app": func(r *http.Request) { r.Header.Set(PublishableKeyHeader, "pk_other") },
-		"wrong origin": func(r *http.Request) { r.Header.Set("Origin", "https://evil.example") },
+		"missing bearer":      func(r *http.Request) { r.Header.Del("Authorization") },
+		"wrong app":           func(r *http.Request) { r.Header.Set(PublishableKeyHeader, "pk_other") },
+		"wrong origin":        func(r *http.Request) { r.Header.Set("Origin", "https://evil.example") },
 		"noncanonical origin": func(r *http.Request) { r.Header.Set("Origin", "https://APP.example") },
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -257,5 +256,3 @@ func TestPasskeyHTTPProofFailuresCollapseWithoutInternalDetail(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
 }
-
-var _ = errors.Is
