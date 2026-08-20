@@ -26,6 +26,9 @@ func TestCreateSocialLinkAttemptSendsExistingSessionAuthorityAndDoesNotRetry(t *
 		if got := r.Header.Get("Origin"); got != "https://app.example.test" {
 			t.Fatalf("origin = %q", got)
 		}
+		if got := r.Header.Get(ReverificationHeader); got != "reverify-link" {
+			t.Fatalf("reverification = %q", got)
+		}
 		var input SocialLinkAttemptRequest
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			t.Fatalf("decode request: %v", err)
@@ -43,7 +46,7 @@ func TestCreateSocialLinkAttemptSendsExistingSessionAuthorityAndDoesNotRetry(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	attempt, err := client.CreateSocialLinkAttempt(context.Background(), "existing-access-token", "https://app.example.test", SocialLinkAttemptRequest{
+	attempt, err := client.CreateSocialLinkAttempt(context.Background(), "existing-access-token", "https://app.example.test", "reverify-link", SocialLinkAttemptRequest{
 		Provider:    SocialProviderGitHub,
 		RedirectURL: "https://app.example.test/account/link-complete",
 	})
@@ -70,11 +73,34 @@ func TestCreateSocialLinkAttemptDoesNotRetryAmbiguousFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.CreateSocialLinkAttempt(context.Background(), "access-token", "https://app.example.test", SocialLinkAttemptRequest{Provider: SocialProviderGoogle, RedirectURL: "https://app.example.test/link"})
+	_, err = client.CreateSocialLinkAttempt(context.Background(), "access-token", "https://app.example.test", "reverify-link", SocialLinkAttemptRequest{Provider: SocialProviderGoogle, RedirectURL: "https://app.example.test/link"})
 	if err == nil {
 		t.Fatal("expected error")
 	}
 	if calls.Load() != 1 {
 		t.Fatalf("request retried: calls = %d", calls.Load())
+	}
+}
+
+func TestUnlinkSocialLinkSendsReverificationHeader(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/v1/social-links/sli_test" {
+			t.Fatalf("request=%s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get(ReverificationHeader); got != "reverify-unlink" {
+			t.Fatalf("reverification=%q", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer access-token" {
+			t.Fatalf("authorization=%q", got)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, "pk_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.UnlinkSocialLink(context.Background(), "access-token", "https://app.example.test", "reverify-unlink", "sli_test"); err != nil {
+		t.Fatal(err)
 	}
 }
