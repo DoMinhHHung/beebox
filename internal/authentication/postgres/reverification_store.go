@@ -7,15 +7,77 @@ import (
 	"errors"
 	"time"
 
+	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
 	"github.com/DoMinhHHung/beebox/internal/audit"
 	"github.com/DoMinhHHung/beebox/internal/authentication"
+	"github.com/DoMinhHHung/beebox/internal/identity"
 )
+
+func (s *Store) ReverificationRequiresTOTP(ctx context.Context, appID applicationinstance.InternalID, userID identity.InternalID) (bool, error) {
+	if s == nil || s.pool == nil || !appID.Valid() || !userID.Valid() {
+		return false, authentication.ErrReverificationInvalid
+	}
+	db := s.pool.OpenSQLDB()
+	defer db.Close()
+	var required bool
+	if err := db.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM totp_credentials
+			WHERE application_instance_id=$1 AND user_id=$2
+		)`, int64(appID), int64(userID)).Scan(&required); err != nil {
+		return false, classifyReverification(ctx, err)
+	}
+	return required, nil
+}
+
+type reverificationSessionRow struct {
+	appID, userID                       int64
+	createdAt, idleExpiresAt, expiresAt time.Time
+	revokedAt                           sql.NullTime
+	mfaMethod                           sql.NullString
+}
+
+func loadReverificationSession(ctx context.Context, tx *sql.Tx, publicID string) (reverificationSessionRow, error) {
+	var out reverificationSessionRow
+	err := tx.QueryRowContext(ctx, `
+		SELECT application_instance_id,user_id,created_at,idle_expires_at,expires_at,revoked_at,mfa_method
+		FROM sessions
+		WHERE public_id=$1
+		FOR SHARE`, publicID,
+	).Scan(&out.appID, &out.userID, &out.createdAt, &out.idleExpiresAt, &out.expiresAt, &out.revokedAt, &out.mfaMethod)
+	return out, err
+}
+
+func activeReverificationSessionRow(row reverificationSessionRow, expectedAppID, expectedUserID int64, now time.Time) bool {
+	return row.appID == expectedAppID && row.userID == expectedUserID && !row.revokedAt.Valid && now.Before(row.idleExpiresAt.UTC()) && now.Before(row.expiresAt.UTC())
+}
+
+func ensureReverificationAssurance(ctx context.Context, tx *sql.Tx, appID, userID int64, proof reverificationSessionRow) error {
+	var requiresTOTP bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM totp_credentials
+			WHERE application_instance_id=$1 AND user_id=$2
+		)`, appID, userID).Scan(&requiresTOTP); err != nil {
+		return classifyReverification(ctx, err)
+	}
+	if !requiresTOTP {
+		return nil
+	}
+	if proof.mfaMethod.Valid && proof.mfaMethod.String == "totp" {
+		return nil
+	}
+	if proof.mfaMethod.Valid && proof.mfaMethod.String == "recovery_code" {
+		return authentication.ErrReverificationRecovery
+	}
+	return authentication.ErrReverificationInvalid
+}
 
 func (s *Store) CreateReverificationGrant(ctx context.Context, write authentication.ReverificationGrantWrite) (time.Time, error) {
 	if s == nil || s.pool == nil || !write.ApplicationInstanceID.Valid() || !write.UserID.Valid() ||
 		write.PublicID == "" || write.VerifierHash == ([32]byte{}) || write.TargetSessionPublicID == "" ||
 		write.ProofSessionPublicID == "" || !authentication.ValidReverificationPurpose(write.Purpose) ||
-		write.CorrelationID == (audit.CorrelationID{}) {
+		write.CorrelationID == (audit.CorrelationID{}) || write.CreatedAt.IsZero() || write.ExpiresAt.IsZero() {
 		return time.Time{}, authentication.ErrReverificationInvalid
 	}
 	db := s.pool.OpenSQLDB()
@@ -31,84 +93,50 @@ func (s *Store) CreateReverificationGrant(ctx context.Context, write authenticat
 		return time.Time{}, classifyReverification(ctx, err)
 	}
 	now = now.UTC()
-
-	type sessionProof struct {
-		userID                              int64
-		createdAt, idleExpiresAt, expiresAt time.Time
-		revokedAt                           sql.NullTime
-		mfaMethod                           sql.NullString
-	}
-	load := func(publicID string) (sessionProof, error) {
-		var out sessionProof
-		err := tx.QueryRowContext(ctx, `
-			SELECT user_id,created_at,idle_expires_at,expires_at,revoked_at,mfa_method
-			FROM sessions
-			WHERE application_instance_id=$1 AND public_id=$2
-			FOR SHARE`,
-			int64(write.ApplicationInstanceID), publicID,
-		).Scan(&out.userID, &out.createdAt, &out.idleExpiresAt, &out.expiresAt, &out.revokedAt, &out.mfaMethod)
-		return out, err
-	}
-	target, err := load(write.TargetSessionPublicID)
+	target, err := loadReverificationSession(ctx, tx, write.TargetSessionPublicID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return time.Time{}, authentication.ErrReverificationInvalid
 		}
 		return time.Time{}, classifyReverification(ctx, err)
 	}
-	proof, err := load(write.ProofSessionPublicID)
+	proof, err := loadReverificationSession(ctx, tx, write.ProofSessionPublicID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return time.Time{}, authentication.ErrReverificationInvalid
 		}
 		return time.Time{}, classifyReverification(ctx, err)
 	}
-	expectedUser := int64(write.UserID)
-	if write.TargetSessionPublicID != write.ProofSessionPublicID {
+	expectedAppID, expectedUserID := int64(write.ApplicationInstanceID), int64(write.UserID)
+	if !activeReverificationSessionRow(target, expectedAppID, expectedUserID, now) || !activeReverificationSessionRow(proof, expectedAppID, expectedUserID, now) {
 		return time.Time{}, authentication.ErrReverificationInvalid
 	}
-	active := func(v sessionProof) bool {
-		return v.userID == expectedUser && !v.revokedAt.Valid && now.Before(v.idleExpiresAt.UTC()) && now.Before(v.expiresAt.UTC())
+	proofAt := proof.createdAt.UTC()
+	if proofAt.After(now) || !now.Before(proofAt.Add(authentication.ReverificationLifetime)) {
+		return time.Time{}, authentication.ErrReverificationExpired
 	}
-	if !active(target) || !active(proof) || proof.createdAt.UTC().Before(now.Add(-authentication.ReverificationLifetime)) || proof.createdAt.UTC().After(now) {
-		return time.Time{}, authentication.ErrReverificationInvalid
+	if err := ensureReverificationAssurance(ctx, tx, expectedAppID, expectedUserID, proof); err != nil {
+		return time.Time{}, err
 	}
-	var requiresTOTP bool
-	if err := tx.QueryRowContext(ctx, `
-		SELECT EXISTS(
-			SELECT 1 FROM totp_credentials
-			WHERE application_instance_id=$1 AND user_id=$2
-		)`, int64(write.ApplicationInstanceID), expectedUser).Scan(&requiresTOTP); err != nil {
-		return time.Time{}, classifyReverification(ctx, err)
-	}
-	if requiresTOTP {
-		if !proof.mfaMethod.Valid || proof.mfaMethod.String != "totp" {
-			if proof.mfaMethod.Valid && proof.mfaMethod.String == "recovery_code" {
-				return time.Time{}, authentication.ErrReverificationRecovery
-			}
-			return time.Time{}, authentication.ErrReverificationInvalid
+	expiresAt := proofAt.Add(authentication.ReverificationLifetime)
+	for _, deadline := range []time.Time{now.Add(authentication.ReverificationLifetime), target.idleExpiresAt.UTC(), target.expiresAt.UTC(), proof.idleExpiresAt.UTC(), proof.expiresAt.UTC(), write.ExpiresAt.UTC()} {
+		if deadline.Before(expiresAt) {
+			expiresAt = deadline
 		}
-	}
-	expiresAt := proof.createdAt.UTC().Add(authentication.ReverificationLifetime)
-	if target.idleExpiresAt.UTC().Before(expiresAt) {
-		expiresAt = target.idleExpiresAt.UTC()
-	}
-	if target.expiresAt.UTC().Before(expiresAt) {
-		expiresAt = target.expiresAt.UTC()
 	}
 	if !now.Before(expiresAt) {
 		return time.Time{}, authentication.ErrReverificationExpired
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO reverification_grants(
-			public_id,verifier_hash,application_instance_id,user_id,session_public_id,purpose,created_at,expires_at
-		) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
-		write.PublicID, write.VerifierHash[:], int64(write.ApplicationInstanceID), expectedUser,
-		write.TargetSessionPublicID, write.Purpose, now, expiresAt,
+			public_id,verifier_hash,application_instance_id,user_id,target_session_public_id,proof_session_public_id,purpose,created_at,expires_at
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		write.PublicID, write.VerifierHash[:], expectedAppID, expectedUserID, write.TargetSessionPublicID,
+		write.ProofSessionPublicID, write.Purpose, now, expiresAt,
 	); err != nil {
 		return time.Time{}, classifyReverification(ctx, err)
 	}
-	if err := insertReverificationAudit(ctx, tx, int64(write.ApplicationInstanceID), expectedUser, "authentication.reverification.issue", write.PublicID, write.CorrelationID); err != nil {
+	if err := insertReverificationAudit(ctx, tx, expectedAppID, expectedUserID, "authentication.reverification.issue", write.PublicID, write.CorrelationID); err != nil {
 		return time.Time{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -133,16 +161,16 @@ func (s *Store) ConsumeReverificationGrant(ctx context.Context, consume authenti
 
 	var storedHash []byte
 	var userID int64
-	var sessionPublicID, purpose string
+	var targetSessionPublicID, proofSessionPublicID, purpose string
 	var failed int
 	var expiresAt time.Time
 	var consumedAt sql.NullTime
 	err = tx.QueryRowContext(ctx, `
-		SELECT verifier_hash,user_id,session_public_id,purpose,failed_attempts,expires_at,consumed_at
+		SELECT verifier_hash,user_id,target_session_public_id,proof_session_public_id,purpose,failed_attempts,expires_at,consumed_at
 		FROM reverification_grants
 		WHERE application_instance_id=$1 AND public_id=$2
 		FOR UPDATE`, int64(consume.ApplicationInstanceID), consume.PublicID,
-	).Scan(&storedHash, &userID, &sessionPublicID, &purpose, &failed, &expiresAt, &consumedAt)
+	).Scan(&storedHash, &userID, &targetSessionPublicID, &proofSessionPublicID, &purpose, &failed, &expiresAt, &consumedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return authentication.ErrReverificationInvalid
 	}
@@ -163,7 +191,7 @@ func (s *Store) ConsumeReverificationGrant(ctx context.Context, consume authenti
 	if failed >= authentication.ReverificationMaxFailure {
 		return authentication.ErrReverificationInvalid
 	}
-	bindingMatches := userID == int64(consume.UserID) && sessionPublicID == consume.TargetSessionPublicID && purpose == consume.Purpose
+	bindingMatches := userID == int64(consume.UserID) && targetSessionPublicID == consume.TargetSessionPublicID && purpose == consume.Purpose
 	hashMatches := len(storedHash) == 32 && subtle.ConstantTimeCompare(storedHash, consume.VerifierHash[:]) == 1
 	if !bindingMatches || !hashMatches {
 		if _, err := tx.ExecContext(ctx, `
@@ -178,22 +206,32 @@ func (s *Store) ConsumeReverificationGrant(ctx context.Context, consume authenti
 		}
 		return authentication.ErrReverificationInvalid
 	}
-	var active bool
-	if err := tx.QueryRowContext(ctx, `
-		SELECT EXISTS(
-			SELECT 1 FROM sessions
-			WHERE application_instance_id=$1 AND user_id=$2 AND public_id=$3
-			  AND revoked_at IS NULL AND idle_expires_at>$4 AND expires_at>$4
-		)`, int64(consume.ApplicationInstanceID), int64(consume.UserID), consume.TargetSessionPublicID, now).Scan(&active); err != nil {
-		return classifyReverification(ctx, err)
-	}
-	if !active {
+	expectedAppID, expectedUserID := int64(consume.ApplicationInstanceID), int64(consume.UserID)
+	target, err := loadReverificationSession(ctx, tx, targetSessionPublicID)
+	if err != nil || !activeReverificationSessionRow(target, expectedAppID, expectedUserID, now) {
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return classifyReverification(ctx, err)
+		}
 		return authentication.ErrReverificationInvalid
+	}
+	proof, err := loadReverificationSession(ctx, tx, proofSessionPublicID)
+	if err != nil || !activeReverificationSessionRow(proof, expectedAppID, expectedUserID, now) {
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return classifyReverification(ctx, err)
+		}
+		return authentication.ErrReverificationInvalid
+	}
+	proofAt := proof.createdAt.UTC()
+	if proofAt.After(now) || !now.Before(proofAt.Add(authentication.ReverificationLifetime)) {
+		return authentication.ErrReverificationExpired
+	}
+	if err := ensureReverificationAssurance(ctx, tx, expectedAppID, expectedUserID, proof); err != nil {
+		return err
 	}
 	result, err := tx.ExecContext(ctx, `
 		UPDATE reverification_grants SET consumed_at=$3
 		WHERE application_instance_id=$1 AND public_id=$2 AND consumed_at IS NULL`,
-		int64(consume.ApplicationInstanceID), consume.PublicID, now)
+		expectedAppID, consume.PublicID, now)
 	if err != nil {
 		return classifyReverification(ctx, err)
 	}
@@ -201,7 +239,7 @@ func (s *Store) ConsumeReverificationGrant(ctx context.Context, consume authenti
 	if err != nil || rows != 1 {
 		return authentication.ErrReverificationReplay
 	}
-	if err := insertReverificationAudit(ctx, tx, int64(consume.ApplicationInstanceID), int64(consume.UserID), "authentication.reverification.consume", consume.PublicID, consume.CorrelationID); err != nil {
+	if err := insertReverificationAudit(ctx, tx, expectedAppID, expectedUserID, "authentication.reverification.consume", consume.PublicID, consume.CorrelationID); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
