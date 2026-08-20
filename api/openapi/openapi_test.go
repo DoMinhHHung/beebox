@@ -65,6 +65,25 @@ func TestPublicOpenAPIContract(t *testing.T) {
 		"pattern: '^sli_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'",
 		"schema: {type: integer, minimum: 1, maximum: 100, default: 20}",
 		"maxItems: 100",
+		"  /v1/passkeys/registration/attempts:",
+		"  /v1/passkeys/registration/complete:",
+		"  /v1/passkeys/authentication/attempts:",
+		"  /v1/passkeys/authentication/complete:",
+		"  /v1/passkeys:",
+		"  /v1/passkeys/{passkey_id}:",
+		"operationId: beginPasskeyRegistration",
+		"operationId: completePasskeyRegistration",
+		"operationId: beginPasskeyAuthentication",
+		"operationId: completePasskeyAuthentication",
+		"operationId: listPasskeys",
+		"operationId: removePasskey",
+		"PasskeyAttempt:",
+		"PasskeyRegistrationCompleteRequest:",
+		"PasskeyAuthenticationCompleteRequest:",
+		"Passkey:",
+		"PasskeyList:",
+		"pattern: '^pka_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'",
+		"pattern: '^pky_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'",
 		"  /v1/sessions/refresh:",
 		"  /v1/sessions/current:",
 		"  /v1/sessions/sign-out:",
@@ -110,6 +129,12 @@ func TestPublicOpenAPIContract(t *testing.T) {
 		"existing ordinary beebox sessions remain active",
 		"invalidate pending unexchanged social completion state",
 		"does not call provider-side oauth consent or token revocation apis",
+		"passkey is a primary authentication method",
+		"does not bypass configured mfa",
+		"recent authentication is required for passkey registration and removal",
+		"private key remains authenticator-owned",
+		"webAuthn request and response payloads are opaque json",
+		"one-time ceremony",
 	} {
 		if !strings.Contains(normalizedText, strings.ToLower(requiredSemantics)) {
 			t.Fatalf("v1 spec missing authentication semantic %q", requiredSemantics)
@@ -118,6 +143,7 @@ func TestPublicOpenAPIContract(t *testing.T) {
 	for _, forbidden := range []string{
 		"application_instance_id", "password_hash", "refresh_verifier", "challenge_id", "BIGINT",
 		"phone_identifier_id", "twilio_sid", "message_sid", "provider_subject", "client_secret",
+		"webauthn.Credential", "webauthn.SessionData", "credential_json", "challenge_hash",
 	} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("v1 spec leaks internal/provider contract term %q", forbidden)
