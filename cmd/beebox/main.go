@@ -152,6 +152,12 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 		socialLinkCore := authentication.NewSocialLinkService(authStore, integrationStore, authStore, socialRegistry, socialProtector)
 		base = httpapi.WithSocialLinks(base, integrationService, integrationStore, sessionService, socialLinkCore)
 	}
+	managementCore := authentication.NewSocialAccountService(authStore, authentication.SocialMethodAvailability{
+		EmailOTP: smtpdelivery.Configured(sender),
+		PhoneOTP: smsEnabled,
+		Social:   socialRegistry,
+	})
+	base = httpapi.WithSocialAccountManagement(base, integrationService, integrationStore, sessionService, managementCore)
 	base = httpapi.WithSessionManagement(base, integrationService, integrationService, sessionService)
 	return httpapi.WithMetrics(base, recorder), nil
 }

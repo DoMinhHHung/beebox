@@ -43,11 +43,23 @@ func (s *Store) CreateSocialLinkAttempt(ctx context.Context, write authenticatio
 	}
 	db := s.pool.OpenSQLDB()
 	defer db.Close()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return classifySocialLinkError(ctx, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	managementDigest := authentication.SocialLinkManagementLockKey(write.ApplicationInstanceID, write.UserID, write.Provider)
+	managementKey := int64(binary.BigEndian.Uint64(managementDigest[:8]))
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, managementKey); err != nil {
+		return classifySocialLinkError(ctx, err)
+	}
+
 	var nonce any
 	if write.OIDCNonceHash != nil {
 		nonce = write.OIDCNonceHash[:]
 	}
-	result, err := db.ExecContext(ctx, `
+	result, err := tx.ExecContext(ctx, `
 		INSERT INTO social_link_attempts(
 			application_instance_id,user_id,session_id,provider,canonical_redirect_url,purpose,
 			state_hash,recent_auth_at,oidc_nonce_hash,provider_pkce_ciphertext,created_at,expires_at
@@ -76,6 +88,9 @@ func (s *Store) CreateSocialLinkAttempt(ctx context.Context, write authenticatio
 	if rows != 1 {
 		return authentication.ErrSocialLinkInvalidSession
 	}
+	if err := tx.Commit(); err != nil {
+		return classifySocialLinkError(ctx, err)
+	}
 	return nil
 }
 
@@ -98,24 +113,24 @@ func (s *Store) ConsumeSocialLinkAttempt(ctx context.Context, stateHash [32]byte
 	var appID, userID int64
 	var provider string
 	var storedState, nonce, ciphertext []byte
-	var consumedAt sql.NullTime
+	var consumedAt, canceledAt sql.NullTime
 	var expiresAt, now time.Time
 	err = tx.QueryRowContext(ctx, `
 		SELECT a.id,a.application_instance_id,i.public_id,a.user_id,a.provider,a.canonical_redirect_url,
-		       a.state_hash,a.oidc_nonce_hash,a.provider_pkce_ciphertext,a.expires_at,a.consumed_at,CURRENT_TIMESTAMP
+		       a.state_hash,a.oidc_nonce_hash,a.provider_pkce_ciphertext,a.expires_at,a.consumed_at,a.canceled_at,CURRENT_TIMESTAMP
 		FROM social_link_attempts a
 		JOIN application_instances i ON i.id=a.application_instance_id
 		WHERE a.state_hash=$1
 		FOR UPDATE`, stateHash[:],
 	).Scan(&snapshot.AttemptID, &appID, &snapshot.ApplicationPublicID, &userID, &provider, &snapshot.CanonicalRedirectURL,
-		&storedState, &nonce, &ciphertext, &expiresAt, &consumedAt, &now)
+		&storedState, &nonce, &ciphertext, &expiresAt, &consumedAt, &canceledAt, &now)
 	if errors.Is(err, sql.ErrNoRows) {
 		return authentication.SocialLinkAttemptSnapshot{}, authentication.ErrSocialLinkInvalidState
 	}
 	if err != nil {
 		return authentication.SocialLinkAttemptSnapshot{}, classifySocialLinkError(ctx, err)
 	}
-	if authentication.Provider(provider) != callbackProvider || consumedAt.Valid || !now.UTC().Before(expiresAt.UTC()) || len(storedState) != 32 {
+	if authentication.Provider(provider) != callbackProvider || consumedAt.Valid || canceledAt.Valid || !now.UTC().Before(expiresAt.UTC()) || len(storedState) != 32 {
 		return authentication.SocialLinkAttemptSnapshot{}, authentication.ErrSocialLinkInvalidState
 	}
 	snapshot.ApplicationInstanceID = applicationinstance.InternalID(appID)
@@ -134,7 +149,7 @@ func (s *Store) ConsumeSocialLinkAttempt(ctx context.Context, stateHash [32]byte
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE social_link_attempts
 		SET consumed_at=$2,provider_pkce_ciphertext=NULL
-		WHERE id=$1 AND consumed_at IS NULL`, snapshot.AttemptID, now.UTC()); err != nil {
+		WHERE id=$1 AND consumed_at IS NULL AND canceled_at IS NULL`, snapshot.AttemptID, now.UTC()); err != nil {
 		return authentication.SocialLinkAttemptSnapshot{}, classifySocialLinkError(ctx, err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -158,16 +173,36 @@ func (s *Store) FinalizeSocialLink(ctx context.Context, final authentication.Soc
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	var preAppID, preUserID int64
+	var preProvider string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT application_instance_id,user_id,provider
+		FROM social_link_attempts
+		WHERE id=$1`, final.AttemptID,
+	).Scan(&preAppID, &preUserID, &preProvider); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return authentication.ErrSocialLinkDenied
+		}
+		return classifySocialLinkError(ctx, err)
+	}
+	managementDigest := authentication.SocialLinkManagementLockKey(
+		applicationinstance.InternalID(preAppID), identity.InternalID(preUserID), authentication.Provider(preProvider),
+	)
+	managementKey := int64(binary.BigEndian.Uint64(managementDigest[:8]))
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, managementKey); err != nil {
+		return classifySocialLinkError(ctx, err)
+	}
+
 	var appID, userID, sessionID int64
 	var provider string
 	var expiresAt, recentAuthAt, now time.Time
-	var consumedAt sql.NullTime
+	var consumedAt, canceledAt sql.NullTime
 	err = tx.QueryRowContext(ctx, `
-		SELECT application_instance_id,user_id,session_id,provider,expires_at,recent_auth_at,consumed_at,CURRENT_TIMESTAMP
+		SELECT application_instance_id,user_id,session_id,provider,expires_at,recent_auth_at,consumed_at,canceled_at,CURRENT_TIMESTAMP
 		FROM social_link_attempts
 		WHERE id=$1
 		FOR UPDATE`, final.AttemptID,
-	).Scan(&appID, &userID, &sessionID, &provider, &expiresAt, &recentAuthAt, &consumedAt, &now)
+	).Scan(&appID, &userID, &sessionID, &provider, &expiresAt, &recentAuthAt, &consumedAt, &canceledAt, &now)
 	if errors.Is(err, sql.ErrNoRows) {
 		return authentication.ErrSocialLinkDenied
 	}
@@ -178,7 +213,7 @@ func (s *Store) FinalizeSocialLink(ctx context.Context, final authentication.Soc
 	app := applicationinstance.InternalID(appID)
 	boundUser := identity.InternalID(userID)
 	storedProvider := authentication.Provider(provider)
-	if !app.Valid() || !boundUser.Valid() || !storedProvider.Valid() || !consumedAt.Valid || !now.Before(expiresAt.UTC()) || !now.Before(recentAuthAt.UTC().Add(authentication.SocialLinkFreshness)) {
+	if appID != preAppID || userID != preUserID || provider != preProvider || !app.Valid() || !boundUser.Valid() || !storedProvider.Valid() || !consumedAt.Valid || canceledAt.Valid || !now.Before(expiresAt.UTC()) || !now.Before(recentAuthAt.UTC().Add(authentication.SocialLinkFreshness)) {
 		return commitSocialLinkDenial(ctx, tx, appID, userID, final.AttemptID, final.CorrelationID)
 	}
 

@@ -31,15 +31,18 @@ func TestSocialLinkMigrationUpgradesVersion15AndEnforcesBindings(t *testing.T) {
 		t.Fatal(err)
 	}
 	version15 := fstest.MapFS{}
+	version16 := fstest.MapFS{}
 	for _, entry := range entries {
-		if entry.Name() == "00016_social_account_linking.sql" {
-			continue
-		}
 		data, err := fs.ReadFile(sources, entry.Name())
 		if err != nil {
 			t.Fatal(err)
 		}
-		version15[entry.Name()] = &fstest.MapFile{Data: data}
+		if entry.Name() != "00016_social_account_linking.sql" && entry.Name() != "00017_social_account_management.sql" {
+			version15[entry.Name()] = &fstest.MapFile{Data: data}
+		}
+		if entry.Name() != "00017_social_account_management.sql" {
+			version16[entry.Name()] = &fstest.MapFile{Data: data}
+		}
 	}
 	if err := upWithSources(ctx, pool.OpenSQLDB(), version15); err != nil {
 		t.Fatalf("apply version 15 schema: %v", err)
@@ -55,7 +58,7 @@ func TestSocialLinkMigrationUpgradesVersion15AndEnforcesBindings(t *testing.T) {
 		t.Fatalf("version 15 unexpectedly contains social_link_attempts: %q", *before)
 	}
 
-	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
+	if err := upWithSources(ctx, pool.OpenSQLDB(), version16); err != nil {
 		t.Fatalf("upgrade to version 16: %v", err)
 	}
 	assertMigrationState(t, ctx, pool, 16)
