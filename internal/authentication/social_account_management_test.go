@@ -92,7 +92,7 @@ func TestSocialAccountListIsBoundedAndProducesCursor(t *testing.T) {
 	}
 }
 
-func TestSocialAccountUnlinkRequiresOriginalSessionFreshness(t *testing.T) {
+func TestSocialAccountUnlinkRequiresScopedReverification(t *testing.T) {
 	now := time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC)
 	p := &fakeSocialAccountPersistence{}
 	service := NewSocialAccountService(p, SocialMethodAvailability{})
@@ -100,23 +100,21 @@ func TestSocialAccountUnlinkRequiresOriginalSessionFreshness(t *testing.T) {
 	correlation, _ := audit.NewCorrelationID()
 	id := "sli_123e4567-e89b-42d3-a456-426614174000"
 
-	fresh := validSocialAccountTestSession(now)
-	if err := service.Unlink(context.Background(), fresh, id, correlation); err != nil {
-		t.Fatalf("fresh unlink error=%v", err)
+	current := validSocialAccountTestSession(now)
+	current.CreatedAt = now.Add(-24 * time.Hour)
+	ctx := testReverificationContext(current.ApplicationInstanceID, current.UserID, current.SessionPublicID, ReverificationPurposeSocialUnlink)
+	if err := service.Unlink(ctx, current, id, correlation); err != nil {
+		t.Fatalf("old active session with trusted reverification error=%v", err)
 	}
 	if p.unlinkCalls != 1 {
 		t.Fatalf("unlink calls=%d", p.unlinkCalls)
 	}
 
-	stale := fresh
-	stale.CreatedAt = now.Add(-SocialLinkFreshness)
-	// A replacement access token for this same old session does not change the
-	// persisted session CreatedAt carried into the service.
-	if err := service.Unlink(context.Background(), stale, id, correlation); !errors.Is(err, ErrSocialAccountReverification) {
-		t.Fatalf("stale unlink error=%v", err)
+	if err := service.Unlink(context.Background(), current, id, correlation); !errors.Is(err, ErrSocialAccountReverification) {
+		t.Fatalf("missing reverification error=%v", err)
 	}
 	if p.unlinkCalls != 1 {
-		t.Fatalf("stale session reached persistence: calls=%d", p.unlinkCalls)
+		t.Fatalf("unauthorized request reached persistence: calls=%d", p.unlinkCalls)
 	}
 }
 
