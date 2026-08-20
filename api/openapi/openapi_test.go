@@ -137,8 +137,8 @@ func TestPublicOpenAPIContract(t *testing.T) {
 			t.Fatalf("v1 spec missing required contract anchor %q", required)
 		}
 	}
-	if got := strings.Count(text, "#/components/parameters/ReverificationGrantHeader"); got != 8 {
-		t.Fatalf("protected reverification header references=%d want=8", got)
+	if got := strings.Count(text, "#/components/parameters/ReverificationGrantHeader"); got != 11 {
+		t.Fatalf("protected reverification header references=%d want=11", got)
 	}
 	normalizedText := strings.Join(strings.Fields(strings.ToLower(text)), " ")
 	for _, requiredSemantics := range []string{
