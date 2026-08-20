@@ -146,13 +146,7 @@ func (h *passkeyHTTP) handleAuthenticationComplete(w http.ResponseWriter, r *htt
 		h.writePasskeyError(w, requestID, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, tokenResponse{
-		AccessToken:  pair.AccessToken,
-		TokenType:    "Bearer",
-		ExpiresIn:    pair.ExpiresIn,
-		SessionID:    pair.SessionID,
-		RefreshToken: pair.RefreshToken,
-	})
+	writeAuthenticationTokenPair(w, r, pair, app.PublicID)
 }
 
 func (h *passkeyHTTP) handleRegistrationBegin(w http.ResponseWriter, r *http.Request, requestID string, app applicationinstance.Instance, origin string) {
