@@ -25,7 +25,7 @@ func TestRecoveryCodesUpgradeFromExactP2PointSixPredecessor(t *testing.T) {
 	}
 	predecessor := fstest.MapFS{}
 	for _, entry := range entries {
-		if entry.Name() == "00020_recovery_codes.sql" || entry.Name() == "00021_reverification.sql" {
+		if entry.Name() == "00020_recovery_codes.sql" || entry.Name() == "00021_reverification.sql" || entry.Name() == "00022_session_self_service.sql" {
 			continue
 		}
 		data, err := fs.ReadFile(sources, entry.Name())
@@ -59,7 +59,7 @@ func TestRecoveryCodesUpgradeFromExactP2PointSixPredecessor(t *testing.T) {
 	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
 		t.Fatal(err)
 	}
-	assertMigrationState(t, ctx, pool, 21)
+	assertMigrationState(t, ctx, pool, 22)
 	var setsTable, codesTable, admissionTable *string
 	if err := db.QueryRowContext(ctx, `SELECT to_regclass('recovery_code_sets')::text,to_regclass('recovery_codes')::text,to_regclass('sensitive_operation_admission')::text`).Scan(&setsTable, &codesTable, &admissionTable); err != nil {
 		t.Fatal(err)
