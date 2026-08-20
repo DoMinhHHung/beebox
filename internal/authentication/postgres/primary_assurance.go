@@ -62,11 +62,11 @@ func finalizePrimaryAssurance(
 			return authentication.PrimaryAssuranceResult{}, authentication.ErrPendingMFAPersistence
 		}
 		return authentication.PrimaryAssuranceResult{
-			UserPublicID:        userPublicID,
-			ApplicationPublicID: appPublicID,
-			MFARequired:         true,
-			PendingMFAPublicID:  material.Pending.PublicID,
-			PendingMFAExpiresAt: material.Pending.ExpiresAt.UTC(),
+			UserPublicID:          userPublicID,
+			ApplicationPublicID:   appPublicID,
+			MFARequired:           true,
+			PendingMFAPublicID:    material.Pending.PublicID,
+			PendingMFAExpiresAt:   material.Pending.ExpiresAt.UTC(),
 			RecoveryCodeAvailable: recoveryCodeAvailable,
 		}, nil
 	}

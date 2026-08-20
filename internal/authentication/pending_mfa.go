@@ -51,10 +51,10 @@ func validPrimaryMethod(method string) bool {
 }
 
 type PrimaryAssuranceResult struct {
-	UserPublicID        string
-	ApplicationPublicID string
-	MFARequired         bool
-	PendingMFAPublicID  string
-	PendingMFAExpiresAt time.Time
+	UserPublicID          string
+	ApplicationPublicID   string
+	MFARequired           bool
+	PendingMFAPublicID    string
+	PendingMFAExpiresAt   time.Time
 	RecoveryCodeAvailable bool
 }

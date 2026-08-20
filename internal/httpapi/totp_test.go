@@ -15,16 +15,16 @@ import (
 )
 
 type totpHTTPServiceStub struct {
-	startCalls   int
-	confirmCalls int
-	currentCalls int
-	removeCalls  int
+	startCalls              int
+	confirmCalls            int
+	currentCalls            int
+	removeCalls             int
 	replacementStartCalls   int
 	replacementConfirmCalls int
-	lastSession  authentication.TOTPSession
-	lastID       string
-	lastCode     string
-	err          error
+	lastSession             authentication.TOTPSession
+	lastID                  string
+	lastCode                string
+	err                     error
 }
 
 func (s *totpHTTPServiceStub) StartEnrollment(_ context.Context, current authentication.TOTPSession, _ audit.CorrelationID) (authentication.TOTPEnrollmentResult, error) {

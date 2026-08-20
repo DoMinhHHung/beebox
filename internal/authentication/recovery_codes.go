@@ -35,11 +35,11 @@ var (
 type RecoveryCodeSetWrite struct {
 	PublicID              string
 	ApplicationInstanceID applicationinstance.InternalID
-	UserID               identity.InternalID
-	SessionPublicID      string
-	Reason               string
-	CodeHashes           [][32]byte
-	CreatedAt            time.Time
+	UserID                identity.InternalID
+	SessionPublicID       string
+	Reason                string
+	CodeHashes            [][32]byte
+	CreatedAt             time.Time
 }
 
 func (w RecoveryCodeSetWrite) Valid() bool {
