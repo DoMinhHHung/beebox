@@ -8,10 +8,10 @@ info:
     SMS OTP primary authentication, P2.3 headless social authentication,
     P2.4A explicit authenticated social account linking, P2.4B linked social
     account listing/unlink, P2.5 passkey/WebAuthn primary authentication,
-    P2.6 TOTP MFA, P2.7 recovery codes and P2.8 purpose-bound reverification
-    are implemented. BeeBox is not an OAuth or OpenID Connect authorization
-    server. Public resource identifiers are opaque locators and never establish
-    authorization by themselves.
+    P2.6 TOTP MFA, P2.7 recovery codes, P2.8 purpose-bound reverification and
+    P2.9 current-user session self-service are implemented. BeeBox is not an
+    OAuth or OpenID Connect authorization server. Public resource identifiers
+    are opaque locators and never establish authorization by themselves.
 servers:
   - url: /
 paths:
@@ -1004,6 +1004,115 @@ paths:
         '409': {$ref: '#/components/responses/LastAuthenticationMethod'}
         '503': {$ref: '#/components/responses/Unavailable'}
 
+  /v1/sessions:
+    get:
+      operationId: listSessions
+      summary: List bounded sessions for the current application user
+      description: >-
+        Returns only sessions belonging to the current application and current authenticated user;
+        application and user scope are derived from the publishable credential plus the persisted
+        current bearer session. Results use deterministic newest-first ordering by server lifecycle
+        facts and an opaque cursor. The response exposes no internal database ID, refresh verifier,
+        MFA provenance, raw IP, user-agent, location, device fingerprint or private audit state.
+        The current marker is computed by comparing each row with the server-resolved current session.
+        BeeBox endpoints that consult persisted session state observe revocation immediately. Offline
+        consumers that validate only an already-issued access JWT cannot observe database revocation;
+        that JWT can remain cryptographically acceptable until its short five-minute expiry.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/SessionListLimit'}
+        - {$ref: '#/components/parameters/SessionListCursor'}
+      responses:
+        '200':
+          description: Bounded newest-first page of the current user's application-scoped sessions.
+          headers:
+            Cache-Control: {$ref: '#/components/headers/NoStore'}
+            X-Request-ID: {$ref: '#/components/headers/RequestID'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SelfServiceSessionPage'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/sessions/{session_id}/revoke:
+    post:
+      operationId: revokeOwnSession
+      summary: Revoke one session owned by the current application user
+      description: >-
+        Requires the current target bearer and one one-time P2.8 grant with purpose
+        session_revoke. The selected session ID is a locator, never authority. BeeBox
+        checks the selected row against the exact server-derived current application and
+        user inside the revocation transaction. A syntactically valid absent, already
+        revoked, cross-user or cross-application locator has the same idempotent public
+        success class and does not reveal ownership. Selecting the current session is
+        allowed; its browser refresh cookie is cleared after the revocation commits.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
+        - {$ref: '#/components/parameters/SessionID'}
+      responses:
+        '204':
+          description: Owned session revoked, already revoked/absent, or outside the current application/user scope without ownership disclosure.
+          headers:
+            Cache-Control: {$ref: '#/components/headers/NoStore'}
+            X-Request-ID: {$ref: '#/components/headers/RequestID'}
+            Set-Cookie: {schema: {type: string}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/ReverificationFailed'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/sessions/revoke-others:
+    post:
+      operationId: revokeOtherSessions
+      summary: Revoke every other session owned by the current application user
+      description: >-
+        Requires a one-time P2.8 grant with purpose session_revoke_others. BeeBox
+        atomically revokes all currently revocable sessions for the exact current
+        application and user except the server-resolved current target session. The
+        current session remains active after success. One bounded audit event commits in
+        the same PostgreSQL transaction as the bulk revocation.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
+      responses:
+        '200': {$ref: '#/components/responses/OKStatus'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/ReverificationFailed'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/sessions/sign-out-everywhere:
+    post:
+      operationId: signOutEverywhere
+      summary: Revoke all sessions owned by the current application user
+      description: >-
+        Requires a one-time P2.8 grant with purpose sign_out_everywhere. BeeBox
+        atomically revokes every currently revocable session for the exact current
+        application and user, including the current session, and clears current browser
+        refresh-cookie authority after commit. Persisted BeeBox session checks and refresh
+        rotation observe revocation immediately; offline verification of an already-issued
+        short-lived access JWT remains bounded by its five-minute token lifetime.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
+      responses:
+        '200': {$ref: '#/components/responses/OKStatus'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/ReverificationFailed'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
   /v1/sessions/refresh:
     post:
       operationId: refreshSession
@@ -1209,6 +1318,18 @@ components:
       required: false
       schema: {type: string, minLength: 1, maxLength: 512}
       description: Opaque pagination state for stable created_at plus public-ID ordering; it conveys no authority.
+    SessionListLimit:
+      name: limit
+      in: query
+      required: false
+      schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      description: Maximum number of current-user sessions returned in one bounded newest-first page.
+    SessionListCursor:
+      name: cursor
+      in: query
+      required: false
+      schema: {type: string, minLength: 1, maxLength: 512}
+      description: Opaque cursor for deterministic created_at plus public-session-ID ordering; it conveys no authority and must not be decoded by clients.
     PasskeyID:
       name: passkey_id
       in: path
@@ -1320,9 +1441,9 @@ components:
       type: string
       enum: [totp_enroll, totp_remove, totp_replace, recovery_regenerate, passkey_register, passkey_remove, social_link, social_unlink, session_revoke, session_revoke_others, sign_out_everywhere, identifier_add, identifier_remove, identifier_primary]
       description: >-
-        BeeBox-owned operation vocabulary accepted by P2.8. Purpose values for later
-        Phase-2 session and identifier mutations are reserved by the runtime; this
-        document does not publish those routes until their checkpoints are implemented.
+        BeeBox-owned operation vocabulary accepted by P2.8. Session self-service purposes
+        are published by P2.9; identifier mutation purposes remain reserved until their
+        corresponding additive public routes are implemented.
     ReverificationRequest:
       type: object
       additionalProperties: false
@@ -1702,6 +1823,37 @@ components:
         created_at: {type: string, format: date-time}
         expires_at: {type: string, format: date-time}
         revoked: {type: boolean}
+    SelfServiceSession:
+      type: object
+      additionalProperties: false
+      required: [id, created_at, last_seen_at, idle_expires_at, expires_at, revoked, current]
+      properties:
+        id:
+          type: string
+          pattern: '^ses_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+          description: Opaque session locator; it never grants authority.
+        created_at: {type: string, format: date-time}
+        last_seen_at: {type: string, format: date-time}
+        idle_expires_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+        revoked: {type: boolean}
+        current:
+          type: boolean
+          description: Server-derived comparison with the current bearer session; never client-supplied.
+    SelfServiceSessionPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items: {$ref: '#/components/schemas/SelfServiceSession'}
+        next_cursor:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: Opaque cursor omitted when no later page exists.
     PasswordResetConfirmRequest:
       type: object
       additionalProperties: false
