@@ -45,7 +45,7 @@ CREATE UNIQUE INDEX email_identifiers_application_user_primary_key
     WHERE is_primary;
 
 CREATE INDEX email_identifiers_application_user_created_public_idx
-    ON email_identifiers(application_instance_id, user_id, created_at, public_id);
+    ON email_identifiers(application_instance_id, user_id, created_at DESC, public_id DESC);
 
 ALTER TABLE phone_identifiers
     ADD COLUMN public_id TEXT,
@@ -78,15 +78,19 @@ ALTER TABLE phone_identifiers
     ),
     ADD CONSTRAINT phone_identifiers_primary_verified_check CHECK (NOT is_primary OR verified_at IS NOT NULL);
 
-CREATE UNIQUE INDEX phone_identifiers_application_phone_key
-    ON phone_identifiers(application_instance_id, phone_e164);
+-- The verified-only application-wide ownership constraint was introduced in
+-- 00014 and remains the final concurrency arbiter. Unverified possession claims
+-- deliberately do not reserve a phone number across users. A user may not keep
+-- duplicate copies of the same canonical number in one application.
+CREATE UNIQUE INDEX phone_identifiers_application_user_phone_key
+    ON phone_identifiers(application_instance_id, user_id, phone_e164);
 
 CREATE UNIQUE INDEX phone_identifiers_application_user_primary_key
     ON phone_identifiers(application_instance_id, user_id)
     WHERE is_primary;
 
 CREATE INDEX phone_identifiers_application_user_created_public_idx
-    ON phone_identifiers(application_instance_id, user_id, created_at, public_id);
+    ON phone_identifiers(application_instance_id, user_id, created_at DESC, public_id DESC);
 
 CREATE TABLE phone_identifier_verification_challenges (
     application_instance_id BIGINT NOT NULL,
@@ -114,7 +118,10 @@ CREATE TABLE phone_identifier_verification_challenges (
                (consumed_at IS NOT NULL AND code_hash IS NULL)),
 
     CONSTRAINT phone_identifier_verification_challenges_window_order_check
-        CHECK (issue_window_started_at <= last_issued_at)
+        CHECK (issue_window_started_at <= last_issued_at),
+
+    CONSTRAINT phone_identifier_verification_challenges_time_check
+        CHECK (last_issued_at < expires_at AND created_at <= updated_at)
 );
 
 CREATE INDEX phone_identifier_verification_challenges_expiry_idx
