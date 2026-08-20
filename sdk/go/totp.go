@@ -13,8 +13,18 @@ type TOTPEnrollment struct {
 }
 
 type TOTPCredential struct {
-	ID        string `json:"id"`
-	CreatedAt string `json:"created_at"`
+	ID            string   `json:"id"`
+	CreatedAt     string   `json:"created_at"`
+	RecoveryCodes []string `json:"recovery_codes,omitempty"`
+}
+
+type RecoveryCodeState struct {
+	Available bool `json:"available"`
+	Remaining int  `json:"remaining"`
+}
+
+type RecoveryCodeSet struct {
+	RecoveryCodes []string `json:"recovery_codes"`
 }
 
 type TOTPState struct {
@@ -52,8 +62,44 @@ func (c *Client) CompleteTOTPAuthentication(ctx context.Context, origin, pending
 	return out, err
 }
 
+func (c *Client) CompleteRecoveryCodeAuthentication(ctx context.Context, origin, pendingMFAToken, code string) (TokenResponse, error) {
+	var out TokenResponse
+	err := c.doJSON(ctx, http.MethodPost, "/v1/mfa/recovery-codes/complete", map[string]string{
+		"pending_mfa_token": pendingMFAToken,
+		"code":              code,
+	}, &out, map[string]string{"Origin": origin}, false)
+	return out, err
+}
+
+func (c *Client) RecoveryCodeState(ctx context.Context, origin, accessToken string) (RecoveryCodeState, error) {
+	var out RecoveryCodeState
+	err := c.doJSON(ctx, http.MethodGet, "/v1/mfa/recovery-codes", nil, &out, totpSessionHeaders(origin, accessToken), false)
+	return out, err
+}
+
+func (c *Client) RegenerateRecoveryCodes(ctx context.Context, origin, accessToken string) (RecoveryCodeSet, error) {
+	var out RecoveryCodeSet
+	err := c.doJSON(ctx, http.MethodPost, "/v1/mfa/recovery-codes/regenerate", nil, &out, totpSessionHeaders(origin, accessToken), false)
+	return out, err
+}
+
 func (c *Client) RemoveTOTP(ctx context.Context, origin, accessToken string) error {
 	return c.doJSON(ctx, http.MethodDelete, "/v1/mfa/totp", nil, nil, totpSessionHeaders(origin, accessToken), false)
+}
+
+func (c *Client) StartTOTPReplacement(ctx context.Context, origin, accessToken, recoveryCode string) (TOTPEnrollment, error) {
+	var out TOTPEnrollment
+	err := c.doJSON(ctx, http.MethodPost, "/v1/mfa/totp/replacements", map[string]string{"recovery_code": recoveryCode}, &out, totpSessionHeaders(origin, accessToken), false)
+	return out, err
+}
+
+func (c *Client) ConfirmTOTPReplacement(ctx context.Context, origin, accessToken, enrollmentID, code string) (TOTPCredential, error) {
+	var out TOTPCredential
+	err := c.doJSON(ctx, http.MethodPost, "/v1/mfa/totp/replacements/confirm", map[string]string{
+		"enrollment_id": enrollmentID,
+		"code":          code,
+	}, &out, totpSessionHeaders(origin, accessToken), false)
+	return out, err
 }
 
 func totpSessionHeaders(origin, accessToken string) map[string]string {

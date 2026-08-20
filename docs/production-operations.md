@@ -62,9 +62,11 @@ Each invocation deletes at most 500 rows from each eligible category:
 - expired or consumed email-verification challenges;
 - expired or consumed password-reset challenges;
 - expired or consumed TOTP enrollments;
-- expired or consumed pending-MFA authentication transactions.
+- expired or consumed pending-MFA authentication transactions;
+- invalidated recovery-code sets that are no longer referenced by a pending TOTP replacement;
+- expired TOTP-enrollment/recovery-regeneration admission windows.
 
-Execution is repeatable and cancellation-aware. Live challenge/idempotency/rate-limit rows are not eligible. `audit_events` are never pruned by this command.
+Execution is repeatable, bounded per category and cancellation-aware. Live challenge/idempotency/rate-limit rows, active recovery sets and live admission windows are not eligible. Correctness never depends on cleanup: proof paths independently enforce expiry, invalidation and consumption. `audit_events` are never pruned by this command.
 
 ### OPEN SECURITY DECISION — session/refresh retention
 

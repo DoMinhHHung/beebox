@@ -24,6 +24,8 @@ type Result struct {
 	PasskeyAttempts         int64
 	TOTPEnrollments         int64
 	PendingMFA              int64
+	RecoveryCodeSets        int64
+	SensitiveAdmission      int64
 }
 
 // CleanupSecurityState removes only operational rows whose security lifetime
@@ -123,6 +125,19 @@ func CleanupSecurityState(ctx context.Context, db *sql.DB, batchSize int) (Resul
 			ORDER BY expires_at
 			LIMIT $1
 		) DELETE FROM pending_mfa_authentications p USING doomed d WHERE p.ctid = d.ctid`},
+		{&result.RecoveryCodeSets, `WITH doomed AS (
+			SELECT s.ctid FROM recovery_code_sets s
+			WHERE s.invalidated_at IS NOT NULL
+			  AND NOT EXISTS(SELECT 1 FROM totp_enrollments e WHERE e.replacement_recovery_set_id=s.id)
+			ORDER BY s.invalidated_at
+			LIMIT $1
+		) DELETE FROM recovery_code_sets p USING doomed d WHERE p.ctid = d.ctid`},
+		{&result.SensitiveAdmission, `WITH doomed AS (
+			SELECT ctid FROM sensitive_operation_admission
+			WHERE expires_at <= CURRENT_TIMESTAMP
+			ORDER BY expires_at
+			LIMIT $1
+		) DELETE FROM sensitive_operation_admission p USING doomed d WHERE p.ctid = d.ctid`},
 	}
 	for _, cleanup := range queries {
 		if err := ctx.Err(); err != nil {

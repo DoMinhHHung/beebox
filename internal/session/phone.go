@@ -234,7 +234,7 @@ func (s *PhoneOTPService) Confirm(ctx context.Context, appID applicationinstance
 		if assurance.PendingMFAPublicID != pending.PublicID || !assurance.PendingMFAExpiresAt.Equal(pending.ExpiresAt) {
 			return TokenPair{}, ErrSessionUnavailable
 		}
-		return TokenPair{PendingMFA: &PendingMFA{Token: pendingToken, ExpiresAt: assurance.PendingMFAExpiresAt.UTC(), AvailableMethods: []string{"totp"}}}, nil
+		return TokenPair{PendingMFA: &PendingMFA{Token: pendingToken, ExpiresAt: assurance.PendingMFAExpiresAt.UTC(), AvailableMethods: pendingMFAMethods(assurance.RecoveryCodeAvailable)}}, nil
 	}
 	access, err := s.ring.Sign(result.UserPublicID, result.ApplicationPublicID, finalize.SessionPublicID, issuedAt)
 	if err != nil {

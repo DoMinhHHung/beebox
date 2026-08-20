@@ -15,9 +15,11 @@ import (
 
 type TOTPApplicationService interface {
 	StartEnrollment(context.Context, authentication.TOTPSession, audit.CorrelationID) (authentication.TOTPEnrollmentResult, error)
-	ConfirmEnrollment(context.Context, authentication.TOTPSession, string, string, audit.CorrelationID) (authentication.TOTPCredentialView, error)
+	ConfirmEnrollment(context.Context, authentication.TOTPSession, string, string, audit.CorrelationID) (authentication.TOTPConfirmationResult, error)
 	Current(context.Context, authentication.TOTPSession) (authentication.TOTPCredentialView, error)
 	Remove(context.Context, authentication.TOTPSession, audit.CorrelationID) error
+	StartReplacement(context.Context, authentication.TOTPSession, string, audit.CorrelationID) (authentication.TOTPEnrollmentResult, error)
+	ConfirmReplacement(context.Context, authentication.TOTPSession, string, string, audit.CorrelationID) (authentication.TOTPConfirmationResult, error)
 }
 
 type TOTPAuthenticationCompletion interface {
@@ -36,6 +38,10 @@ type totpHTTP struct {
 type totpEnrollmentConfirmRequest struct {
 	EnrollmentID string `json:"enrollment_id"`
 	Code         string `json:"code"`
+}
+
+type totpReplacementRequest struct {
+	RecoveryCode string `json:"recovery_code"`
 }
 
 type totpCompletionRequest struct {
@@ -68,7 +74,7 @@ func WithTOTP(
 
 func (h *totpHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
-	case "/v1/mfa/totp", "/v1/mfa/totp/enrollments", "/v1/mfa/totp/enrollments/confirm", "/v1/mfa/totp/complete":
+	case "/v1/mfa/totp", "/v1/mfa/totp/enrollments", "/v1/mfa/totp/enrollments/confirm", "/v1/mfa/totp/replacements", "/v1/mfa/totp/replacements/confirm", "/v1/mfa/totp/complete":
 		h.serve(w, r)
 	default:
 		h.base.ServeHTTP(w, r)
@@ -108,9 +114,57 @@ func (h *totpHTTP) serve(w http.ResponseWriter, r *http.Request) {
 		h.remove(w, r, requestID, correlationID, app)
 	case r.URL.Path == "/v1/mfa/totp/complete" && r.Method == http.MethodPost:
 		h.complete(w, r, requestID, correlationID, app)
+	case r.URL.Path == "/v1/mfa/totp/replacements" && r.Method == http.MethodPost:
+		h.startReplacement(w, r, requestID, correlationID, app)
+	case r.URL.Path == "/v1/mfa/totp/replacements/confirm" && r.Method == http.MethodPost:
+		h.confirmReplacement(w, r, requestID, correlationID, app)
 	default:
 		methodNotAllowed(w, requestID)
 	}
+}
+
+func (h *totpHTTP) startReplacement(w http.ResponseWriter, r *http.Request, requestID string, correlationID audit.CorrelationID, app applicationinstance.Instance) {
+	if h.totp == nil {
+		h.unavailable(w, requestID)
+		return
+	}
+	current, ok := h.current(w, r, requestID, app)
+	if !ok {
+		return
+	}
+	var input totpReplacementRequest
+	if decodeJSON(w, r, &input) != nil || input.RecoveryCode == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "The TOTP replacement request is invalid.", requestID)
+		return
+	}
+	result, err := h.totp.StartReplacement(r.Context(), current, input.RecoveryCode, correlationID)
+	if err != nil {
+		h.writeError(w, requestID, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, result)
+}
+
+func (h *totpHTTP) confirmReplacement(w http.ResponseWriter, r *http.Request, requestID string, correlationID audit.CorrelationID, app applicationinstance.Instance) {
+	if h.totp == nil {
+		h.unavailable(w, requestID)
+		return
+	}
+	current, ok := h.current(w, r, requestID, app)
+	if !ok {
+		return
+	}
+	var input totpEnrollmentConfirmRequest
+	if decodeJSON(w, r, &input) != nil || input.EnrollmentID == "" || input.Code == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "The TOTP replacement confirmation request is invalid.", requestID)
+		return
+	}
+	result, err := h.totp.ConfirmReplacement(r.Context(), current, input.EnrollmentID, input.Code, correlationID)
+	if err != nil {
+		h.writeError(w, requestID, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (h *totpHTTP) startEnrollment(w http.ResponseWriter, r *http.Request, requestID string, correlationID audit.CorrelationID, app applicationinstance.Instance) {
@@ -305,6 +359,9 @@ func (h *totpHTTP) writeError(w http.ResponseWriter, requestID string, err error
 		writeError(w, http.StatusForbidden, "reverification_required", "Recent authentication is required for this TOTP operation.", requestID)
 	case errors.Is(err, authentication.ErrTOTPAlreadyActive):
 		writeError(w, http.StatusConflict, "totp_already_active", "TOTP is already active.", requestID)
+	case errors.Is(err, authentication.ErrTOTPEnrollmentRateLimited):
+		w.Header().Set("Retry-After", "3600")
+		writeError(w, http.StatusTooManyRequests, "rate_limited", "Too many TOTP enrollment operations were received.", requestID)
 	case errors.Is(err, authentication.ErrLastAuthenticationMethod):
 		writeError(w, http.StatusConflict, "last_authentication_method", "At least one usable primary authentication method must remain.", requestID)
 	case errors.Is(err, authentication.ErrTOTPInvalidCode), errors.Is(err, authentication.ErrTOTPReplay), errors.Is(err, authentication.ErrPendingMFAInvalid), errors.Is(err, authentication.ErrPendingMFAExpired), errors.Is(err, authentication.ErrPendingMFAReplay):

@@ -79,6 +79,12 @@ func (s *Store) CreateTOTPEnrollment(ctx context.Context, write authentication.T
 	if err := validateFreshTOTPSessionTx(ctx, tx, write.ApplicationInstanceID, write.UserID, write.SessionPublicID); err != nil {
 		return err
 	}
+	if err := admitSensitiveInitiationTx(ctx, tx, write.ApplicationInstanceID, write.UserID, write.SessionPublicID, "totp_enrollment_start"); err != nil {
+		if errors.Is(err, authentication.ErrRecoveryRateLimited) {
+			return authentication.ErrTOTPEnrollmentRateLimited
+		}
+		return authentication.ErrTOTPPersistence
+	}
 	var active bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM totp_credentials WHERE application_instance_id=$1 AND user_id=$2)`, int64(write.ApplicationInstanceID), int64(write.UserID)).Scan(&active); err != nil {
 		return classifyTOTPError(ctx, err)
@@ -125,8 +131,8 @@ func (s *Store) LoadTOTPEnrollment(ctx context.Context, appID applicationinstanc
 	return out, nil
 }
 
-func (s *Store) ActivateTOTPEnrollment(ctx context.Context, snapshot authentication.TOTPEnrollmentSnapshot, timestep int64, correlationID audit.CorrelationID) (authentication.TOTPCredentialView, error) {
-	if s == nil || s.pool == nil || !snapshot.ApplicationInstanceID.Valid() || !snapshot.UserID.Valid() || !publicid.IsUUIDv4(snapshot.EnrollmentID, "mfe") || !publicid.IsUUIDv4(snapshot.CredentialID, "mfc") || timestep < 0 || correlationID == (audit.CorrelationID{}) {
+func (s *Store) ActivateTOTPEnrollment(ctx context.Context, snapshot authentication.TOTPEnrollmentSnapshot, timestep int64, recoverySet authentication.RecoveryCodeSetWrite, correlationID audit.CorrelationID) (authentication.TOTPCredentialView, error) {
+	if s == nil || s.pool == nil || !snapshot.ApplicationInstanceID.Valid() || !snapshot.UserID.Valid() || !publicid.IsUUIDv4(snapshot.EnrollmentID, "mfe") || !publicid.IsUUIDv4(snapshot.CredentialID, "mfc") || timestep < 0 || !recoverySet.Valid() || recoverySet.ApplicationInstanceID != snapshot.ApplicationInstanceID || recoverySet.UserID != snapshot.UserID || recoverySet.SessionPublicID != snapshot.SessionPublicID || recoverySet.Reason != "activation" || correlationID == (audit.CorrelationID{}) {
 		return authentication.TOTPCredentialView{}, authentication.ErrTOTPEnrollmentInvalid
 	}
 	db := s.pool.OpenSQLDB()
@@ -163,10 +169,27 @@ func (s *Store) ActivateTOTPEnrollment(ctx context.Context, snapshot authenticat
 	if err != nil {
 		return authentication.TOTPCredentialView{}, classifyTOTPError(ctx, err)
 	}
+	var recoverySetID int64
+	if err := tx.QueryRowContext(ctx, `
+		INSERT INTO recovery_code_sets(
+			public_id,application_instance_id,user_id,totp_credential_id,created_by_session_public_id,reason,created_at
+		) SELECT $1,$2,$3,id,$4,'activation',$5 FROM totp_credentials
+		WHERE application_instance_id=$2 AND user_id=$3 AND public_id=$6
+		RETURNING id`, recoverySet.PublicID, int64(snapshot.ApplicationInstanceID), int64(snapshot.UserID), recoverySet.SessionPublicID, recoverySet.CreatedAt.UTC(), out.ID).Scan(&recoverySetID); err != nil {
+		return authentication.TOTPCredentialView{}, classifyTOTPError(ctx, err)
+	}
+	for _, codeHash := range recoverySet.CodeHashes {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO recovery_codes(recovery_set_id,code_hash) VALUES($1,$2)`, recoverySetID, codeHash[:]); err != nil {
+			return authentication.TOTPCredentialView{}, classifyTOTPError(ctx, err)
+		}
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE totp_enrollments SET consumed_at=CURRENT_TIMESTAMP WHERE application_instance_id=$1 AND user_id=$2 AND public_id=$3`, int64(snapshot.ApplicationInstanceID), int64(snapshot.UserID), snapshot.EnrollmentID); err != nil {
 		return authentication.TOTPCredentialView{}, classifyTOTPError(ctx, err)
 	}
 	if err := insertTOTPAudit(ctx, tx, snapshot.ApplicationInstanceID, snapshot.UserID, audit.ActionTOTPActivated, audit.OutcomeSuccess, "totp:"+out.ID, correlationID); err != nil {
+		return authentication.TOTPCredentialView{}, authentication.ErrTOTPPersistence
+	}
+	if err := insertRecoveryAudit(ctx, tx, snapshot.ApplicationInstanceID, snapshot.UserID, audit.ActionRecoveryCodesGenerated, audit.OutcomeSuccess, "recovery_set:"+recoverySet.PublicID, correlationID); err != nil {
 		return authentication.TOTPCredentialView{}, authentication.ErrTOTPPersistence
 	}
 	if err := tx.Commit(); err != nil {

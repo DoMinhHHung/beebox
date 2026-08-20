@@ -35,10 +35,10 @@ func TestSocialAccountManagementMigrationUpgradesVersion16(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if entry.Name() != "00017_social_account_management.sql" && entry.Name() != "00018_passkeys.sql" && entry.Name() != "00019_totp_mfa.sql" {
+		if entry.Name() != "00017_social_account_management.sql" && entry.Name() != "00018_passkeys.sql" && entry.Name() != "00019_totp_mfa.sql" && entry.Name() != "00020_recovery_codes.sql" {
 			version16[entry.Name()] = &fstest.MapFile{Data: data}
 		}
-		if entry.Name() != "00018_passkeys.sql" && entry.Name() != "00019_totp_mfa.sql" {
+		if entry.Name() != "00018_passkeys.sql" && entry.Name() != "00019_totp_mfa.sql" && entry.Name() != "00020_recovery_codes.sql" {
 			version17[entry.Name()] = &fstest.MapFile{Data: data}
 		}
 	}

@@ -56,4 +56,5 @@ type PrimaryAssuranceResult struct {
 	MFARequired         bool
 	PendingMFAPublicID  string
 	PendingMFAExpiresAt time.Time
+	RecoveryCodeAvailable bool
 }

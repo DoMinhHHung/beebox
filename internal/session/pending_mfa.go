@@ -17,6 +17,14 @@ type PendingMFA struct {
 	AvailableMethods []string
 }
 
+func pendingMFAMethods(recoveryCodeAvailable bool) []string {
+	methods := []string{"totp"}
+	if recoveryCodeAvailable {
+		methods = append(methods, "recovery_code")
+	}
+	return methods
+}
+
 func preparePendingMFA(method, primaryContext string, now time.Time) (authentication.PendingMFAWrite, string, error) {
 	publicID, err := publicid.NewUUIDv4("mfp")
 	if err != nil {

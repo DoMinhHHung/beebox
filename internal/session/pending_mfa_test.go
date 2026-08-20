@@ -44,3 +44,14 @@ func TestPendingMFATokenUsesDomainSeparatedVerifierAndExactSecretLength(t *testi
 		}
 	}
 }
+
+func TestPendingMFAMethodsAdvertiseRecoveryOnlyWhenUsable(t *testing.T) {
+	withoutRecovery := pendingMFAMethods(false)
+	if len(withoutRecovery) != 1 || withoutRecovery[0] != "totp" {
+		t.Fatalf("without recovery=%v", withoutRecovery)
+	}
+	withRecovery := pendingMFAMethods(true)
+	if len(withRecovery) != 2 || withRecovery[0] != "totp" || withRecovery[1] != "recovery_code" {
+		t.Fatalf("with recovery=%v", withRecovery)
+	}
+}

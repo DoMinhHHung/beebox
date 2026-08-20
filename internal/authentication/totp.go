@@ -24,6 +24,7 @@ var (
 	ErrTOTPReplay                 = errors.New("TOTP replay")
 	ErrTOTPPersistence            = errors.New("TOTP persistence failure")
 	ErrTOTPAlreadyActive          = errors.New("TOTP already active")
+	ErrTOTPEnrollmentRateLimited  = errors.New("TOTP enrollment rate limited")
 )
 
 type TOTPSession struct {
@@ -96,6 +97,29 @@ type TOTPEnrollmentSnapshot struct {
 	ExpiresAt             time.Time
 }
 
+type TOTPReplacementRecoverySet struct {
+	ID       int64
+	PublicID string
+}
+
+type TOTPReplacementWrite struct {
+	Enrollment    TOTPEnrollmentWrite
+	RecoverySetID int64
+	CodeHash      [32]byte
+}
+
+type TOTPReplacementSnapshot struct {
+	TOTPEnrollmentSnapshot
+	RecoverySetID int64
+}
+
+type TOTPReplacementPersistence interface {
+	LoadTOTPReplacementRecoverySet(context.Context, applicationinstance.InternalID, identity.InternalID) (TOTPReplacementRecoverySet, error)
+	CreateTOTPReplacement(context.Context, TOTPSession, TOTPReplacementWrite) error
+	LoadTOTPReplacement(context.Context, applicationinstance.InternalID, identity.InternalID, string) (TOTPReplacementSnapshot, error)
+	ActivateTOTPReplacement(context.Context, TOTPSession, TOTPReplacementSnapshot, int64, RecoveryCodeSetWrite, audit.CorrelationID) (TOTPCredentialView, error)
+}
+
 type TOTPCredentialView struct {
 	ID        string    `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
@@ -104,7 +128,7 @@ type TOTPCredentialView struct {
 type TOTPPersistence interface {
 	CreateTOTPEnrollment(context.Context, TOTPEnrollmentWrite) error
 	LoadTOTPEnrollment(context.Context, applicationinstance.InternalID, identity.InternalID, string) (TOTPEnrollmentSnapshot, error)
-	ActivateTOTPEnrollment(context.Context, TOTPEnrollmentSnapshot, int64, audit.CorrelationID) (TOTPCredentialView, error)
+	ActivateTOTPEnrollment(context.Context, TOTPEnrollmentSnapshot, int64, RecoveryCodeSetWrite, audit.CorrelationID) (TOTPCredentialView, error)
 	GetTOTPCredential(context.Context, applicationinstance.InternalID, identity.InternalID) (TOTPCredentialView, error)
 	RemoveTOTPCredential(context.Context, TOTPSession, audit.CorrelationID) error
 }
@@ -114,6 +138,12 @@ type TOTPEnrollmentResult struct {
 	Secret       string `json:"secret"`
 	OTPAuthURI   string `json:"otpauth_uri"`
 	ExpiresIn    int64  `json:"expires_in"`
+}
+
+type TOTPConfirmationResult struct {
+	ID            string    `json:"id"`
+	CreatedAt     time.Time `json:"created_at"`
+	RecoveryCodes []string  `json:"recovery_codes"`
 }
 
 type TOTPService struct {
@@ -179,20 +209,20 @@ func (s *TOTPService) StartEnrollment(ctx context.Context, current TOTPSession, 
 	return TOTPEnrollmentResult{EnrollmentID: enrollmentID, Secret: generated.Secret, OTPAuthURI: generated.URI, ExpiresIn: int64(deadline.Sub(now) / time.Second)}, nil
 }
 
-func (s *TOTPService) ConfirmEnrollment(ctx context.Context, current TOTPSession, enrollmentID, code string, correlationID audit.CorrelationID) (TOTPCredentialView, error) {
+func (s *TOTPService) ConfirmEnrollment(ctx context.Context, current TOTPSession, enrollmentID, code string, correlationID audit.CorrelationID) (TOTPConfirmationResult, error) {
 	if s == nil || s.persistence == nil || s.protocol == nil || s.protector == nil || s.now == nil || !s.protector.Enabled() || enrollmentID == "" || correlationID == (audit.CorrelationID{}) {
-		return TOTPCredentialView{}, ErrTOTPEnrollmentInvalid
+		return TOTPConfirmationResult{}, ErrTOTPEnrollmentInvalid
 	}
 	now := s.now().UTC()
 	if err := validateTOTPFreshSession(current, now); err != nil {
-		return TOTPCredentialView{}, err
+		return TOTPConfirmationResult{}, err
 	}
 	enrollment, err := s.persistence.LoadTOTPEnrollment(ctx, current.ApplicationInstanceID, current.UserID, enrollmentID)
 	if err != nil {
-		return TOTPCredentialView{}, mapTOTPError(ctx, err)
+		return TOTPConfirmationResult{}, mapTOTPError(ctx, err)
 	}
 	if enrollment.SessionPublicID != current.SessionPublicID || !now.Before(enrollment.ExpiresAt.UTC()) {
-		return TOTPCredentialView{}, ErrTOTPEnrollmentInvalid
+		return TOTPConfirmationResult{}, ErrTOTPEnrollmentInvalid
 	}
 	secretRaw, err := s.protector.DecryptTOTP(TOTPSecretContext{
 		ApplicationID: current.ApplicationInstanceID,
@@ -200,17 +230,136 @@ func (s *TOTPService) ConfirmEnrollment(ctx context.Context, current TOTPSession
 		CredentialID:  enrollment.CredentialID,
 	}, enrollment.Envelope)
 	if err != nil {
-		return TOTPCredentialView{}, ErrTOTPUnavailable
+		return TOTPConfirmationResult{}, ErrTOTPUnavailable
 	}
 	timestep, valid, err := s.protocol.Verify(secretRaw, code, now)
 	if err != nil || !valid {
-		return TOTPCredentialView{}, ErrTOTPInvalidCode
+		return TOTPConfirmationResult{}, ErrTOTPInvalidCode
 	}
-	credential, err := s.persistence.ActivateTOTPEnrollment(ctx, enrollment, timestep, correlationID)
+	recoverySet, recoveryCodes, err := GenerateRecoveryCodeSet(current.ApplicationInstanceID, current.UserID, current.SessionPublicID, "activation", now)
 	if err != nil {
-		return TOTPCredentialView{}, mapTOTPError(ctx, err)
+		return TOTPConfirmationResult{}, ErrTOTPUnavailable
 	}
-	return credential, nil
+	credential, err := s.persistence.ActivateTOTPEnrollment(ctx, enrollment, timestep, recoverySet, correlationID)
+	if err != nil {
+		return TOTPConfirmationResult{}, mapTOTPError(ctx, err)
+	}
+	return TOTPConfirmationResult{ID: credential.ID, CreatedAt: credential.CreatedAt, RecoveryCodes: recoveryCodes}, nil
+}
+
+func (s *TOTPService) StartReplacement(ctx context.Context, current TOTPSession, recoveryCode string, correlationID audit.CorrelationID) (TOTPEnrollmentResult, error) {
+	if s == nil || s.protocol == nil || s.protector == nil || s.ids == nil || s.now == nil || !s.protector.Enabled() || correlationID == (audit.CorrelationID{}) {
+		return TOTPEnrollmentResult{}, ErrTOTPUnavailable
+	}
+	now := s.now().UTC()
+	if err := validateTOTPFreshSession(current, now); err != nil {
+		return TOTPEnrollmentResult{}, err
+	}
+	persistence, ok := s.persistence.(TOTPReplacementPersistence)
+	if !ok {
+		return TOTPEnrollmentResult{}, ErrTOTPUnavailable
+	}
+	activeSet, err := persistence.LoadTOTPReplacementRecoverySet(ctx, current.ApplicationInstanceID, current.UserID)
+	if err != nil {
+		return TOTPEnrollmentResult{}, mapRecoveryToTOTPError(ctx, err)
+	}
+	normalized, valid := NormalizeRecoveryCode(recoveryCode)
+	if !valid {
+		normalized = "INVALID-RECOVERY-CODE"
+	}
+	enrollmentID, err := s.ids.NewEnrollmentID()
+	if err != nil {
+		return TOTPEnrollmentResult{}, ErrTOTPUnavailable
+	}
+	credentialID, err := s.ids.NewCredentialID()
+	if err != nil {
+		return TOTPEnrollmentResult{}, ErrTOTPUnavailable
+	}
+	generated, err := s.protocol.Generate(string(current.ApplicationPublicID), string(current.UserPublicID))
+	if err != nil || len(generated.SecretRaw) == 0 || generated.Secret == "" || generated.URI == "" {
+		return TOTPEnrollmentResult{}, ErrTOTPUnavailable
+	}
+	envelope, err := s.protector.EncryptTOTP(TOTPSecretContext{ApplicationID: current.ApplicationInstanceID, UserID: current.UserID, CredentialID: credentialID}, generated.SecretRaw)
+	if err != nil {
+		return TOTPEnrollmentResult{}, ErrTOTPUnavailable
+	}
+	deadline := earliestTime(now.Add(TOTPEnrollmentTTL), current.CreatedAt.UTC().Add(SocialLinkFreshness), current.IdleExpiresAt.UTC(), current.ExpiresAt.UTC())
+	if !deadline.After(now) {
+		return TOTPEnrollmentResult{}, ErrTOTPReverificationRequired
+	}
+	write := TOTPReplacementWrite{
+		Enrollment: TOTPEnrollmentWrite{
+			EnrollmentID:          enrollmentID,
+			CredentialID:          credentialID,
+			ApplicationInstanceID: current.ApplicationInstanceID,
+			UserID:                current.UserID,
+			SessionPublicID:       current.SessionPublicID,
+			Envelope:              envelope,
+			CreatedAt:             now,
+			ExpiresAt:             deadline,
+			CorrelationID:         correlationID,
+		},
+		RecoverySetID: activeSet.ID,
+		CodeHash:      RecoveryCodeHash(current.ApplicationInstanceID, current.UserID, activeSet.PublicID, normalized),
+	}
+	if err := persistence.CreateTOTPReplacement(ctx, current, write); err != nil {
+		return TOTPEnrollmentResult{}, mapRecoveryToTOTPError(ctx, err)
+	}
+	return TOTPEnrollmentResult{EnrollmentID: enrollmentID, Secret: generated.Secret, OTPAuthURI: generated.URI, ExpiresIn: int64(deadline.Sub(now) / time.Second)}, nil
+}
+
+func (s *TOTPService) ConfirmReplacement(ctx context.Context, current TOTPSession, enrollmentID, code string, correlationID audit.CorrelationID) (TOTPConfirmationResult, error) {
+	if s == nil || s.protocol == nil || s.protector == nil || s.now == nil || !s.protector.Enabled() || enrollmentID == "" || correlationID == (audit.CorrelationID{}) {
+		return TOTPConfirmationResult{}, ErrTOTPEnrollmentInvalid
+	}
+	now := s.now().UTC()
+	if err := validateTOTPFreshSession(current, now); err != nil {
+		return TOTPConfirmationResult{}, err
+	}
+	persistence, ok := s.persistence.(TOTPReplacementPersistence)
+	if !ok {
+		return TOTPConfirmationResult{}, ErrTOTPUnavailable
+	}
+	enrollment, err := persistence.LoadTOTPReplacement(ctx, current.ApplicationInstanceID, current.UserID, enrollmentID)
+	if err != nil {
+		return TOTPConfirmationResult{}, mapTOTPError(ctx, err)
+	}
+	if enrollment.SessionPublicID != current.SessionPublicID || !now.Before(enrollment.ExpiresAt.UTC()) {
+		return TOTPConfirmationResult{}, ErrTOTPEnrollmentInvalid
+	}
+	secretRaw, err := s.protector.DecryptTOTP(TOTPSecretContext{ApplicationID: current.ApplicationInstanceID, UserID: current.UserID, CredentialID: enrollment.CredentialID}, enrollment.Envelope)
+	if err != nil {
+		return TOTPConfirmationResult{}, ErrTOTPUnavailable
+	}
+	timestep, valid, err := s.protocol.Verify(secretRaw, code, now)
+	if err != nil || !valid {
+		return TOTPConfirmationResult{}, ErrTOTPInvalidCode
+	}
+	newSet, codes, err := GenerateRecoveryCodeSet(current.ApplicationInstanceID, current.UserID, current.SessionPublicID, "replacement", now)
+	if err != nil {
+		return TOTPConfirmationResult{}, ErrTOTPUnavailable
+	}
+	credential, err := persistence.ActivateTOTPReplacement(ctx, current, enrollment, timestep, newSet, correlationID)
+	if err != nil {
+		return TOTPConfirmationResult{}, mapTOTPError(ctx, err)
+	}
+	return TOTPConfirmationResult{ID: credential.ID, CreatedAt: credential.CreatedAt, RecoveryCodes: codes}, nil
+}
+
+func mapRecoveryToTOTPError(ctx context.Context, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	switch {
+	case errors.Is(err, ErrRecoveryInvalid), errors.Is(err, ErrRecoveryReplay):
+		return ErrTOTPInvalidCode
+	case errors.Is(err, ErrRecoveryRateLimited):
+		return ErrTOTPEnrollmentRateLimited
+	case errors.Is(err, ErrRecoveryReverification):
+		return ErrTOTPReverificationRequired
+	default:
+		return ErrTOTPUnavailable
+	}
 }
 
 func (s *TOTPService) Current(ctx context.Context, current TOTPSession) (TOTPCredentialView, error) {
@@ -260,7 +409,7 @@ func mapTOTPError(ctx context.Context, err error) error {
 		return ctxErr
 	}
 	switch {
-	case errors.Is(err, ErrTOTPInvalidSession), errors.Is(err, ErrTOTPReverificationRequired), errors.Is(err, ErrTOTPEnrollmentInvalid), errors.Is(err, ErrTOTPInvalidCode), errors.Is(err, ErrTOTPReplay), errors.Is(err, ErrTOTPAlreadyActive), errors.Is(err, ErrLastAuthenticationMethod), errors.Is(err, ErrPendingMFAInvalid), errors.Is(err, ErrPendingMFAExpired), errors.Is(err, ErrPendingMFAReplay):
+	case errors.Is(err, ErrTOTPInvalidSession), errors.Is(err, ErrTOTPReverificationRequired), errors.Is(err, ErrTOTPEnrollmentInvalid), errors.Is(err, ErrTOTPInvalidCode), errors.Is(err, ErrTOTPReplay), errors.Is(err, ErrTOTPAlreadyActive), errors.Is(err, ErrTOTPEnrollmentRateLimited), errors.Is(err, ErrLastAuthenticationMethod), errors.Is(err, ErrPendingMFAInvalid), errors.Is(err, ErrPendingMFAExpired), errors.Is(err, ErrPendingMFAReplay):
 		return err
 	default:
 		return ErrTOTPPersistence

@@ -43,6 +43,16 @@ func finalizePrimaryAssurance(
 		return authentication.PrimaryAssuranceResult{}, authentication.ErrPendingMFAPersistence
 	}
 	if requiresTOTP {
+		var recoveryCodeAvailable bool
+		if err := tx.QueryRowContext(ctx, `
+			SELECT EXISTS(
+				SELECT 1 FROM recovery_code_sets s
+				JOIN recovery_codes c ON c.recovery_set_id=s.id
+				WHERE s.application_instance_id=$1 AND s.user_id=$2
+				  AND s.invalidated_at IS NULL AND c.consumed_at IS NULL
+			)`, int64(appID), int64(userID)).Scan(&recoveryCodeAvailable); err != nil {
+			return authentication.PrimaryAssuranceResult{}, authentication.ErrPendingMFAPersistence
+		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO pending_mfa_authentications(
 				public_id,token_hash,application_instance_id,user_id,primary_method,primary_context,required_factor,created_at,expires_at
@@ -57,6 +67,7 @@ func finalizePrimaryAssurance(
 			MFARequired:         true,
 			PendingMFAPublicID:  material.Pending.PublicID,
 			PendingMFAExpiresAt: material.Pending.ExpiresAt.UTC(),
+			RecoveryCodeAvailable: recoveryCodeAvailable,
 		}, nil
 	}
 	if !session.ValidPublicID(material.PublicID) || material.RefreshHash == ([32]byte{}) || material.IdleExpiresAt.IsZero() || material.ExpiresAt.IsZero() || !material.IdleExpiresAt.Before(material.ExpiresAt) {

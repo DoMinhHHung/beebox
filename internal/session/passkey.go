@@ -61,7 +61,7 @@ func (s *PasskeyService) CompleteAuthentication(ctx context.Context, app applica
 		if assurance.PendingMFAPublicID != pending.PublicID || !assurance.PendingMFAExpiresAt.Equal(pending.ExpiresAt) {
 			return TokenPair{}, ErrSessionUnavailable
 		}
-		return TokenPair{PendingMFA: &PendingMFA{Token: pendingToken, ExpiresAt: assurance.PendingMFAExpiresAt.UTC(), AvailableMethods: []string{"totp"}}}, nil
+		return TokenPair{PendingMFA: &PendingMFA{Token: pendingToken, ExpiresAt: assurance.PendingMFAExpiresAt.UTC(), AvailableMethods: pendingMFAMethods(assurance.RecoveryCodeAvailable)}}, nil
 	}
 	access, err := s.ring.Sign(string(result.UserPublicID), string(result.ApplicationPublicID), sessionID, now)
 	if err != nil {

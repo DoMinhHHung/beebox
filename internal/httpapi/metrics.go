@@ -63,6 +63,10 @@ func metricOperation(path string) string {
 		return "session_current"
 	case "/v1/sessions/sign-out":
 		return "signout"
+	case "/v1/mfa/recovery-codes/regenerate":
+		return "recovery_regenerate"
+	case "/v1/mfa/recovery-codes/complete":
+		return "recovery_complete"
 	case "/v1/password-resets":
 		return "password_reset_issue"
 	case "/v1/password-resets/confirm":

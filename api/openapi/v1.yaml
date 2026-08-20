@@ -8,7 +8,7 @@ info:
     SMS OTP primary authentication, P2.3 headless social authentication,
     P2.4A explicit authenticated social account linking, P2.4B linked social
     account listing/unlink, P2.5 passkey/WebAuthn primary authentication, and
-    P2.6 TOTP MFA are implemented. BeeBox is not an OAuth or OpenID Connect authorization
+    P2.6 TOTP MFA and P2.7 recovery codes are implemented. BeeBox is not an OAuth or OpenID Connect authorization
     server. Public resource identifiers are opaque locators and never establish
     authorization by themselves.
 servers:
@@ -648,6 +648,139 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '503': {$ref: '#/components/responses/Unavailable'}
 
+  /v1/mfa/totp/replacements:
+    post:
+      operationId: startTOTPReplacement
+      summary: Start dedicated TOTP replacement recovery
+      description: >-
+        Requires the exact current application/user/session, a current primary-proof
+        session inside the accepted reverification boundary, and one unused recovery
+        code from the active set. The recovery code is consumed only by this dedicated
+        replacement operation. The old TOTP credential and remaining recovery set stay
+        active until the replacement credential is confirmed atomically.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TOTPReplacementRequest'}
+      responses:
+        '201':
+          description: One-time replacement TOTP setup material; the old credential remains active.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TOTPEnrollment'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidRecoveryProof'}
+        '403': {$ref: '#/components/responses/TOTPForbidden'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/mfa/totp/replacements/confirm:
+    post:
+      operationId: confirmTOTPReplacement
+      summary: Confirm dedicated TOTP replacement recovery
+      description: >-
+        Validates the replacement TOTP proof, then atomically replaces the old
+        credential, invalidates the previous recovery set, creates exactly ten new
+        recovery codes and appends audit evidence. A failed or abandoned confirmation
+        leaves the old TOTP credential active.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TOTPEnrollmentConfirmRequest'}
+      responses:
+        '200':
+          description: Replacement credential metadata and the new recovery set shown exactly once.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TOTPCredential'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidTOTPProof'}
+        '403': {$ref: '#/components/responses/TOTPForbidden'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/mfa/recovery-codes:
+    get:
+      operationId: getRecoveryCodeState
+      summary: Read minimized recovery-code availability
+      description: Returns only availability and the number of unused codes; no code is ever returned again.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      responses:
+        '200':
+          description: Minimized recovery-code state.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RecoveryCodeState'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/mfa/recovery-codes/regenerate:
+    post:
+      operationId: regenerateRecoveryCodes
+      summary: Atomically replace the current recovery set
+      description: >-
+        Requires exact current application/user/session reverification. Successful
+        regeneration atomically invalidates every prior unused code and returns exactly
+        ten independent 26-symbol Crockford Base32 codes once. At most three successful
+        regenerations are admitted per user/session per hour.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      responses:
+        '200':
+          description: New recovery codes shown exactly once.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RecoveryCodeSet'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/RecoveryForbidden'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/mfa/recovery-codes/complete:
+    post:
+      operationId: completeRecoveryCodeAuthentication
+      summary: Complete pending MFA with one recovery code
+      description: >-
+        Accepts the pending-MFA token and recovery code only in the POST body. One code
+        can complete one pending authentication once under concurrency. Successful use
+        consumes the code and pending token atomically but does not disable, remove or
+        otherwise alter TOTP and cannot create a generic reverification grant.
+      security: [{publishableKey: []}]
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RecoveryCodeCompleteRequest'}
+      responses:
+        '200':
+          description: Tagged authenticated result after one-time recovery-code consumption.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TokenResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidRecoveryProof'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
   /v1/passkeys/registration/attempts:
     post:
       operationId: beginPasskeyRegistration
@@ -1237,6 +1370,16 @@ components:
           type: string
           pattern: '^mfe_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
         code: {type: string, pattern: '^[0-9]{6}$'}
+    TOTPReplacementRequest:
+      type: object
+      additionalProperties: false
+      required: [recovery_code]
+      properties:
+        recovery_code:
+          type: string
+          minLength: 26
+          maxLength: 30
+          description: One 26-symbol Crockford Base32 recovery code, optionally in the documented hyphen grouping.
     TOTPAuthenticationCompleteRequest:
       type: object
       additionalProperties: false
@@ -1251,12 +1394,20 @@ components:
     TOTPCredential:
       type: object
       additionalProperties: false
-      required: [id, created_at]
+      required: [id, created_at, recovery_codes]
       properties:
         id:
           type: string
           pattern: '^mfc_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
         created_at: {type: string, format: date-time}
+        recovery_codes:
+          type: array
+          minItems: 10
+          maxItems: 10
+          uniqueItems: true
+          writeOnly: true
+          items: {$ref: '#/components/schemas/RecoveryCode'}
+          description: Present exactly once after activation or replacement confirmation.
     TOTPState:
       type: object
       additionalProperties: false
@@ -1266,6 +1417,40 @@ components:
         credential_id:
           type: string
           pattern: '^mfc_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+    RecoveryCode:
+      type: string
+      minLength: 26
+      maxLength: 30
+      description: Exactly 26 random Crockford Base32 symbols (130 bits), optionally grouped with four expected hyphens.
+    RecoveryCodeSet:
+      type: object
+      additionalProperties: false
+      required: [recovery_codes]
+      properties:
+        recovery_codes:
+          type: array
+          minItems: 10
+          maxItems: 10
+          uniqueItems: true
+          writeOnly: true
+          items: {$ref: '#/components/schemas/RecoveryCode'}
+    RecoveryCodeState:
+      type: object
+      additionalProperties: false
+      required: [available, remaining]
+      properties:
+        available: {type: boolean}
+        remaining: {type: integer, minimum: 0, maximum: 10}
+    RecoveryCodeCompleteRequest:
+      type: object
+      additionalProperties: false
+      required: [pending_mfa_token, code]
+      properties:
+        pending_mfa_token:
+          type: string
+          minLength: 84
+          maxLength: 84
+        code: {$ref: '#/components/schemas/RecoveryCode'}
     PasskeyAttempt:
       type: object
       additionalProperties: false
@@ -1505,6 +1690,16 @@ components:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
     TOTPConflict:
       description: TOTP enrollment is rejected because one active logical credential already exists for the exact application/user.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    InvalidRecoveryProof:
+      description: Recovery proof is invalid, expired, exhausted, replayed, cross-application or already consumed without exposing protected state.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    RecoveryForbidden:
+      description: Recovery management requires the exact current application/user/session and accepted reverification evidence.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}

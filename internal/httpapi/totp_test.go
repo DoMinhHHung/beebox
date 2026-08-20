@@ -19,6 +19,8 @@ type totpHTTPServiceStub struct {
 	confirmCalls int
 	currentCalls int
 	removeCalls  int
+	replacementStartCalls   int
+	replacementConfirmCalls int
 	lastSession  authentication.TOTPSession
 	lastID       string
 	lastCode     string
@@ -39,13 +41,13 @@ func (s *totpHTTPServiceStub) StartEnrollment(_ context.Context, current authent
 	}, nil
 }
 
-func (s *totpHTTPServiceStub) ConfirmEnrollment(_ context.Context, current authentication.TOTPSession, id, code string, _ audit.CorrelationID) (authentication.TOTPCredentialView, error) {
+func (s *totpHTTPServiceStub) ConfirmEnrollment(_ context.Context, current authentication.TOTPSession, id, code string, _ audit.CorrelationID) (authentication.TOTPConfirmationResult, error) {
 	s.confirmCalls++
 	s.lastSession, s.lastID, s.lastCode = current, id, code
 	if s.err != nil {
-		return authentication.TOTPCredentialView{}, s.err
+		return authentication.TOTPConfirmationResult{}, s.err
 	}
-	return authentication.TOTPCredentialView{ID: "mfc_123e4567-e89b-42d3-a456-426614174502", CreatedAt: time.Unix(1, 0).UTC()}, nil
+	return authentication.TOTPConfirmationResult{ID: "mfc_123e4567-e89b-42d3-a456-426614174502", CreatedAt: time.Unix(1, 0).UTC(), RecoveryCodes: []string{"01234-56789-ABCDE-FGHJK-MNPQRS"}}, nil
 }
 
 func (s *totpHTTPServiceStub) Current(_ context.Context, current authentication.TOTPSession) (authentication.TOTPCredentialView, error) {
@@ -61,6 +63,24 @@ func (s *totpHTTPServiceStub) Remove(_ context.Context, current authentication.T
 	s.removeCalls++
 	s.lastSession = current
 	return s.err
+}
+
+func (s *totpHTTPServiceStub) StartReplacement(_ context.Context, current authentication.TOTPSession, code string, _ audit.CorrelationID) (authentication.TOTPEnrollmentResult, error) {
+	s.replacementStartCalls++
+	s.lastSession, s.lastCode = current, code
+	if s.err != nil {
+		return authentication.TOTPEnrollmentResult{}, s.err
+	}
+	return authentication.TOTPEnrollmentResult{EnrollmentID: "mfe_123e4567-e89b-42d3-a456-426614174505", Secret: "REPLACEMENTSECRET", OTPAuthURI: "otpauth://totp/replacement", ExpiresIn: 600}, nil
+}
+
+func (s *totpHTTPServiceStub) ConfirmReplacement(_ context.Context, current authentication.TOTPSession, id, code string, _ audit.CorrelationID) (authentication.TOTPConfirmationResult, error) {
+	s.replacementConfirmCalls++
+	s.lastSession, s.lastID, s.lastCode = current, id, code
+	if s.err != nil {
+		return authentication.TOTPConfirmationResult{}, s.err
+	}
+	return authentication.TOTPConfirmationResult{ID: "mfc_123e4567-e89b-42d3-a456-426614174506", CreatedAt: time.Unix(2, 0).UTC(), RecoveryCodes: []string{"01234-56789-ABCDE-FGHJK-MNPQRS"}}, nil
 }
 
 type totpCompletionStub struct {
@@ -202,6 +222,30 @@ func TestTOTPHTTPPendingCompletionUsesPendingAuthorityNotBearerSession(t *testin
 				t.Fatalf("status=%d calls before=%d after=%d body=%s", rr.Code, before, completion.calls, rr.Body.String())
 			}
 		})
+	}
+}
+
+func TestTOTPHTTPReplacementKeepsRecoveryProofInPOSTBody(t *testing.T) {
+	service := &totpHTTPServiceStub{}
+	h := totpHTTPFixture(service, &totpCompletionStub{})
+	recoveryCode := "01234-56789-ABCDE-FGHJK-MNPQRS"
+	rr := httptest.NewRecorder()
+	request := totpRequest(http.MethodPost, "/v1/mfa/totp/replacements", `{"recovery_code":"`+recoveryCode+`"}`, true)
+	h.ServeHTTP(rr, request)
+	if rr.Code != http.StatusCreated || service.replacementStartCalls != 1 || service.lastCode != recoveryCode || !strings.Contains(rr.Body.String(), "REPLACEMENTSECRET") {
+		t.Fatalf("start status=%d calls=%d code=%q body=%s", rr.Code, service.replacementStartCalls, service.lastCode, rr.Body.String())
+	}
+	if strings.Contains(request.URL.String(), recoveryCode) {
+		t.Fatalf("recovery code appeared in URL: %s", request.URL.String())
+	}
+
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, totpRequest(http.MethodPost, "/v1/mfa/totp/replacements/confirm", `{"enrollment_id":"mfe_123e4567-e89b-42d3-a456-426614174505","code":"123456"}`, true))
+	if rr.Code != http.StatusOK || service.replacementConfirmCalls != 1 || service.lastID != "mfe_123e4567-e89b-42d3-a456-426614174505" || service.lastCode != "123456" {
+		t.Fatalf("confirm status=%d calls=%d id=%q code=%q body=%s", rr.Code, service.replacementConfirmCalls, service.lastID, service.lastCode, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "recovery_codes") || strings.Contains(rr.Body.String(), "REPLACEMENTSECRET") {
+		t.Fatalf("confirmation response=%s", rr.Body.String())
 	}
 }
 
