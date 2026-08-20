@@ -4,7 +4,7 @@ package postgres
 
 import (
 	"context"
-	"crypto/sha256"
+	cryptosha256 "crypto/sha256"
 	"database/sql"
 	"errors"
 	"sync"
@@ -172,7 +172,7 @@ func seedTOTPCredential(t *testing.T, ctx context.Context, db *sql.DB, appID, us
 
 func seedPendingMFA(t *testing.T, ctx context.Context, db *sql.DB, appID, userID int64, publicID, token, proof string) (string, [32]byte) {
 	t.Helper()
-	tokenHash := sha256.Sum256([]byte(token))
+	tokenHash := cryptosha256.Sum256([]byte(token))
 	if _, err := db.ExecContext(ctx, `INSERT INTO pending_mfa_authentications(public_id,token_hash,application_instance_id,user_id,purpose,primary_method,primary_context,required_factor,created_at,expires_at) VALUES($1,$2,$3,$4,'authentication','password',$5,'totp',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP + INTERVAL '4 minutes')`, publicID, tokenHash[:], appID, userID, proof); err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func newTOTPFinalize(t *testing.T, pendingID string, tokenHash [32]byte, snapsho
 	if err != nil {
 		t.Fatal(err)
 	}
-	refresh := sha256.Sum256([]byte(refreshSeed))
+	refresh := cryptosha256.Sum256([]byte(refreshSeed))
 	now := time.Now().UTC()
 	return authentication.TOTPAuthenticationFinalize{
 		PendingPublicID: pendingID,
