@@ -30,7 +30,7 @@ func TestPasskeyMigrationUpgradesVersion17(t *testing.T) {
 	}
 	version17 := fstest.MapFS{}
 	for _, entry := range entries {
-		if entry.Name() == "00018_passkeys.sql" {
+		if entry.Name() == "00018_passkeys.sql" || entry.Name() == "00019_totp_mfa.sql" {
 			continue
 		}
 		data, err := fs.ReadFile(sources, entry.Name())
@@ -44,9 +44,9 @@ func TestPasskeyMigrationUpgradesVersion17(t *testing.T) {
 	}
 	assertMigrationState(t, ctx, pool, 17)
 	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
-		t.Fatalf("upgrade to 18: %v", err)
+		t.Fatalf("upgrade through current schema: %v", err)
 	}
-	assertMigrationState(t, ctx, pool, 18)
+	assertMigrationState(t, ctx, pool, 19)
 
 	app, err := applicationpostgres.New(pool).Create(ctx)
 	if err != nil {
