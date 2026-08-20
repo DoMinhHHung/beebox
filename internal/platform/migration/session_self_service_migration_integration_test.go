@@ -54,10 +54,15 @@ func TestSessionSelfServiceMigrationUpgradesExactVersion21AndAddsListIndex(t *te
 		t.Fatalf("predecessor session count=%d err=%v", sessions, err)
 	}
 
-	if _, err := db.ExecContext(ctx, `SET enable_seqscan=off`); err != nil {
+	conn, err := db.Conn(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
-	rows, err := db.QueryContext(ctx, `
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `SET enable_seqscan=off`); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := conn.QueryContext(ctx, `
 		EXPLAIN (COSTS OFF)
 		SELECT public_id FROM sessions
 		WHERE application_instance_id=(SELECT id FROM application_instances WHERE public_id='app_123e4567-e89b-42d3-a456-426614175101')
