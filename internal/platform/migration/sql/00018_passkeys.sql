@@ -82,5 +82,6 @@ CREATE TABLE passkey_attempts (
 );
 
 CREATE INDEX passkey_attempts_expiry_idx ON passkey_attempts(expires_at) WHERE consumed_at IS NULL;
+CREATE INDEX passkey_attempts_consumed_cleanup_idx ON passkey_attempts(consumed_at, expires_at) WHERE consumed_at IS NOT NULL;
 CREATE INDEX passkey_attempts_application_user_purpose_idx
     ON passkey_attempts(application_instance_id, user_id, purpose, created_at);
