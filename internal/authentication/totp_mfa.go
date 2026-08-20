@@ -46,13 +46,14 @@ type TOTPAuthenticationPersistence interface {
 
 func (s *TOTPService) CompletePendingAuthentication(
 	ctx context.Context,
+	expectedAppID applicationinstance.InternalID,
 	pendingPublicID string,
 	tokenHash [32]byte,
 	code string,
 	final TOTPAuthenticationFinalize,
 ) (TOTPAuthenticationResult, error) {
-	if s == nil || s.protocol == nil || s.protector == nil || s.now == nil || !s.protector.Enabled() || pendingPublicID == "" || tokenHash == ([32]byte{}) || code == "" || final.CorrelationID == (audit.CorrelationID{}) {
-		return TOTPAuthenticationResult{}, ErrTOTPInvalidCode
+	if s == nil || s.protocol == nil || s.protector == nil || s.now == nil || !s.protector.Enabled() || !expectedAppID.Valid() || pendingPublicID == "" || tokenHash == ([32]byte{}) || code == "" || final.CorrelationID == (audit.CorrelationID{}) {
+		return TOTPAuthenticationResult{}, ErrTOTPEnrollmentInvalid
 	}
 	persistence, ok := s.persistence.(TOTPAuthenticationPersistence)
 	if !ok {
@@ -63,7 +64,7 @@ func (s *TOTPService) CompletePendingAuthentication(
 		return TOTPAuthenticationResult{}, mapTOTPError(ctx, err)
 	}
 	now := s.now().UTC()
-	if snapshot.PendingPublicID != pendingPublicID || snapshot.TokenHash != tokenHash || !snapshot.ApplicationInstanceID.Valid() || !snapshot.UserID.Valid() || snapshot.PrimaryMethod == "" || snapshot.PrimaryContext == "" || snapshot.CredentialID == "" || !now.Before(snapshot.ExpiresAt.UTC()) {
+	if snapshot.PendingPublicID != pendingPublicID || snapshot.TokenHash != tokenHash || snapshot.ApplicationInstanceID != expectedAppID || !snapshot.UserID.Valid() || snapshot.PrimaryMethod == "" || snapshot.PrimaryContext == "" || snapshot.CredentialID == "" || !now.Before(snapshot.ExpiresAt.UTC()) {
 		return TOTPAuthenticationResult{}, ErrTOTPEnrollmentInvalid
 	}
 	secretRaw, err := s.protector.DecryptTOTP(TOTPSecretContext{
