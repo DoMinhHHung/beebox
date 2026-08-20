@@ -7,8 +7,9 @@ info:
     P2.1 passwordless email OTP, P2.2 phone-first signup plus verified-phone
     SMS OTP primary authentication, P2.3 headless social authentication,
     P2.4A explicit authenticated social account linking, P2.4B linked social
-    account listing/unlink, P2.5 passkey/WebAuthn primary authentication, and
-    P2.6 TOTP MFA and P2.7 recovery codes are implemented. BeeBox is not an OAuth or OpenID Connect authorization
+    account listing/unlink, P2.5 passkey/WebAuthn primary authentication,
+    P2.6 TOTP MFA, P2.7 recovery codes and P2.8 purpose-bound reverification
+    are implemented. BeeBox is not an OAuth or OpenID Connect authorization
     server. Public resource identifiers are opaque locators and never establish
     authorization by themselves.
 servers:
@@ -299,6 +300,51 @@ paths:
         '429': {$ref: '#/components/responses/RateLimited'}
         '503': {$ref: '#/components/responses/Unavailable'}
 
+  /v1/reverifications:
+    post:
+      operationId: createReverification
+      summary: Mint one purpose-specific reverification grant for a target session
+      description: >-
+        Requires the resolved publishable application, one exact allowed Origin and two
+        independently verified BeeBox authorities. The Authorization bearer identifies
+        the target session for the later sensitive mutation. proof_access_token identifies
+        an independently authenticated proof session; the proof session may differ from
+        the target session, but both must belong to the same exact application and user.
+        Both target and proof sessions must remain active. Proof freshness comes only from
+        server-trusted authentication evidence and has a ten-minute accepted proof-freshness
+        ceiling; target-session creation time and access/refresh rotation are not mutation
+        authority. When TOTP remains configured, configured TOTP requires TOTP MFA
+        provenance on the proof session; recovery_code provenance cannot mint generic
+        reverification while TOTP remains configured. Success returns a one-time,
+        purpose-bound and target-session-bound opaque grant. Expired, replayed,
+        wrong-purpose or wrong-target grants fail closed, as do revoked target/proof
+        authority and cross-user/cross-application proof. Public failures do not reveal
+        factor or account inventory. Grant and proof secrets are not logged, audited as
+        plaintext or emitted as metric labels.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ReverificationRequest'}
+      responses:
+        '201':
+          description: One-time reverification grant bound to the target session and requested purpose.
+          headers:
+            Cache-Control: {$ref: '#/components/headers/NoStore'}
+            X-Request-ID: {$ref: '#/components/headers/RequestID'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ReverificationGrant'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/ReverificationFailed'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
   /v1/social-auth/attempts:
     post:
       operationId: createSocialAuthAttempt
@@ -340,22 +386,20 @@ paths:
       operationId: createSocialLinkAttempt
       summary: Start explicit linking from an existing authenticated BeeBox session
       description: >-
-        Requires one publishable key, one exact allowed browser Origin, and one ordinary
-        BeeBox bearer access token. BeeBox resolves and persists the exact current
-        application, user, and session; the request cannot choose a user or session.
-        The initiating persisted session must still be active and its created_at must
-        be within the accepted ten-minute recent-authentication window. A fresh access
-        token produced by refreshing that same older session does not reset this
-        freshness evidence; an older session receives reverification_required and the
-        user may authenticate again to obtain a new ordinary session. The provider and
-        exact application-scoped allowlisted redirect are bound into one-time
-        purpose-separated server state. Provider email/profile data has no ownership
-        authority and provider tokens are never returned or retained by this API.
+        Requires one publishable key, one exact allowed browser Origin, the ordinary
+        BeeBox bearer identifying the exact target application/user/session, and a
+        one-time P2.8 reverification grant with purpose social_link. The grant is minted
+        only after independent fresh proof for the same application/user and is consumed
+        before link-attempt creation. The provider and exact application-scoped allowlisted
+        redirect are then bound into one-time purpose-separated server state. Provider
+        email/profile data has no ownership authority and provider tokens are never
+        returned or retained by this API.
       security:
         - publishableKey: []
           bearerAuth: []
       parameters:
         - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
       requestBody:
         required: true
         content:
@@ -415,29 +459,28 @@ paths:
       operationId: unlinkSocialLink
       summary: Unlink one social identity from the current BeeBox user
       description: >-
-        Requires the same exact application, Origin, bearer token, and current persisted
-        session binding as listing plus server-trusted recent authentication. Freshness
-        is derived from persisted session created_at and is accepted only while the
-        current time is less than created_at plus ten minutes; refreshing an access
-        token for that same older session does not renew freshness and returns
-        reverification_required. A syntactically valid link ID that is absent, already
-        removed, owned by another user, or belongs to another application returns the
-        same idempotent 204 response without revealing ownership. A real unlink is
+        Requires the exact application, Origin and target bearer used by listing plus a
+        one-time P2.8 grant with purpose social_unlink. Grant issuance requires fresh
+        independently authenticated proof for the same application/user; target session
+        age does not authorize unlink. A syntactically valid link ID that is absent,
+        already removed, owned by another user, or belongs to another application returns
+        the same idempotent 204 response without revealing ownership. A real unlink is
         rejected with 409 last_authentication_method when no currently usable sign-in or
         recovery path would remain. Password counts only with a verified email; email
-        OTP requires configured delivery and a verified email; phone OTP requires
-        enabled SMS and a verified phone; remaining social identities count only when
-        their provider is configured for the exact application; and an exact-scope
-        stored passkey counts as a usable primary authentication method. Existing
-        ordinary BeeBox sessions remain active. A successful unlink may conservatively
-        invalidate pending unexchanged social completion state and same-provider link
-        attempts. BeeBox removes only its ownership association and does not call
-        provider-side OAuth consent or token revocation APIs.
+        OTP requires configured delivery and a verified email; phone OTP requires enabled
+        SMS and a verified phone; remaining social identities count only when their
+        provider is configured for the exact application; and an exact-scope stored
+        passkey counts as a usable primary authentication method. Existing ordinary
+        BeeBox sessions remain active. A successful unlink may conservatively invalidate
+        pending unexchanged social completion state and same-provider link attempts.
+        BeeBox removes only its ownership association and does not call provider-side
+        OAuth consent or token revocation APIs.
       security:
         - publishableKey: []
           bearerAuth: []
       parameters:
         - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
         - {$ref: '#/components/parameters/SocialLinkID'}
       responses:
         '204':
@@ -529,16 +572,19 @@ paths:
       operationId: startTOTPEnrollment
       summary: Start one TOTP enrollment for the current user
       description: >-
-        Requires the exact current application, user and persisted session plus accepted
-        recent reverification. BeeBox generates a SHA-1, six-digit, 30-second TOTP secret,
-        returns its Base32 setup value and otpauth URI exactly once, and persists only an
-        AES-256-GCM envelope bound to purpose, application, user and credential. The
-        enrollment expires within ten minutes and cannot replace an active credential.
+        Requires the exact target application/user/session and a one-time P2.8 grant
+        with purpose totp_enroll. The grant is issued only from eligible fresh proof;
+        when TOTP is already configured, that proof must carry TOTP MFA provenance.
+        BeeBox generates a SHA-1, six-digit, 30-second TOTP secret, returns its Base32
+        setup value and otpauth URI exactly once, and persists only an AES-256-GCM
+        envelope bound to purpose, application, user and credential. The enrollment
+        expires within ten minutes and cannot replace an active credential.
       security:
         - publishableKey: []
           bearerAuth: []
       parameters:
         - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
       responses:
         '201':
           description: One-time TOTP setup material.
@@ -604,14 +650,18 @@ paths:
       operationId: removeTOTP
       summary: Remove the current user's active TOTP credential
       description: >-
-        Requires the exact current application, user and persisted session plus accepted
-        recent reverification. Removal is atomic with audit evidence and is denied when
-        it would strand the user without a usable primary authentication method.
+        Requires the exact target application/user/session plus one one-time P2.8 grant
+        with purpose totp_remove. Grant issuance requires eligible fresh proof and,
+        while TOTP is configured, TOTP MFA provenance; a recovery-code-authenticated
+        proof cannot mint generic removal authority. Removal is atomic with audit
+        evidence and is denied when it would strand the user without a usable primary
+        authentication method.
       security:
         - publishableKey: []
           bearerAuth: []
       parameters:
         - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
       responses:
         '204': {description: TOTP removed or already absent in the exact current scope.}
         '401': {$ref: '#/components/responses/InvalidSession'}
@@ -653,16 +703,18 @@ paths:
       operationId: startTOTPReplacement
       summary: Start dedicated TOTP replacement recovery
       description: >-
-        Requires the exact current application/user/session, a current primary-proof
-        session inside the accepted reverification boundary, and one unused recovery
-        code from the active set. The recovery code is consumed only by this dedicated
-        replacement operation. The old TOTP credential and remaining recovery set stay
-        active until the replacement credential is confirmed atomically.
+        Requires the exact target application/user/session, one one-time P2.8 grant with
+        purpose totp_replace minted from eligible primary proof with required TOTP
+        provenance, and one unused recovery code from the active set. The recovery code
+        is consumed only by this dedicated replacement operation and cannot mint generic
+        reverification. The old TOTP credential and remaining recovery set stay active
+        until the replacement credential is confirmed atomically.
       security:
         - publishableKey: []
           bearerAuth: []
       parameters:
         - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
       requestBody:
         required: true
         content:
@@ -734,15 +786,19 @@ paths:
       operationId: regenerateRecoveryCodes
       summary: Atomically replace the current recovery set
       description: >-
-        Requires exact current application/user/session reverification. Successful
-        regeneration atomically invalidates every prior unused code and returns exactly
-        ten independent 26-symbol Crockford Base32 codes once. At most three successful
-        regenerations are admitted per user/session per hour.
+        Requires the exact target application/user/session and one one-time P2.8 grant
+        with purpose recovery_regenerate. While TOTP remains configured the grant must
+        have been minted from fresh TOTP-proven proof; recovery-code provenance cannot
+        mint this generic reverification. Successful regeneration atomically invalidates
+        every prior unused code and returns exactly ten independent 26-symbol Crockford
+        Base32 codes once. At most three successful regenerations are admitted per
+        user/session per hour.
       security:
         - publishableKey: []
           bearerAuth: []
       parameters:
         - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
       responses:
         '200':
           description: New recovery codes shown exactly once.
@@ -786,18 +842,18 @@ paths:
       operationId: beginPasskeyRegistration
       summary: Start a passkey registration ceremony for the current user
       description: >-
-        Requires the exact current application, allowed Origin, ordinary BeeBox bearer
-        session, and server-trusted recent authentication. Recent authentication is
-        required for passkey registration and removal. BeeBox creates a one-time ceremony
-        bound to the exact application, user, session, Origin, RP ID and registration
-        purpose. The passkey private key remains authenticator-owned and is never sent to
-        BeeBox. WebAuthn request and response payloads are opaque JSON at the BeeBox
-        contract boundary.
+        Requires the exact target application/user/session, allowed Origin and one
+        one-time P2.8 grant with purpose passkey_register. BeeBox then creates a one-time
+        ceremony bound to the exact application, user, session, Origin, RP ID and
+        registration purpose. The passkey private key remains authenticator-owned and is
+        never sent to BeeBox. WebAuthn request and response payloads are opaque JSON at
+        the BeeBox contract boundary.
       security:
         - publishableKey: []
           bearerAuth: []
       parameters:
         - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
       responses:
         '201':
           description: Opaque WebAuthn creation options and one-time BeeBox ceremony locator.
@@ -876,8 +932,8 @@ paths:
         only inside that application and RP scope, updates verifier-owned credential state,
         atomically chooses either pending TOTP assurance or the ordinary BeeBox
         session/refresh verifier and appends required audit coherently. Replay, expiry,
-        cross-application substitution, wrong owner, wrong
-        challenge, wrong Origin/RP or malformed authenticator responses fail closed.
+        cross-application substitution, wrong owner, wrong challenge, wrong Origin/RP or
+        malformed authenticator responses fail closed.
       security: [{publishableKey: []}]
       parameters:
         - {$ref: '#/components/parameters/BrowserOrigin'}
@@ -926,17 +982,18 @@ paths:
       operationId: removePasskey
       summary: Remove one owned passkey
       description: >-
-        Requires exact current application/user/session ownership and recent authentication.
-        A pky_ locator never grants authority. Removal is rejected with
-        last_authentication_method when no other usable authentication path would remain;
-        an exact-scope remaining passkey may count as a primary method. Removal plus audit
-        is atomic. P2.5 does not classify a passkey as an MFA factor and does not bypass
-        configured MFA.
+        Requires exact target application/user/session ownership and one one-time P2.8
+        grant with purpose passkey_remove. A pky_ locator never grants authority.
+        Removal is rejected with last_authentication_method when no other usable
+        authentication path would remain; an exact-scope remaining passkey may count as
+        a primary method. Removal plus audit is atomic. P2.5 does not classify a passkey
+        as an MFA factor and does not bypass configured MFA.
       security:
         - publishableKey: []
           bearerAuth: []
       parameters:
         - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
         - {$ref: '#/components/parameters/PasskeyID'}
       responses:
         '204':
@@ -1114,6 +1171,18 @@ components:
       required: true
       schema: {type: string, format: uri}
       description: Browser origin that must be exactly allowed for the resolved application. Social authentication and social-link initiation additionally require it to equal redirect_url origin.
+    ReverificationGrantHeader:
+      name: X-BeeBox-Reverification
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 84
+        maxLength: 84
+      description: >-
+        Opaque one-time P2.8 grant. It must match the Authorization target session and
+        exact protected-operation purpose; replay, expiry or substitution fails closed.
+        Never place the grant in a URL, log, metric label or persistent browser storage.
     SocialProviderPath:
       name: provider
       in: path
@@ -1247,6 +1316,42 @@ components:
       properties:
         email: {type: string, format: email}
         password: {type: string}
+    ReverificationPurpose:
+      type: string
+      enum: [totp_enroll, totp_remove, totp_replace, recovery_regenerate, passkey_register, passkey_remove, social_link, social_unlink, session_revoke, session_revoke_others, sign_out_everywhere, identifier_add, identifier_remove, identifier_primary]
+      description: >-
+        BeeBox-owned operation vocabulary accepted by P2.8. Purpose values for later
+        Phase-2 session and identifier mutations are reserved by the runtime; this
+        document does not publish those routes until their checkpoints are implemented.
+    ReverificationRequest:
+      type: object
+      additionalProperties: false
+      required: [purpose, proof_access_token]
+      properties:
+        purpose: {$ref: '#/components/schemas/ReverificationPurpose'}
+        proof_access_token:
+          type: string
+          minLength: 1
+          writeOnly: true
+          description: >-
+            Independently authenticated BeeBox proof-session access token. It may name a
+            different session from Authorization but must resolve to the same exact
+            application/user and satisfy current fresh-proof/MFA-provenance requirements.
+    ReverificationGrant:
+      type: object
+      additionalProperties: false
+      required: [reverification_token, expires_at]
+      properties:
+        reverification_token:
+          type: string
+          minLength: 84
+          maxLength: 84
+          writeOnly: true
+          description: Opaque one-time purpose/target-session-bound grant; BeeBox persists only verifier material.
+        expires_at:
+          type: string
+          format: date-time
+          description: Server-selected expiry, never later than the accepted ten-minute proof window or either bound session's authority lifetime.
     SocialProvider:
       type: string
       enum: [google, apple, microsoft, github, gitlab, facebook, slack, discord, linkedin, x, tiktok]
@@ -1301,7 +1406,7 @@ components:
           type: integer
           minimum: 1
           maximum: 600
-          description: Actual bounded lifetime in seconds, capped by both the link-attempt TTL and the initiating session recent-authentication deadline.
+          description: Actual bounded lifetime in seconds for the one-time server-bound social-link attempt.
     LinkedSocialAccount:
       type: object
       additionalProperties: false
@@ -1673,6 +1778,14 @@ components:
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
+    ReverificationFailed:
+      description: >-
+        Reverification proof or grant is invalid, expired, replayed, wrong-purpose,
+        wrong-target, revoked, cross-scope or lacks required TOTP provenance. Protected
+        account/factor inventory and the specific failed binding are intentionally not exposed.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
     InvalidPasskeyProof:
       description: Passkey ceremony or authenticator proof is invalid, expired, replayed or outside the trusted application/origin/RP/credential ownership scope without exposing verifier detail.
       content:
@@ -1684,7 +1797,7 @@ components:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
     TOTPForbidden:
-      description: TOTP management returns origin_not_allowed for a disallowed Origin or reverification_required when accepted exact-session reverification evidence is missing or expired.
+      description: TOTP management returns origin_not_allowed for a disallowed Origin or reverification_required when the required purpose/target-bound one-time P2.8 grant is absent, invalid, expired, replayed or ineligible.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
@@ -1699,27 +1812,27 @@ components:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
     RecoveryForbidden:
-      description: Recovery management requires the exact current application/user/session and accepted reverification evidence.
+      description: Recovery management requires the exact target application/user/session and the matching one-time P2.8 reverification grant; protected factor inventory remains undisclosed.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
     PasskeyForbidden:
-      description: Passkey management returns origin_not_allowed for disallowed Origin or reverification_required when the exact persisted current session is outside the accepted recent-authentication window.
+      description: Passkey management returns origin_not_allowed for disallowed Origin or reverification_required when the matching purpose/target-bound one-time P2.8 grant is absent, invalid, expired or replayed.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
     SocialLinkUnauthorized:
-      description: Social-link initiation returns invalid_application for an invalid application credential or invalid_session for an invalid, revoked, expired, cross-application, or otherwise non-current BeeBox session.
+      description: Social-link initiation returns invalid_application for an invalid application credential or invalid_session for an invalid, revoked, expired, cross-application, or otherwise non-current BeeBox target session.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
     SocialLinkForbidden:
-      description: Social-link initiation returns origin_not_allowed for a disallowed Origin or reverification_required when the persisted initiating session is outside the accepted ten-minute recent-authentication window.
+      description: Social-link initiation returns origin_not_allowed for a disallowed Origin or reverification_required when the social_link purpose/target-bound one-time P2.8 grant is missing or invalid.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
     SocialAccountForbidden:
-      description: Social-account management returns origin_not_allowed for a disallowed Origin or reverification_required when unlink uses a persisted session outside the accepted ten-minute recent-authentication window. Listing does not require recent authentication.
+      description: Social-account management returns origin_not_allowed for a disallowed Origin or reverification_required when unlink lacks a valid social_unlink purpose/target-bound one-time P2.8 grant. Listing does not require recent authentication.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
