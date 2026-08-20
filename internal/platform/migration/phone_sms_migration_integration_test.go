@@ -26,7 +26,7 @@ func TestPhoneSMSMigrationUpgradesExisting00013SchemaAndPreservesLimiterVocabula
 		t.Fatal(err)
 	}
 	for _, entry := range entries {
-		if entry.Name() == "00014_phone_sms.sql" || entry.Name() == "00015_social_oauth.sql" || entry.Name() == "00016_social_account_linking.sql" || entry.Name() == "00017_social_account_management.sql" {
+		if entry.Name() == "00014_phone_sms.sql" || entry.Name() == "00015_social_oauth.sql" || entry.Name() == "00016_social_account_linking.sql" || entry.Name() == "00017_social_account_management.sql" || entry.Name() == "00018_passkeys.sql" {
 			continue
 		}
 		content, err := fs.ReadFile(sources, entry.Name())
@@ -42,7 +42,7 @@ func TestPhoneSMSMigrationUpgradesExisting00013SchemaAndPreservesLimiterVocabula
 	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
 		t.Fatalf("upgrade through current schema error = %v", err)
 	}
-	assertMigrationState(t, ctx, pool, 17)
+	assertMigrationState(t, ctx, pool, 18)
 
 	db := pool.OpenSQLDB()
 	defer db.Close()
@@ -82,7 +82,7 @@ func TestPhoneSMSMigrationFreshSchemaOwnershipUniquenessAndChallengeConstraints(
 	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
 		t.Fatal(err)
 	}
-	assertMigrationState(t, ctx, pool, 17)
+	assertMigrationState(t, ctx, pool, 18)
 	db := pool.OpenSQLDB()
 	defer db.Close()
 
