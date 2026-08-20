@@ -5,10 +5,11 @@ info:
   description: >-
     BeeBox-owned B2C authentication contract. Phase 1 email/password behavior,
     P2.1 passwordless email OTP, P2.2 phone-first signup plus verified-phone
-    SMS OTP primary authentication, P2.3 headless social authentication, and
-    P2.4A explicit authenticated social account linking are implemented. BeeBox
-    is not an OAuth or OpenID Connect authorization server. Public resource
-    identifiers are opaque locators and never establish authorization by themselves.
+    SMS OTP primary authentication, P2.3 headless social authentication,
+    P2.4A explicit authenticated social account linking, and P2.4B linked social
+    account listing and unlink are implemented. BeeBox is not an OAuth or OpenID
+    Connect authorization server. Public resource identifiers are opaque locators
+    and never establish authorization by themselves.
 servers:
   - url: /
 paths:
@@ -372,6 +373,80 @@ paths:
         '429': {$ref: '#/components/responses/RateLimited'}
         '503': {$ref: '#/components/responses/Unavailable'}
 
+  /v1/social-links:
+    get:
+      operationId: listSocialLinks
+      summary: List social identities linked to the current BeeBox user
+      description: >-
+        Requires one publishable key, one exact allowed Origin, and one ordinary
+        BeeBox bearer access token whose current persisted session belongs to the exact
+        resolved application and user. Listing does not require recent authentication.
+        Results are bounded and cursor-paginated in stable created_at plus opaque link-ID
+        order. Only the BeeBox-owned social-link ID, provider key, and creation time are
+        returned; provider subject, provider email/profile, provider credentials,
+        internal database IDs, and unnecessary BeeBox user identifiers are absent.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/SocialLinkLimit'}
+        - {$ref: '#/components/parameters/SocialLinkCursor'}
+      responses:
+        '200':
+          description: Bounded page of linked social identities owned by the current application user.
+          headers:
+            Cache-Control: {$ref: '#/components/headers/NoStore'}
+            X-Request-ID: {$ref: '#/components/headers/RequestID'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/LinkedSocialAccountPage'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/social-links/{social_link_id}:
+    delete:
+      operationId: unlinkSocialLink
+      summary: Unlink one social identity from the current BeeBox user
+      description: >-
+        Requires the same exact application, Origin, bearer token, and current persisted
+        session binding as listing plus server-trusted recent authentication. Freshness
+        is derived from persisted session created_at and is accepted only while the
+        current time is less than created_at plus ten minutes; refreshing an access
+        token for that same older session does not renew freshness and returns
+        reverification_required. A syntactically valid link ID that is absent, already
+        removed, owned by another user, or belongs to another application returns the
+        same idempotent 204 response without revealing ownership. A real unlink is
+        rejected with 409 last_authentication_method when no currently usable sign-in or
+        recovery path would remain. Password counts only with a verified email; email
+        OTP requires configured delivery and a verified email; phone OTP requires
+        enabled SMS and a verified phone; remaining social identities count only when
+        their provider is configured for the exact application. Unimplemented MFA,
+        passkey, and recovery methods do not count. Existing ordinary BeeBox sessions
+        remain active. A successful unlink may conservatively invalidate pending
+        unexchanged social completion state and same-provider link attempts. BeeBox
+        removes only its ownership association and does not call provider-side OAuth
+        consent or token revocation APIs.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/SocialLinkID'}
+      responses:
+        '204':
+          description: Link removed, already absent, not owned by the current user, or outside the current application scope; response is intentionally anti-enumerating and has no body.
+          headers:
+            Cache-Control: {$ref: '#/components/headers/NoStore'}
+            X-Request-ID: {$ref: '#/components/headers/RequestID'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/SocialAccountForbidden'}
+        '409': {$ref: '#/components/responses/LastAuthenticationMethod'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
   /v1/social-auth/callback/{provider}:
     get:
       operationId: completeSocialProviderCallback
@@ -618,6 +693,26 @@ components:
       required: true
       schema: {$ref: '#/components/schemas/SocialProvider'}
       description: Fixed BeeBox social provider key. Callback path alone never selects application or ownership authority.
+    SocialLinkID:
+      name: social_link_id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^sli_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+      description: Opaque BeeBox social-link locator; possession is never authorization and ownership is resolved only from the current application/user session.
+    SocialLinkLimit:
+      name: limit
+      in: query
+      required: false
+      schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      description: Maximum number of linked social identities returned in one bounded page.
+    SocialLinkCursor:
+      name: cursor
+      in: query
+      required: false
+      schema: {type: string, minLength: 1, maxLength: 512}
+      description: Opaque pagination state for stable created_at plus public-ID ordering; it conveys no authority.
     SessionID:
       name: session_id
       in: path
@@ -720,7 +815,7 @@ components:
     SocialProvider:
       type: string
       enum: [google, apple, microsoft, github, gitlab, facebook, slack, discord, linkedin, x, tiktok]
-      description: Fixed P2.3/P2.4A provider vocabulary. Provider-specific wire models are not part of the BeeBox public contract.
+      description: Fixed P2.3/P2.4A/P2.4B provider vocabulary. Provider-specific wire models are not part of the BeeBox public contract.
     SocialAuthAttemptRequest:
       type: object
       additionalProperties: false
@@ -772,6 +867,30 @@ components:
           minimum: 1
           maximum: 600
           description: Actual bounded lifetime in seconds, capped by both the link-attempt TTL and the initiating session recent-authentication deadline.
+    LinkedSocialAccount:
+      type: object
+      additionalProperties: false
+      required: [id, provider, created_at]
+      properties:
+        id:
+          type: string
+          pattern: '^sli_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+          description: Opaque BeeBox-owned social-link public resource ID.
+        provider: {$ref: '#/components/schemas/SocialProvider'}
+        created_at: {type: string, format: date-time}
+    LinkedSocialAccountPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items: {$ref: '#/components/schemas/LinkedSocialAccount'}
+        next_cursor:
+          type: string
+          maxLength: 512
+          description: Opaque pagination state; omitted when no later page exists.
     SocialAuthExchangeRequest:
       type: object
       additionalProperties: false
@@ -910,6 +1029,16 @@ components:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
     SocialLinkForbidden:
       description: Social-link initiation returns origin_not_allowed for a disallowed Origin or reverification_required when the persisted initiating session is outside the accepted ten-minute recent-authentication window.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    SocialAccountForbidden:
+      description: Social-account management returns origin_not_allowed for a disallowed Origin or reverification_required when unlink uses a persisted session outside the accepted ten-minute recent-authentication window. Listing does not require recent authentication.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    LastAuthenticationMethod:
+      description: Unlink is rejected with code last_authentication_method because at least one currently usable authentication method must remain; detailed method inventory is intentionally not exposed.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
