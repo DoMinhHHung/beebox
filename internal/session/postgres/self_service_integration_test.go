@@ -4,6 +4,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"sync"
 	"testing"
@@ -24,16 +25,26 @@ func TestSessionSelfServiceScopesPaginationAndRevocation(t *testing.T) {
 	}
 	apps := applicationpostgres.New(pool)
 	appA, err := apps.Create(ctx)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	appB, err := apps.Create(ctx)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	ids := identitypostgres.New(pool)
 	userA, err := ids.Create(ctx, appA.InternalID)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	userB, err := ids.Create(ctx, appA.InternalID)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	userC, err := ids.Create(ctx, appB.InternalID)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	db := pool.OpenSQLDB()
 	defer db.Close()
@@ -57,12 +68,16 @@ func TestSessionSelfServiceScopesPaginationAndRevocation(t *testing.T) {
 
 	store := New(pool)
 	first, err := store.ListUserSessions(ctx, appA.InternalID, userA.InternalID, 2, nil)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(first) != 2 || first[0].PublicID != currentID || first[1].PublicID != ownA {
 		t.Fatalf("first page=%+v", first)
 	}
 	second, err := store.ListUserSessions(ctx, appA.InternalID, userA.InternalID, 2, &session.Cursor{CreatedAt: first[1].CreatedAt, PublicID: first[1].PublicID})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(second) != 1 || second[0].PublicID != ownB {
 		t.Fatalf("second page=%+v", second)
 	}
@@ -77,11 +92,17 @@ func TestSessionSelfServiceScopesPaginationAndRevocation(t *testing.T) {
 	}
 	assertSessionRevoked(t, ctx, db, foreignApp, false)
 
-	if err := store.RevokeUserSession(ctx, current, ownA, mustCorrelation(t)); err != nil { t.Fatal(err) }
-	if err := store.RevokeUserSession(ctx, current, ownA, mustCorrelation(t)); err != nil { t.Fatal(err) }
+	if err := store.RevokeUserSession(ctx, current, ownA, mustCorrelation(t)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RevokeUserSession(ctx, current, ownA, mustCorrelation(t)); err != nil {
+		t.Fatal(err)
+	}
 	assertSessionRevoked(t, ctx, db, ownA, true)
 
-	if err := store.RevokeOtherUserSessions(ctx, current, mustCorrelation(t)); err != nil { t.Fatal(err) }
+	if err := store.RevokeOtherUserSessions(ctx, current, mustCorrelation(t)); err != nil {
+		t.Fatal(err)
+	}
 	assertSessionRevoked(t, ctx, db, currentID, false)
 	assertSessionRevoked(t, ctx, db, ownB, true)
 	assertSessionRevoked(t, ctx, db, foreignSameApp, false)
@@ -92,45 +113,59 @@ func TestSessionSelfServiceConcurrentMutationsConvergeAndRefreshFails(t *testing
 	pool := openPool(t, isolatedDatabaseURL(t, "beebox_session_self_service_concurrency"))
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := migration.Up(ctx, pool.OpenSQLDB()); err != nil { t.Fatal(err) }
+	if err := migration.Up(ctx, pool.OpenSQLDB()); err != nil {
+		t.Fatal(err)
+	}
 	app, err := applicationpostgres.New(pool).Create(ctx)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	user, err := identitypostgres.New(pool).Create(ctx, app.InternalID)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now().UTC()
 	currentID := "ses_60000000-0000-4000-8000-000000000006"
 	targetID := "ses_70000000-0000-4000-8000-000000000007"
 	db := pool.OpenSQLDB()
 	defer db.Close()
 	for _, id := range []string{currentID, targetID} {
-		if _, err := db.ExecContext(ctx, `INSERT INTO sessions(public_id,application_instance_id,user_id,idle_expires_at,expires_at) VALUES($1,$2,$3,$4,$5)`, id, int64(app.InternalID), int64(user.InternalID), now.Add(time.Hour), now.Add(2*time.Hour)); err != nil { t.Fatal(err) }
+		if _, err := db.ExecContext(ctx, `INSERT INTO sessions(public_id,application_instance_id,user_id,idle_expires_at,expires_at) VALUES($1,$2,$3,$4,$5)`, id, int64(app.InternalID), int64(user.InternalID), now.Add(time.Hour), now.Add(2*time.Hour)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	refresh := "refresh-self-service-test"
 	refreshHash := session.HashRefreshSecret(refresh)
-	if _, err := db.ExecContext(ctx, `INSERT INTO session_refresh_credentials(session_id,verifier_hash) SELECT id,$2 FROM sessions WHERE public_id=$1`, targetID, refreshHash[:]); err != nil { t.Fatal(err) }
+	if _, err := db.ExecContext(ctx, `INSERT INTO session_refresh_credentials(session_id,verifier_hash) SELECT id,$2 FROM sessions WHERE public_id=$1`, targetID, refreshHash[:]); err != nil {
+		t.Fatal(err)
+	}
 	store := New(pool)
 	current := session.Record{PublicID: currentID, ApplicationInstanceID: app.InternalID, UserInternalID: user.InternalID, IdleExpiresAt: now.Add(time.Hour), ExpiresAt: now.Add(2*time.Hour)}
 
 	var wg sync.WaitGroup
 	errs := make(chan error, 8)
 	for i := 0; i < 4; i++ {
+		correlation := mustCorrelation(t)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			errs <- store.RevokeUserSession(ctx, current, targetID, mustCorrelation(t))
+			errs <- store.RevokeUserSession(ctx, current, targetID, correlation)
 		}()
 	}
 	for i := 0; i < 4; i++ {
+		correlation := mustCorrelation(t)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			errs <- store.RevokeOtherUserSessions(ctx, current, mustCorrelation(t))
+			errs <- store.RevokeOtherUserSessions(ctx, current, correlation)
 		}()
 	}
 	wg.Wait()
 	close(errs)
 	for err := range errs {
-		if err != nil { t.Fatalf("concurrent revoke error=%v", err) }
+		if err != nil {
+			t.Fatalf("concurrent revoke error=%v", err)
+		}
 	}
 	assertSessionRevoked(t, ctx, db, currentID, false)
 	assertSessionRevoked(t, ctx, db, targetID, true)
@@ -141,7 +176,8 @@ func TestSessionSelfServiceConcurrentMutationsConvergeAndRefreshFails(t *testing
 
 	results := make(chan error, 2)
 	for i := 0; i < 2; i++ {
-		go func() { results <- store.RevokeAllUserSessions(ctx, current, mustCorrelation(t)) }()
+		correlation := mustCorrelation(t)
+		go func() { results <- store.RevokeAllUserSessions(ctx, current, correlation) }()
 	}
 	first, second := <-results, <-results
 	if first != nil && second != nil {
@@ -159,21 +195,31 @@ func TestSessionSelfServiceAuditFailureRollsBackRevocation(t *testing.T) {
 	pool := openPool(t, isolatedDatabaseURL(t, "beebox_session_self_service_audit"))
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := migration.Up(ctx, pool.OpenSQLDB()); err != nil { t.Fatal(err) }
+	if err := migration.Up(ctx, pool.OpenSQLDB()); err != nil {
+		t.Fatal(err)
+	}
 	app, err := applicationpostgres.New(pool).Create(ctx)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	user, err := identitypostgres.New(pool).Create(ctx, app.InternalID)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now().UTC()
 	currentID := "ses_80000000-0000-4000-8000-000000000008"
 	targetID := "ses_90000000-0000-4000-8000-000000000009"
 	db := pool.OpenSQLDB()
 	defer db.Close()
 	for _, id := range []string{currentID, targetID} {
-		if _, err := db.ExecContext(ctx, `INSERT INTO sessions(public_id,application_instance_id,user_id,idle_expires_at,expires_at) VALUES($1,$2,$3,$4,$5)`, id, int64(app.InternalID), int64(user.InternalID), now.Add(time.Hour), now.Add(2*time.Hour)); err != nil { t.Fatal(err) }
+		if _, err := db.ExecContext(ctx, `INSERT INTO sessions(public_id,application_instance_id,user_id,idle_expires_at,expires_at) VALUES($1,$2,$3,$4,$5)`, id, int64(app.InternalID), int64(user.InternalID), now.Add(time.Hour), now.Add(2*time.Hour)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	correlation := mustCorrelation(t)
-	if _, err := db.ExecContext(ctx, `INSERT INTO audit_events(application_instance_id,actor_kind,actor_user_id,subject_user_id,action,resource_category,outcome,correlation_id,source) VALUES($1,'user',$2,$2,'test.reserved','session','success',$3,'test')`, int64(app.InternalID), int64(user.InternalID), correlation[:]); err != nil { t.Fatal(err) }
+	if _, err := db.ExecContext(ctx, `INSERT INTO audit_events(application_instance_id,actor_kind,actor_user_id,subject_user_id,action,resource_category,outcome,correlation_id,source) VALUES($1,'user',$2,$2,'test.reserved','session','success',$3,'test')`, int64(app.InternalID), int64(user.InternalID), correlation[:]); err != nil {
+		t.Fatal(err)
+	}
 	current := session.Record{PublicID: currentID, ApplicationInstanceID: app.InternalID, UserInternalID: user.InternalID, IdleExpiresAt: now.Add(time.Hour), ExpiresAt: now.Add(2*time.Hour)}
 	if err := New(pool).RevokeUserSession(ctx, current, targetID, correlation); !errors.Is(err, session.ErrSessionUnavailable) {
 		t.Fatalf("audit failure error=%v", err)
@@ -181,9 +227,13 @@ func TestSessionSelfServiceAuditFailureRollsBackRevocation(t *testing.T) {
 	assertSessionRevoked(t, ctx, db, targetID, false)
 }
 
-func assertSessionRevoked(t *testing.T, ctx context.Context, db interface{ QueryRowContext(context.Context, string, ...any) *sql.Row }, publicID string, want bool) {
+func assertSessionRevoked(t *testing.T, ctx context.Context, db *sql.DB, publicID string, want bool) {
 	t.Helper()
 	var revoked bool
-	if err := db.QueryRowContext(ctx, `SELECT revoked_at IS NOT NULL FROM sessions WHERE public_id=$1`, publicID).Scan(&revoked); err != nil { t.Fatal(err) }
-	if revoked != want { t.Fatalf("session %s revoked=%v want=%v", publicID, revoked, want) }
+	if err := db.QueryRowContext(ctx, `SELECT revoked_at IS NOT NULL FROM sessions WHERE public_id=$1`, publicID).Scan(&revoked); err != nil {
+		t.Fatal(err)
+	}
+	if revoked != want {
+		t.Fatalf("session %s revoked=%v want=%v", publicID, revoked, want)
+	}
 }
