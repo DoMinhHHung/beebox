@@ -3,8 +3,7 @@
 package postgres
 
 import (
-	"context"
-	"crypto/sha256"
+	cryptosha256 "crypto/sha256"
 	"database/sql"
 	"errors"
 	"reflect"
@@ -98,7 +97,7 @@ func TestSocialLinkAttemptCreationAndUnlinkHaveSerializableOutcome(t *testing.T)
 	target := insertExternalIdentity(t, ctx, db, app.InternalID, user.InternalID, "github", "target", time.Now().UTC())
 	addVerifiedEmail(t, ctx, db, app.InternalID, int64(user.InternalID))
 	store := New(pool)
-	state := sha256.Sum256([]byte("create-unlink-state"))
+	state := cryptosha256.Sum256([]byte("create-unlink-state"))
 	write := authentication.SocialLinkAttemptWrite{
 		ApplicationInstanceID:  app.InternalID,
 		UserID:                 user.InternalID,
@@ -165,7 +164,7 @@ func TestSocialProofAndUnlinkNeverReauthenticateFormerOwner(t *testing.T) {
 	target := insertExternalIdentity(t, ctx, db, app.InternalID, user.InternalID, "github", "proof-subject", time.Now().UTC())
 	addVerifiedEmail(t, ctx, db, app.InternalID, int64(user.InternalID))
 	store := New(pool)
-	completion := sha256.Sum256([]byte("proof-completion"))
+	completion := cryptosha256.Sum256([]byte("proof-completion"))
 	correlationProof, _ := audit.NewCorrelationID()
 	proof := authentication.SocialProofFinalize{
 		ApplicationInstanceID: app.InternalID,
@@ -227,13 +226,13 @@ func TestSocialCompletionExchangeAndUnlinkLinearize(t *testing.T) {
 	currentSession, created := insertSocialLinkSession(t, ctx, db, app.InternalID, user.InternalID, time.Minute)
 	target := insertExternalIdentity(t, ctx, db, app.InternalID, user.InternalID, "github", "exchange-subject", time.Now().UTC())
 	addVerifiedEmail(t, ctx, db, app.InternalID, int64(user.InternalID))
-	codeHash := sha256.Sum256([]byte("exchange-code"))
+	codeHash := cryptosha256.Sum256([]byte("exchange-code"))
 	mustExec(t, ctx, db, `INSERT INTO social_auth_completion_grants(application_instance_id,user_id,code_hash,client_code_challenge,expires_at) VALUES($1,$2,$3,$4,CURRENT_TIMESTAMP+INTERVAL '5 minutes')`, int64(app.InternalID), int64(user.InternalID), codeHash[:], crossFlowChallenge)
 	newSession, err := session.NewPublicID()
 	if err != nil {
 		t.Fatal(err)
 	}
-	refresh := sha256.Sum256([]byte("exchange-refresh"))
+	refresh := cryptosha256.Sum256([]byte("exchange-refresh"))
 	correlationExchange, _ := audit.NewCorrelationID()
 	final := authentication.SocialCompletionFinalize{
 		ApplicationInstanceID: app.InternalID,
@@ -311,7 +310,7 @@ func TestLastMethodDenialPreservesPendingSecurityStateAndAuditIsMinimized(t *tes
 	sessionID, created := insertSocialLinkSession(t, ctx, db, app.InternalID, user.InternalID, time.Minute)
 	target := insertExternalIdentity(t, ctx, db, app.InternalID, user.InternalID, "github", "secret-provider-subject", time.Now().UTC())
 	store := New(pool)
-	state := sha256.Sum256([]byte("denial-link-state"))
+	state := cryptosha256.Sum256([]byte("denial-link-state"))
 	ciphertext := []byte("ciphertext-must-survive-denial")
 	if err := store.CreateSocialLinkAttempt(ctx, authentication.SocialLinkAttemptWrite{
 		ApplicationInstanceID:  app.InternalID,
@@ -327,7 +326,7 @@ func TestLastMethodDenialPreservesPendingSecurityStateAndAuditIsMinimized(t *tes
 	}); err != nil {
 		t.Fatal(err)
 	}
-	completion := sha256.Sum256([]byte("denial-completion"))
+	completion := cryptosha256.Sum256([]byte("denial-completion"))
 	mustExec(t, ctx, db, `INSERT INTO social_auth_completion_grants(application_instance_id,user_id,code_hash,client_code_challenge,expires_at) VALUES($1,$2,$3,$4,CURRENT_TIMESTAMP+INTERVAL '5 minutes')`, int64(app.InternalID), int64(user.InternalID), completion[:], crossFlowChallenge)
 	correlation, _ := audit.NewCorrelationID()
 	err := store.UnlinkSocialAccount(ctx, socialAccountSession(app, user.InternalID, sessionID, created), target, authentication.SocialMethodAvailability{}, correlation)
@@ -369,7 +368,7 @@ func TestSocialUnlinkAuditFailureRollsBackAllSuccessSideMutation(t *testing.T) {
 	target := insertExternalIdentity(t, ctx, db, app.InternalID, user.InternalID, "github", "audit-subject", time.Now().UTC())
 	addVerifiedEmail(t, ctx, db, app.InternalID, int64(user.InternalID))
 	store := New(pool)
-	state := sha256.Sum256([]byte("audit-link-state"))
+	state := cryptosha256.Sum256([]byte("audit-link-state"))
 	ciphertext := []byte("audit-pkce")
 	if err := store.CreateSocialLinkAttempt(ctx, authentication.SocialLinkAttemptWrite{
 		ApplicationInstanceID:  app.InternalID,
@@ -385,7 +384,7 @@ func TestSocialUnlinkAuditFailureRollsBackAllSuccessSideMutation(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	completion := sha256.Sum256([]byte("audit-completion"))
+	completion := cryptosha256.Sum256([]byte("audit-completion"))
 	mustExec(t, ctx, db, `INSERT INTO social_auth_completion_grants(application_instance_id,user_id,code_hash,client_code_challenge,expires_at) VALUES($1,$2,$3,$4,CURRENT_TIMESTAMP+INTERVAL '5 minutes')`, int64(app.InternalID), int64(user.InternalID), completion[:], crossFlowChallenge)
 	mustExec(t, ctx, db, `CREATE FUNCTION reject_social_unlink_success_audit() RETURNS trigger LANGUAGE plpgsql AS $$
 		BEGIN
