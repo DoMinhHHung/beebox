@@ -62,7 +62,7 @@ func (s *Store) UnlinkSocialAccount(ctx context.Context, current authentication.
 	defer func() { _ = tx.Rollback() }()
 
 	var lockedUser int64
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE application_instance_id=$1 AND id=$2 FOR UPDATE`, int64(current.ApplicationInstanceID), int64(current.UserID)).Scan(&lockedUser); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE application_instance_id=$1 AND id=$2 FOR NO KEY UPDATE`, int64(current.ApplicationInstanceID), int64(current.UserID)).Scan(&lockedUser); err != nil {
 		return authentication.ErrSocialAccountPersistence
 	}
 
