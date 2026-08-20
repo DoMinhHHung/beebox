@@ -53,8 +53,11 @@ type selfServiceStore interface {
 }
 
 func (s *Service) ListSessions(ctx context.Context, appID applicationinstance.InternalID, applicationPublicID, accessToken string, limit int, cursor string) (Page, error) {
+	if s == nil {
+		return Page{}, ErrSessionUnavailable
+	}
 	store, ok := s.store.(selfServiceStore)
-	if s == nil || !ok {
+	if !ok {
 		return Page{}, ErrSessionUnavailable
 	}
 	current, err := s.Current(ctx, appID, applicationPublicID, accessToken)
@@ -99,8 +102,11 @@ func (s *Service) ListSessions(ctx context.Context, appID applicationinstance.In
 }
 
 func (s *Service) RevokeOwnSession(ctx context.Context, appID applicationinstance.InternalID, applicationPublicID, accessToken, selectedPublicID string, correlationID audit.CorrelationID) (bool, error) {
+	if s == nil {
+		return false, ErrSessionInvalidRequest
+	}
 	store, ok := s.store.(selfServiceStore)
-	if s == nil || !ok || !ValidPublicID(selectedPublicID) || correlationID == (audit.CorrelationID{}) {
+	if !ok || !ValidPublicID(selectedPublicID) || correlationID == (audit.CorrelationID{}) {
 		return false, ErrSessionInvalidRequest
 	}
 	current, err := s.Current(ctx, appID, applicationPublicID, accessToken)
@@ -117,8 +123,11 @@ func (s *Service) RevokeOwnSession(ctx context.Context, appID applicationinstanc
 }
 
 func (s *Service) RevokeOtherSessions(ctx context.Context, appID applicationinstance.InternalID, applicationPublicID, accessToken string, correlationID audit.CorrelationID) error {
+	if s == nil {
+		return ErrSessionInvalidRequest
+	}
 	store, ok := s.store.(selfServiceStore)
-	if s == nil || !ok || correlationID == (audit.CorrelationID{}) {
+	if !ok || correlationID == (audit.CorrelationID{}) {
 		return ErrSessionInvalidRequest
 	}
 	current, err := s.Current(ctx, appID, applicationPublicID, accessToken)
@@ -132,8 +141,11 @@ func (s *Service) RevokeOtherSessions(ctx context.Context, appID applicationinst
 }
 
 func (s *Service) SignOutEverywhere(ctx context.Context, appID applicationinstance.InternalID, applicationPublicID, accessToken string, correlationID audit.CorrelationID) error {
+	if s == nil {
+		return ErrSessionInvalidRequest
+	}
 	store, ok := s.store.(selfServiceStore)
-	if s == nil || !ok || correlationID == (audit.CorrelationID{}) {
+	if !ok || correlationID == (audit.CorrelationID{}) {
 		return ErrSessionInvalidRequest
 	}
 	current, err := s.Current(ctx, appID, applicationPublicID, accessToken)
