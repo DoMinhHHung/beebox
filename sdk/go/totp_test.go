@@ -18,8 +18,8 @@ func TestTOTPSDKLifecycleUsesTrustedHeadersAndExactRoutes(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method + " " + r.URL.Path {
 		case "POST /v1/mfa/totp/enrollments":
-			if r.Header.Get("Authorization") != "Bearer access" {
-				t.Fatalf("authorization=%q", r.Header.Get("Authorization"))
+			if r.Header.Get("Authorization") != "Bearer access" || r.Header.Get(ReverificationHeader) != "reverify" {
+				t.Fatalf("headers=%v", r.Header)
 			}
 			_, _ = w.Write([]byte(`{"enrollment_id":"mfe_test","secret":"SETUPSECRET","otpauth_uri":"otpauth://totp/test","expires_in":600}`))
 		case "POST /v1/mfa/totp/enrollments/confirm":
@@ -69,13 +69,13 @@ func TestTOTPSDKLifecycleUsesTrustedHeadersAndExactRoutes(t *testing.T) {
 			}
 			_, _ = w.Write([]byte(`{"available":true,"remaining":8}`))
 		case "POST /v1/mfa/recovery-codes/regenerate":
-			if r.Header.Get("Authorization") != "Bearer access" {
-				t.Fatalf("authorization=%q", r.Header.Get("Authorization"))
+			if r.Header.Get("Authorization") != "Bearer access" || r.Header.Get(ReverificationHeader) != "reverify" {
+				t.Fatalf("headers=%v", r.Header)
 			}
 			_, _ = w.Write([]byte(`{"recovery_codes":["01234-56789-ABCDE-FGHJK-MNPQRS"]}`))
 		case "POST /v1/mfa/totp/replacements":
-			if r.Header.Get("Authorization") != "Bearer access" {
-				t.Fatalf("authorization=%q", r.Header.Get("Authorization"))
+			if r.Header.Get("Authorization") != "Bearer access" || r.Header.Get(ReverificationHeader) != "reverify" {
+				t.Fatalf("headers=%v", r.Header)
 			}
 			var body map[string]string
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -98,8 +98,8 @@ func TestTOTPSDKLifecycleUsesTrustedHeadersAndExactRoutes(t *testing.T) {
 			}
 			_, _ = w.Write([]byte(`{"id":"mfc_replacement","created_at":"2026-08-20T00:00:00Z","recovery_codes":["ABCDE-FGHJK-MNPQR-STVWXYZ-012345"]}`))
 		case "DELETE /v1/mfa/totp":
-			if r.Header.Get("Authorization") != "Bearer access" {
-				t.Fatalf("authorization=%q", r.Header.Get("Authorization"))
+			if r.Header.Get("Authorization") != "Bearer access" || r.Header.Get(ReverificationHeader) != "reverify" {
+				t.Fatalf("headers=%v", r.Header)
 			}
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -113,7 +113,7 @@ func TestTOTPSDKLifecycleUsesTrustedHeadersAndExactRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	if enrollment, err := client.StartTOTPEnrollment(ctx, "https://app.example", "access"); err != nil || enrollment.Secret != "SETUPSECRET" {
+	if enrollment, err := client.StartTOTPEnrollment(ctx, "https://app.example", "access", "reverify"); err != nil || enrollment.Secret != "SETUPSECRET" {
 		t.Fatalf("enrollment=%+v err=%v", enrollment, err)
 	}
 	if credential, err := client.ConfirmTOTPEnrollment(ctx, "https://app.example", "access", "mfe_test", "123456"); err != nil || credential.ID != "mfc_test" || len(credential.RecoveryCodes) != 1 {
@@ -131,16 +131,16 @@ func TestTOTPSDKLifecycleUsesTrustedHeadersAndExactRoutes(t *testing.T) {
 	if state, err := client.RecoveryCodeState(ctx, "https://app.example", "access"); err != nil || !state.Available || state.Remaining != 8 {
 		t.Fatalf("recovery state=%+v err=%v", state, err)
 	}
-	if set, err := client.RegenerateRecoveryCodes(ctx, "https://app.example", "access"); err != nil || len(set.RecoveryCodes) != 1 {
+	if set, err := client.RegenerateRecoveryCodes(ctx, "https://app.example", "access", "reverify"); err != nil || len(set.RecoveryCodes) != 1 {
 		t.Fatalf("recovery set=%+v err=%v", set, err)
 	}
-	if enrollment, err := client.StartTOTPReplacement(ctx, "https://app.example", "access", "01234-56789-ABCDE-FGHJK-MNPQRS"); err != nil || enrollment.EnrollmentID != "mfe_replacement" || enrollment.Secret != "REPLACEMENTSECRET" {
+	if enrollment, err := client.StartTOTPReplacement(ctx, "https://app.example", "access", "reverify", "01234-56789-ABCDE-FGHJK-MNPQRS"); err != nil || enrollment.EnrollmentID != "mfe_replacement" || enrollment.Secret != "REPLACEMENTSECRET" {
 		t.Fatalf("replacement enrollment=%+v err=%v", enrollment, err)
 	}
 	if credential, err := client.ConfirmTOTPReplacement(ctx, "https://app.example", "access", "mfe_replacement", "111111"); err != nil || credential.ID != "mfc_replacement" || len(credential.RecoveryCodes) != 1 {
 		t.Fatalf("replacement credential=%+v err=%v", credential, err)
 	}
-	if err := client.RemoveTOTP(ctx, "https://app.example", "access"); err != nil {
+	if err := client.RemoveTOTP(ctx, "https://app.example", "access", "reverify"); err != nil {
 		t.Fatal(err)
 	}
 	for _, key := range []string{
