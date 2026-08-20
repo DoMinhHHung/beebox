@@ -147,8 +147,11 @@ func (s *PasskeyService) BeginRegistration(ctx context.Context, current PasskeyS
 		return PasskeyBeginResult{}, ErrPasskeyUnavailable
 	}
 	now := s.now().UTC()
-	if err := validateFreshPasskeySession(current, now); err != nil {
+	if err := validateActivePasskeySession(current, now); err != nil {
 		return PasskeyBeginResult{}, err
+	}
+	if err := RequireReverification(ctx, current.ApplicationInstanceID, current.UserID, current.SessionPublicID, ReverificationPurposePasskeyRegister); err != nil {
+		return PasskeyBeginResult{}, ErrPasskeyReverificationRequired
 	}
 	rpID, err := passkeyRPID(origin)
 	if err != nil {
@@ -167,9 +170,9 @@ func (s *PasskeyService) BeginRegistration(ctx context.Context, current PasskeyS
 	if err != nil || len(challengeRaw) < 16 {
 		return PasskeyBeginResult{}, ErrPasskeyUnavailable
 	}
-	deadline := earliestTime(now.Add(PasskeyAttemptTTL), current.CreatedAt.UTC().Add(SocialLinkFreshness), current.IdleExpiresAt.UTC(), current.ExpiresAt.UTC())
+	deadline := earliestTime(now.Add(PasskeyAttemptTTL), current.IdleExpiresAt.UTC(), current.ExpiresAt.UTC())
 	if !deadline.After(now) {
-		return PasskeyBeginResult{}, ErrPasskeyReverificationRequired
+		return PasskeyBeginResult{}, ErrPasskeyInvalidSession
 	}
 	attemptID, err := s.persistence.CreatePasskeyAttempt(ctx, PasskeyAttemptWrite{
 		ApplicationInstanceID: current.ApplicationInstanceID,
@@ -196,7 +199,7 @@ func (s *PasskeyService) FinishRegistration(ctx context.Context, current Passkey
 	if err := validatePasskeyName(name); err != nil {
 		return PasskeyView{}, err
 	}
-	if err := validateFreshPasskeySession(current, s.now().UTC()); err != nil {
+	if err := validateActivePasskeySession(current, s.now().UTC()); err != nil {
 		return PasskeyView{}, err
 	}
 	attempt, err := s.persistence.ConsumePasskeyAttempt(ctx, current.ApplicationInstanceID, attemptID, "registration", origin)
@@ -275,8 +278,11 @@ func (s *PasskeyService) VerifyAuthentication(ctx context.Context, app applicati
 }
 
 func (s *PasskeyService) List(ctx context.Context, current PasskeySession) ([]PasskeyView, error) {
-	if s == nil || s.persistence == nil || !current.ApplicationInstanceID.Valid() || !current.UserID.Valid() {
+	if s == nil || s.persistence == nil || s.now == nil || !validPasskeySession(current) {
 		return nil, ErrPasskeyUnavailable
+	}
+	if err := validateActivePasskeySession(current, s.now().UTC()); err != nil {
+		return nil, err
 	}
 	credentials, err := s.persistence.ListPasskeyCredentials(ctx, current.ApplicationInstanceID, current.UserID)
 	if err != nil {
@@ -293,11 +299,14 @@ func (s *PasskeyService) List(ctx context.Context, current PasskeySession) ([]Pa
 }
 
 func (s *PasskeyService) Remove(ctx context.Context, current PasskeySession, publicID string, correlationID audit.CorrelationID) error {
-	if s == nil || s.persistence == nil || correlationID == (audit.CorrelationID{}) || !ValidPasskeyPublicID(publicID) {
+	if s == nil || s.persistence == nil || s.now == nil || correlationID == (audit.CorrelationID{}) || !ValidPasskeyPublicID(publicID) {
 		return ErrPasskeyInvalidRequest
 	}
-	if err := validateFreshPasskeySession(current, s.now().UTC()); err != nil {
+	if err := validateActivePasskeySession(current, s.now().UTC()); err != nil {
 		return err
+	}
+	if err := RequireReverification(ctx, current.ApplicationInstanceID, current.UserID, current.SessionPublicID, ReverificationPurposePasskeyRemove); err != nil {
+		return ErrPasskeyReverificationRequired
 	}
 	return mapPasskeyPersistenceError(ctx, s.persistence.RemovePasskeyCredential(ctx, current, publicID, correlationID))
 }
@@ -354,15 +363,13 @@ func validatePasskeyName(name string) error {
 	return nil
 }
 
-func validateFreshPasskeySession(current PasskeySession, now time.Time) error {
-	if !current.ApplicationInstanceID.Valid() || !current.ApplicationPublicID.Valid() || !current.UserID.Valid() || !current.UserPublicID.Valid() || current.SessionPublicID == "" {
+func validPasskeySession(current PasskeySession) bool {
+	return current.ApplicationInstanceID.Valid() && current.ApplicationPublicID.Valid() && current.UserID.Valid() && current.UserPublicID.Valid() && current.SessionPublicID != "" && !current.CreatedAt.IsZero() && !current.IdleExpiresAt.IsZero() && !current.ExpiresAt.IsZero()
+}
+
+func validateActivePasskeySession(current PasskeySession, now time.Time) error {
+	if !validPasskeySession(current) || current.Revoked || !current.IdleExpiresAt.UTC().After(now) || !current.ExpiresAt.UTC().After(now) {
 		return ErrPasskeyInvalidSession
-	}
-	if current.Revoked || !current.IdleExpiresAt.UTC().After(now) || !current.ExpiresAt.UTC().After(now) {
-		return ErrPasskeyInvalidSession
-	}
-	if !now.Before(current.CreatedAt.UTC().Add(SocialLinkFreshness)) {
-		return ErrPasskeyReverificationRequired
 	}
 	return nil
 }
