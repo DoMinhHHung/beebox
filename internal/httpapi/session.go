@@ -36,12 +36,20 @@ type refreshRequest struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
+type pendingMFAResponse struct {
+	Factor    string `json:"factor"`
+	Token     string `json:"token"`
+	ExpiresIn int64  `json:"expires_in"`
+}
+
 type tokenResponse struct {
-	AccessToken  string `json:"access_token"`
-	TokenType    string `json:"token_type"`
-	ExpiresIn    int64  `json:"expires_in"`
-	SessionID    string `json:"session_id"`
-	RefreshToken string `json:"refresh_token,omitempty"`
+	Status       string              `json:"status,omitempty"`
+	AccessToken  string              `json:"access_token,omitempty"`
+	TokenType    string              `json:"token_type,omitempty"`
+	ExpiresIn    int64               `json:"expires_in,omitempty"`
+	SessionID    string              `json:"session_id,omitempty"`
+	RefreshToken string              `json:"refresh_token,omitempty"`
+	PendingMFA   *pendingMFAResponse `json:"pending_mfa,omitempty"`
 }
 
 func WithSessions(base http.Handler, applications ApplicationResolver, origins OriginPolicy, sessions SessionService, ring *session.KeyRing) http.Handler {
@@ -115,7 +123,7 @@ func (h *sessionHTTP) handleSignIn(w http.ResponseWriter, r *http.Request, reque
 		}
 		return
 	}
-	h.writeTokenPair(w, r, pair, app.PublicID)
+	writeAuthenticationTokenPair(w, r, pair, app.PublicID)
 }
 
 func (h *sessionHTTP) handleRefresh(w http.ResponseWriter, r *http.Request, requestID string, correlationID audit.CorrelationID) {
@@ -159,7 +167,7 @@ func (h *sessionHTTP) handleRefresh(w http.ResponseWriter, r *http.Request, requ
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Authentication is temporarily unavailable.", requestID)
 		return
 	}
-	h.writeTokenPair(w, r, pair, app.PublicID)
+	writeAuthenticationTokenPair(w, r, pair, app.PublicID)
 }
 
 func (h *sessionHTTP) resolveApplication(w http.ResponseWriter, r *http.Request, requestID string) (applicationinstance.Instance, bool) {
@@ -220,15 +228,25 @@ func (h *sessionHTTP) handleSessionPreflight(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *sessionHTTP) writeTokenPair(w http.ResponseWriter, r *http.Request, pair session.TokenPair, appPublicID applicationinstance.PublicID) {
-	origin := r.Header.Get("Origin")
+func writeAuthenticationTokenPair(w http.ResponseWriter, r *http.Request, pair session.TokenPair, appPublicID applicationinstance.PublicID) {
+	if pair.PendingMFA != nil {
+		writeJSON(w, http.StatusOK, tokenResponse{
+			Status: "mfa_required",
+			PendingMFA: &pendingMFAResponse{
+				Factor:    "totp",
+				Token:     pair.PendingMFA.Token,
+				ExpiresIn: pair.PendingMFA.ExpiresIn,
+			},
+		})
+		return
+	}
 	response := tokenResponse{
 		AccessToken: pair.AccessToken,
 		TokenType:   "Bearer",
 		ExpiresIn:   pair.ExpiresIn,
 		SessionID:   pair.SessionID,
 	}
-	if origin != "" {
+	if r.Header.Get("Origin") != "" {
 		http.SetCookie(w, &http.Cookie{
 			Name:     refreshCookieName(appPublicID),
 			Value:    pair.RefreshToken,
@@ -242,6 +260,10 @@ func (h *sessionHTTP) writeTokenPair(w http.ResponseWriter, r *http.Request, pai
 		response.RefreshToken = pair.RefreshToken
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func (h *sessionHTTP) writeTokenPair(w http.ResponseWriter, r *http.Request, pair session.TokenPair, appPublicID applicationinstance.PublicID) {
+	writeAuthenticationTokenPair(w, r, pair, appPublicID)
 }
 
 func (h *sessionHTTP) handleJWKS(w http.ResponseWriter, r *http.Request) {
