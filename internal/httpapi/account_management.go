@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,12 +21,12 @@ type accountSessionResolver interface {
 }
 
 type accountManagementService interface {
-	ListEmails(context.Context, authentication.AccountManagementSession) ([]authentication.ManagedEmailIdentifier, error)
-	ListPhones(context.Context, authentication.AccountManagementSession) ([]authentication.ManagedPhoneIdentifier, error)
+	ListEmails(context.Context, authentication.AccountManagementSession, int, string) (authentication.ManagedEmailPage, error)
+	ListPhones(context.Context, authentication.AccountManagementSession, int, string) (authentication.ManagedPhonePage, error)
 	AddEmail(context.Context, authentication.AccountManagementSession, string, audit.CorrelationID) (authentication.ManagedEmailIdentifier, error)
 	AddPhone(context.Context, authentication.AccountManagementSession, string, audit.CorrelationID) (authentication.ManagedPhoneIdentifier, error)
-	IssueEmailVerification(context.Context, authentication.AccountManagementSession, string) error
-	ConfirmEmailVerification(context.Context, authentication.AccountManagementSession, string, string) (authentication.ManagedEmailIdentifier, error)
+	IssueEmailVerification(context.Context, authentication.AccountManagementSession, string, audit.CorrelationID) error
+	ConfirmEmailVerification(context.Context, authentication.AccountManagementSession, string, string, audit.CorrelationID) (authentication.ManagedEmailIdentifier, error)
 	IssuePhoneVerification(context.Context, authentication.AccountManagementSession, string, audit.CorrelationID) error
 	ConfirmPhoneVerification(context.Context, authentication.AccountManagementSession, string, string, audit.CorrelationID) (authentication.ManagedPhoneIdentifier, error)
 	SetPrimaryEmail(context.Context, authentication.AccountManagementSession, string, audit.CorrelationID) error
@@ -65,6 +66,16 @@ type accountProfileResponse struct {
 	GivenName   *string `json:"given_name"`
 	FamilyName  *string `json:"family_name"`
 	Locale      *string `json:"locale"`
+}
+
+type managedEmailPageResponse struct {
+	Items      []managedEmailResponse `json:"items"`
+	NextCursor string                 `json:"next_cursor,omitempty"`
+}
+
+type managedPhonePageResponse struct {
+	Items      []managedPhoneResponse `json:"items"`
+	NextCursor string                 `json:"next_cursor,omitempty"`
 }
 
 func WithAccountManagement(base http.Handler, applications ApplicationResolver, origins OriginPolicy, sessions accountSessionResolver, accounts accountManagementService) http.Handler {
@@ -209,125 +220,331 @@ func (h *accountManagementHTTP) allowedOriginForApp(ctx context.Context, r *http
 func parseIdentifierPath(path string) (kind, publicID, action string, ok bool) {
 	rest := strings.TrimPrefix(path, "/v1/identifiers/")
 	parts := strings.Split(rest, "/")
-	if len(parts) == 1 && (parts[0] == "emails" || parts[0] == "phones") {
+	if len(parts) == 1 && identifierKind(parts[0]) {
 		return parts[0], "", "", true
 	}
-	if len(parts) == 2 && (parts[0] == "emails" || parts[0] == "phones") && parts[1] != "" {
+	if len(parts) == 2 && identifierKind(parts[0]) && parts[1] != "" {
 		return parts[0], parts[1], "", true
 	}
-	if len(parts) == 3 && (parts[0] == "emails" || parts[0] == "phones") && parts[1] != "" && (parts[2] == "verification" || parts[2] == "primary") {
+	if len(parts) == 3 && identifierKind(parts[0]) && parts[1] != "" && (parts[2] == "verification" || parts[2] == "primary") {
 		return parts[0], parts[1], parts[2], true
 	}
-	if len(parts) == 4 && (parts[0] == "emails" || parts[0] == "phones") && parts[1] != "" && parts[2] == "verification" && parts[3] == "confirm" {
+	if len(parts) == 4 && identifierKind(parts[0]) && parts[1] != "" && parts[2] == "verification" && parts[3] == "confirm" {
 		return parts[0], parts[1], "verification_confirm", true
 	}
 	return "", "", "", false
 }
 
+func identifierKind(kind string) bool {
+	return kind == "emails" || kind == "phones"
+}
+
 func (h *accountManagementHTTP) handleIdentifierCollection(w http.ResponseWriter, r *http.Request, requestID string, correlationID audit.CorrelationID, current authentication.AccountManagementSession, kind string) {
 	if r.Method == http.MethodGet {
-		if kind == "emails" {
-			items, err := h.accounts.ListEmails(r.Context(), current)
-			if err != nil { h.writeError(w, requestID, err); return }
-			out := make([]managedEmailResponse, 0, len(items))
-			for _, item := range items { out = append(out, emailResponse(item)) }
-			writeJSON(w, http.StatusOK, struct{ Items []managedEmailResponse `json:"items"` }{Items: out})
+		limit, cursor, ok := identifierPageQuery(w, r, requestID)
+		if !ok {
 			return
 		}
-		items, err := h.accounts.ListPhones(r.Context(), current)
-		if err != nil { h.writeError(w, requestID, err); return }
-		out := make([]managedPhoneResponse, 0, len(items))
-		for _, item := range items { out = append(out, phoneResponse(item)) }
-		writeJSON(w, http.StatusOK, struct{ Items []managedPhoneResponse `json:"items"` }{Items: out})
+		if kind == "emails" {
+			page, err := h.accounts.ListEmails(r.Context(), current, limit, cursor)
+			if err != nil {
+				h.writeError(w, requestID, err)
+				return
+			}
+			out := make([]managedEmailResponse, 0, len(page.Items))
+			for _, item := range page.Items {
+				out = append(out, emailResponse(item))
+			}
+			writeJSON(w, http.StatusOK, managedEmailPageResponse{Items: out, NextCursor: page.NextCursor})
+			return
+		}
+		page, err := h.accounts.ListPhones(r.Context(), current, limit, cursor)
+		if err != nil {
+			h.writeError(w, requestID, err)
+			return
+		}
+		out := make([]managedPhoneResponse, 0, len(page.Items))
+		for _, item := range page.Items {
+			out = append(out, phoneResponse(item))
+		}
+		writeJSON(w, http.StatusOK, managedPhonePageResponse{Items: out, NextCursor: page.NextCursor})
 		return
 	}
-	if r.Method != http.MethodPost { methodNotAllowed(w, requestID); return }
-	if kind == "emails" {
-		var body struct { Email string `json:"email"` }
-		if !decodeStrictJSON(w, r, requestID, &body) { return }
-		item, err := h.accounts.AddEmail(r.Context(), current, body.Email, correlationID)
-		if err != nil { h.writeError(w, requestID, err); return }
-		writeJSON(w, http.StatusCreated, emailResponse(item)); return
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, requestID)
+		return
 	}
-	var body struct { Phone string `json:"phone"` }
-	if !decodeStrictJSON(w, r, requestID, &body) { return }
+	if r.URL.RawQuery != "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "The account management request is invalid.", requestID)
+		return
+	}
+	if kind == "emails" {
+		var body struct {
+			Email string `json:"email"`
+		}
+		if !decodeStrictJSON(w, r, requestID, &body) {
+			return
+		}
+		item, err := h.accounts.AddEmail(r.Context(), current, body.Email, correlationID)
+		if err != nil {
+			h.writeError(w, requestID, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, emailResponse(item))
+		return
+	}
+	var body struct {
+		Phone string `json:"phone"`
+	}
+	if !decodeStrictJSON(w, r, requestID, &body) {
+		return
+	}
 	item, err := h.accounts.AddPhone(r.Context(), current, body.Phone, correlationID)
-	if err != nil { h.writeError(w, requestID, err); return }
+	if err != nil {
+		h.writeError(w, requestID, err)
+		return
+	}
 	writeJSON(w, http.StatusCreated, phoneResponse(item))
 }
 
+func identifierPageQuery(w http.ResponseWriter, r *http.Request, requestID string) (int, string, bool) {
+	query := r.URL.Query()
+	for key := range query {
+		if key != "limit" && key != "cursor" {
+			writeError(w, http.StatusBadRequest, "invalid_request", "The account management request is invalid.", requestID)
+			return 0, "", false
+		}
+	}
+	limit := 0
+	if values, ok := query["limit"]; ok {
+		if len(values) != 1 || values[0] == "" {
+			writeError(w, http.StatusBadRequest, "invalid_request", "The account management request is invalid.", requestID)
+			return 0, "", false
+		}
+		parsed, err := strconv.Atoi(values[0])
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "The account management request is invalid.", requestID)
+			return 0, "", false
+		}
+		limit = parsed
+	}
+	cursor := ""
+	if values, ok := query["cursor"]; ok {
+		if len(values) != 1 || values[0] == "" {
+			writeError(w, http.StatusBadRequest, "invalid_request", "The account management request is invalid.", requestID)
+			return 0, "", false
+		}
+		cursor = values[0]
+	}
+	return limit, cursor, true
+}
+
 func (h *accountManagementHTTP) handleIdentifierResource(w http.ResponseWriter, r *http.Request, requestID string, correlationID audit.CorrelationID, current authentication.AccountManagementSession, kind, publicID, action string) {
+	if r.URL.RawQuery != "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "The account management request is invalid.", requestID)
+		return
+	}
 	switch action {
 	case "verification":
-		if r.Method != http.MethodPost { methodNotAllowed(w, requestID); return }
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, requestID)
+			return
+		}
 		var err error
-		if kind == "emails" { err = h.accounts.IssueEmailVerification(r.Context(), current, publicID) } else { err = h.accounts.IssuePhoneVerification(r.Context(), current, publicID, correlationID) }
-		if err != nil { h.writeError(w, requestID, err); return }
+		if kind == "emails" {
+			err = h.accounts.IssueEmailVerification(r.Context(), current, publicID, correlationID)
+		} else {
+			err = h.accounts.IssuePhoneVerification(r.Context(), current, publicID, correlationID)
+		}
+		if err != nil {
+			h.writeError(w, requestID, err)
+			return
+		}
 		writeJSON(w, http.StatusAccepted, statusEnvelope{Status: "verification_sent"})
 	case "verification_confirm":
-		if r.Method != http.MethodPost { methodNotAllowed(w, requestID); return }
-		var body struct { Code string `json:"code"` }
-		if !decodeStrictJSON(w, r, requestID, &body) { return }
-		if kind == "emails" { item, err := h.accounts.ConfirmEmailVerification(r.Context(), current, publicID, body.Code); if err != nil { h.writeError(w, requestID, err); return }; writeJSON(w, http.StatusOK, emailResponse(item)); return }
-		item, err := h.accounts.ConfirmPhoneVerification(r.Context(), current, publicID, body.Code, correlationID); if err != nil { h.writeError(w, requestID, err); return }; writeJSON(w, http.StatusOK, phoneResponse(item))
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, requestID)
+			return
+		}
+		var body struct {
+			Code string `json:"code"`
+		}
+		if !decodeStrictJSON(w, r, requestID, &body) {
+			return
+		}
+		if kind == "emails" {
+			item, err := h.accounts.ConfirmEmailVerification(r.Context(), current, publicID, body.Code, correlationID)
+			if err != nil {
+				h.writeError(w, requestID, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, emailResponse(item))
+			return
+		}
+		item, err := h.accounts.ConfirmPhoneVerification(r.Context(), current, publicID, body.Code, correlationID)
+		if err != nil {
+			h.writeError(w, requestID, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, phoneResponse(item))
 	case "primary":
-		if r.Method != http.MethodPost { methodNotAllowed(w, requestID); return }
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, requestID)
+			return
+		}
 		var err error
-		if kind == "emails" { err = h.accounts.SetPrimaryEmail(r.Context(), current, publicID, correlationID) } else { err = h.accounts.SetPrimaryPhone(r.Context(), current, publicID, correlationID) }
-		if err != nil { h.writeError(w, requestID, err); return }
+		if kind == "emails" {
+			err = h.accounts.SetPrimaryEmail(r.Context(), current, publicID, correlationID)
+		} else {
+			err = h.accounts.SetPrimaryPhone(r.Context(), current, publicID, correlationID)
+		}
+		if err != nil {
+			h.writeError(w, requestID, err)
+			return
+		}
 		writeJSON(w, http.StatusOK, statusEnvelope{Status: "primary_updated"})
 	default:
-		if r.Method != http.MethodDelete { methodNotAllowed(w, requestID); return }
+		if r.Method != http.MethodDelete {
+			methodNotAllowed(w, requestID)
+			return
+		}
 		var err error
-		if kind == "emails" { err = h.accounts.RemoveEmail(r.Context(), current, publicID, correlationID) } else { err = h.accounts.RemovePhone(r.Context(), current, publicID, correlationID) }
-		if err != nil { h.writeError(w, requestID, err); return }
+		if kind == "emails" {
+			err = h.accounts.RemoveEmail(r.Context(), current, publicID, correlationID)
+		} else {
+			err = h.accounts.RemovePhone(r.Context(), current, publicID, correlationID)
+		}
+		if err != nil {
+			h.writeError(w, requestID, err)
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
 
 func (h *accountManagementHTTP) handleProfile(w http.ResponseWriter, r *http.Request, requestID string, correlationID audit.CorrelationID, current authentication.AccountManagementSession) {
-	if r.Method == http.MethodGet {
-		profile, err := h.accounts.GetProfile(r.Context(), current); if err != nil { h.writeError(w, requestID, err); return }
-		writeJSON(w, http.StatusOK, profileResponse(profile)); return
+	if r.URL.RawQuery != "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "The profile request is invalid.", requestID)
+		return
 	}
-	if r.Method != http.MethodPatch { methodNotAllowed(w, requestID); return }
-	patch, ok := decodeProfilePatch(w, r, requestID); if !ok { return }
-	profile, err := h.accounts.PatchProfile(r.Context(), current, patch, correlationID); if err != nil { h.writeError(w, requestID, err); return }
+	if r.Method == http.MethodGet {
+		profile, err := h.accounts.GetProfile(r.Context(), current)
+		if err != nil {
+			h.writeError(w, requestID, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, profileResponse(profile))
+		return
+	}
+	if r.Method != http.MethodPatch {
+		methodNotAllowed(w, requestID)
+		return
+	}
+	patch, ok := decodeProfilePatch(w, r, requestID)
+	if !ok {
+		return
+	}
+	profile, err := h.accounts.PatchProfile(r.Context(), current, patch, correlationID)
+	if err != nil {
+		h.writeError(w, requestID, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, profileResponse(profile))
 }
 
 func decodeProfilePatch(w http.ResponseWriter, r *http.Request, requestID string) (authentication.ProfilePatch, bool) {
 	var raw map[string]json.RawMessage
-	if !decodeStrictJSON(w, r, requestID, &raw) { return authentication.ProfilePatch{}, false }
+	if !decodeStrictJSON(w, r, requestID, &raw) {
+		return authentication.ProfilePatch{}, false
+	}
+	if len(raw) == 0 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "The profile request is invalid.", requestID)
+		return authentication.ProfilePatch{}, false
+	}
 	patch := authentication.ProfilePatch{}
 	for key, value := range raw {
 		var target *authentication.OptionalStringPatch
-		switch key { case "display_name": target=&patch.DisplayName; case "given_name": target=&patch.GivenName; case "family_name": target=&patch.FamilyName; case "locale": target=&patch.Locale; default: writeError(w,http.StatusBadRequest,"invalid_request","The profile request is invalid.",requestID); return authentication.ProfilePatch{},false }
-		target.Present=true
-		if string(value)=="null" { target.Value=nil; continue }
-		var text string; if err:=json.Unmarshal(value,&text);err!=nil { writeError(w,http.StatusBadRequest,"invalid_request","The profile request is invalid.",requestID);return authentication.ProfilePatch{},false }; target.Value=&text
+		switch key {
+		case "display_name":
+			target = &patch.DisplayName
+		case "given_name":
+			target = &patch.GivenName
+		case "family_name":
+			target = &patch.FamilyName
+		case "locale":
+			target = &patch.Locale
+		default:
+			writeError(w, http.StatusBadRequest, "invalid_request", "The profile request is invalid.", requestID)
+			return authentication.ProfilePatch{}, false
+		}
+		target.Present = true
+		if string(value) == "null" {
+			target.Value = nil
+			continue
+		}
+		var text string
+		if err := json.Unmarshal(value, &text); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "The profile request is invalid.", requestID)
+			return authentication.ProfilePatch{}, false
+		}
+		target.Value = &text
 	}
-	return patch,true
+	return patch, true
 }
 
 func decodeStrictJSON(w http.ResponseWriter, r *http.Request, requestID string, target any) bool {
-	decoder:=json.NewDecoder(http.MaxBytesReader(w,r.Body,16<<10));decoder.DisallowUnknownFields();if err:=decoder.Decode(target);err!=nil{writeError(w,http.StatusBadRequest,"invalid_request","The request body is invalid.",requestID);return false};if err:=decoder.Decode(&struct{}{});!errors.Is(err,io.EOF){writeError(w,http.StatusBadRequest,"invalid_request","The request body is invalid.",requestID);return false};return true
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "The request body is invalid.", requestID)
+		return false
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "invalid_request", "The request body is invalid.", requestID)
+		return false
+	}
+	return true
 }
 
 func (h *accountManagementHTTP) writeError(w http.ResponseWriter, requestID string, err error) {
 	switch {
-	case errors.Is(err, authentication.ErrAccountManagementInvalid), errors.Is(err, authentication.ErrAccountIdentifierNotFound): writeError(w,http.StatusBadRequest,"invalid_request","The account management request is invalid.",requestID)
-	case errors.Is(err, authentication.ErrAccountManagementSession): writeError(w,http.StatusUnauthorized,"invalid_session","The session is invalid.",requestID)
-	case errors.Is(err, authentication.ErrAccountManagementReverification): writeError(w,http.StatusForbidden,"reverification_required","Recent reverification is required for this operation.",requestID)
-	case errors.Is(err, authentication.ErrAccountIdentifierUnavailable): writeError(w,http.StatusConflict,"identifier_unavailable","The identifier cannot be used.",requestID)
-	case errors.Is(err, authentication.ErrAccountIdentifierUnverified): writeError(w,http.StatusConflict,"identifier_unverified","The identifier must be verified first.",requestID)
-	case errors.Is(err, authentication.ErrLastAuthenticationMethod): writeError(w,http.StatusConflict,"last_authentication_method","At least one usable authentication method must remain.",requestID)
-	case errors.Is(err, authentication.ErrPublicRateLimited): writeError(w,http.StatusTooManyRequests,"rate_limited","Too many requests.",requestID)
-	default: writeError(w,http.StatusServiceUnavailable,"service_unavailable","Account management is temporarily unavailable.",requestID)
+	case errors.Is(err, authentication.ErrAccountManagementInvalid), errors.Is(err, authentication.ErrAccountIdentifierNotFound):
+		writeError(w, http.StatusBadRequest, "invalid_request", "The account management request is invalid.", requestID)
+	case errors.Is(err, authentication.ErrAccountManagementSession):
+		writeError(w, http.StatusUnauthorized, "invalid_session", "The session is invalid.", requestID)
+	case errors.Is(err, authentication.ErrAccountManagementReverification):
+		writeError(w, http.StatusForbidden, "reverification_required", "Recent reverification is required for this operation.", requestID)
+	case errors.Is(err, authentication.ErrAccountIdentifierUnavailable):
+		writeError(w, http.StatusConflict, "identifier_unavailable", "The identifier cannot be used.", requestID)
+	case errors.Is(err, authentication.ErrAccountIdentifierUnverified):
+		writeError(w, http.StatusConflict, "identifier_unverified", "The identifier must be verified first.", requestID)
+	case errors.Is(err, authentication.ErrLastAuthenticationMethod):
+		writeError(w, http.StatusConflict, "last_authentication_method", "At least one usable authentication method must remain.", requestID)
+	case errors.Is(err, authentication.ErrPublicRateLimited):
+		writeError(w, http.StatusTooManyRequests, "rate_limited", "Too many requests.", requestID)
+	default:
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Account management is temporarily unavailable.", requestID)
 	}
 }
 
-func emailResponse(item authentication.ManagedEmailIdentifier) managedEmailResponse { return managedEmailResponse{ID:item.PublicID,Email:item.Email,Verified:item.Verified,Primary:item.Primary,CreatedAt:item.CreatedAt.UTC().Format(time.RFC3339)} }
-func phoneResponse(item authentication.ManagedPhoneIdentifier) managedPhoneResponse { return managedPhoneResponse{ID:item.PublicID,Phone:item.Phone,Verified:item.Verified,Primary:item.Primary,CreatedAt:item.CreatedAt.UTC().Format(time.RFC3339)} }
-func profileResponse(profile authentication.AccountProfile) accountProfileResponse { return accountProfileResponse{DisplayName:profile.DisplayName,GivenName:profile.GivenName,FamilyName:profile.FamilyName,Locale:profile.Locale} }
-func encodeCorrelationID(id audit.CorrelationID) string { const hex="0123456789abcdef";out:=make([]byte,len(id)*2);for i,b:=range id{out[i*2]=hex[b>>4];out[i*2+1]=hex[b&15]};return string(out) }
+func emailResponse(item authentication.ManagedEmailIdentifier) managedEmailResponse {
+	return managedEmailResponse{ID: item.PublicID, Email: item.Email, Verified: item.Verified, Primary: item.Primary, CreatedAt: item.CreatedAt.UTC().Format(time.RFC3339)}
+}
+
+func phoneResponse(item authentication.ManagedPhoneIdentifier) managedPhoneResponse {
+	return managedPhoneResponse{ID: item.PublicID, Phone: item.Phone, Verified: item.Verified, Primary: item.Primary, CreatedAt: item.CreatedAt.UTC().Format(time.RFC3339)}
+}
+
+func profileResponse(profile authentication.AccountProfile) accountProfileResponse {
+	return accountProfileResponse{DisplayName: profile.DisplayName, GivenName: profile.GivenName, FamilyName: profile.FamilyName, Locale: profile.Locale}
+}
+
+func encodeCorrelationID(id audit.CorrelationID) string {
+	const hex = "0123456789abcdef"
+	out := make([]byte, len(id)*2)
+	for i, b := range id {
+		out[i*2] = hex[b>>4]
+		out[i*2+1] = hex[b&15]
+	}
+	return string(out)
+}
