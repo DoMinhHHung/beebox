@@ -21,6 +21,8 @@ import (
 	authpostgres "github.com/DoMinhHHung/beebox/internal/authentication/postgres"
 	"github.com/DoMinhHHung/beebox/internal/authentication/smtpdelivery"
 	"github.com/DoMinhHHung/beebox/internal/authentication/socialprovider"
+	"github.com/DoMinhHHung/beebox/internal/authentication/totpsecret"
+	"github.com/DoMinhHHung/beebox/internal/authentication/totpstandard"
 	"github.com/DoMinhHHung/beebox/internal/httpapi"
 	identitypostgres "github.com/DoMinhHHung/beebox/internal/identity/postgres"
 	"github.com/DoMinhHHung/beebox/internal/metrics"
@@ -110,6 +112,10 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 	integrationStore := applicationpostgres.NewIntegrationStore(concretePool)
 	integrationService := applicationinstance.NewIntegrationService(integrationStore)
 	authStore := authpostgres.New(concretePool)
+	secretKeyring, err := loadTOTPSecretEncryption(lookup, authStore)
+	if err != nil {
+		return nil, err
+	}
 	verificationCore := authentication.NewEmailVerificationService(authStore, delivery)
 	verification := authentication.NewPublicVerificationService(identitypostgres.New(concretePool), authStore, verificationCore)
 	signup := authentication.NewPublicSignupService(authStore, delivery)
@@ -162,6 +168,10 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 	passkeyCore := authentication.NewPasskeyService(authStore, passkeywebauthn.New())
 	passkeyCompletion := session.NewPasskeyService(passkeyCore, ring)
 	base = httpapi.WithPasskeys(base, integrationService, integrationStore, sessionService, passkeyCore, passkeyCompletion)
+	secretAdapter := totpsecret.New(secretKeyring)
+	totpCore := authentication.NewTOTPService(authStore, totpstandard.New(), secretAdapter, secretAdapter)
+	totpCompletion := session.NewTOTPAuthenticationService(totpCore, ring)
+	base = httpapi.WithTOTP(base, integrationService, integrationStore, sessionService, totpCore, totpCompletion)
 	managementCore := authentication.NewSocialAccountService(authStore, availability)
 	base = httpapi.WithSocialAccountManagement(base, integrationService, integrationStore, sessionService, managementCore)
 	base = httpapi.WithSessionManagement(base, integrationService, integrationService, sessionService)
@@ -190,7 +200,7 @@ func parseMode(args []string) (processMode, error) {
 	}
 }
 
-func runServeMode(ctx context.Context, logger *slog.Logger, lookup config.LookupEnv, dependencies runtimeDependencies) error {
+func runServeMode(ctx context.Context, logger *slog.Logger, lookup config.LookupEnv, dependencies runtimeDependencies, args []string) error {
 	cfg, err := config.Load(lookup)
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
