@@ -105,7 +105,7 @@ func TestRecoveryCodeServiceRegenerationReturnsFreshCodesExactlyOnce(t *testing.
 		UserID:                11,
 		UserPublicID:          "usr_123e4567-e89b-42d3-a456-426614174002",
 		SessionPublicID:       "ses_123e4567-e89b-42d3-a456-426614174003",
-		CreatedAt:             now.Add(-time.Minute),
+		CreatedAt:             now.Add(-24 * time.Hour),
 		IdleExpiresAt:         now.Add(time.Hour),
 		ExpiresAt:             now.Add(2 * time.Hour),
 	}
@@ -113,7 +113,8 @@ func TestRecoveryCodeServiceRegenerationReturnsFreshCodesExactlyOnce(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := service.Regenerate(context.Background(), current, correlationID)
+	ctx := testReverificationContext(current.ApplicationInstanceID, current.UserID, current.SessionPublicID, ReverificationPurposeRecoveryRegenerate)
+	result, err := service.Regenerate(ctx, current, correlationID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +132,7 @@ func TestRecoveryCodeServiceRegenerationReturnsFreshCodesExactlyOnce(t *testing.
 	}
 
 	persistence.err = ErrRecoveryRateLimited
-	if _, err := service.Regenerate(context.Background(), current, correlationID); !errors.Is(err, ErrRecoveryRateLimited) {
+	if _, err := service.Regenerate(ctx, current, correlationID); !errors.Is(err, ErrRecoveryRateLimited) {
 		t.Fatalf("rate limit error=%v", err)
 	}
 }
