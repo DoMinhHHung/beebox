@@ -8,6 +8,8 @@ import (
 
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
+
+	"github.com/DoMinhHHung/beebox/internal/authentication"
 )
 
 const (
@@ -19,19 +21,13 @@ var ErrProtocol = errors.New("TOTP protocol failure")
 
 var rawBase32 = base32.StdEncoding.WithPadding(base32.NoPadding)
 
-type Enrollment struct {
-	SecretRaw []byte
-	Secret    string
-	URI       string
-}
-
 type Protocol struct{}
 
 func New() *Protocol { return &Protocol{} }
 
-func (p *Protocol) Generate(applicationID, userID string) (Enrollment, error) {
+func (p *Protocol) Generate(applicationID, userID string) (authentication.TOTPProtocolEnrollment, error) {
 	if p == nil || applicationID == "" || userID == "" {
-		return Enrollment{}, ErrProtocol
+		return authentication.TOTPProtocolEnrollment{}, ErrProtocol
 	}
 	key, err := totp.Generate(totp.GenerateOpts{
 		Issuer:      "BeeBox",
@@ -42,14 +38,14 @@ func (p *Protocol) Generate(applicationID, userID string) (Enrollment, error) {
 		Algorithm:   otp.AlgorithmSHA1,
 	})
 	if err != nil {
-		return Enrollment{}, ErrProtocol
+		return authentication.TOTPProtocolEnrollment{}, ErrProtocol
 	}
 	encoded := key.Secret()
 	raw, err := rawBase32.DecodeString(encoded)
 	if err != nil || len(raw) != int(SecretBytes) {
-		return Enrollment{}, ErrProtocol
+		return authentication.TOTPProtocolEnrollment{}, ErrProtocol
 	}
-	return Enrollment{SecretRaw: raw, Secret: encoded, URI: key.URL()}, nil
+	return authentication.TOTPProtocolEnrollment{SecretRaw: raw, Secret: encoded, URI: key.URL()}, nil
 }
 
 func (p *Protocol) Verify(secretRaw []byte, code string, serverTime time.Time) (int64, bool, error) {
