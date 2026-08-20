@@ -11,21 +11,22 @@ const DefaultBatchSize = 500
 var ErrInvalidBatchSize = errors.New("invalid cleanup batch size")
 
 type Result struct {
-	RateLimits              int64
-	Idempotency             int64
-	EmailChallenges         int64
-	EmailOTPChallenges      int64
-	PasswordResetChallenges int64
-	PhoneSignupChallenges   int64
-	PhoneOTPChallenges      int64
-	SocialAuthAttempts      int64
-	SocialLinkAttempts      int64
-	SocialCompletionGrants  int64
-	PasskeyAttempts         int64
-	TOTPEnrollments         int64
-	PendingMFA              int64
-	RecoveryCodeSets        int64
-	SensitiveAdmission      int64
+	RateLimits                        int64
+	Idempotency                       int64
+	EmailChallenges                   int64
+	EmailOTPChallenges                int64
+	PasswordResetChallenges           int64
+	PhoneSignupChallenges             int64
+	PhoneOTPChallenges                int64
+	PhoneIdentifierVerification       int64
+	SocialAuthAttempts                int64
+	SocialLinkAttempts                int64
+	SocialCompletionGrants            int64
+	PasskeyAttempts                   int64
+	TOTPEnrollments                   int64
+	PendingMFA                        int64
+	RecoveryCodeSets                  int64
+	SensitiveAdmission                int64
 }
 
 // CleanupSecurityState removes only operational rows whose security lifetime
@@ -89,6 +90,12 @@ func CleanupSecurityState(ctx context.Context, db *sql.DB, batchSize int) (Resul
 			ORDER BY expires_at
 			LIMIT $1
 		) DELETE FROM phone_otp_signin_challenges p USING doomed d WHERE p.ctid = d.ctid`},
+		{&result.PhoneIdentifierVerification, `WITH doomed AS (
+			SELECT ctid FROM phone_identifier_verification_challenges
+			WHERE consumed_at IS NOT NULL OR expires_at <= CURRENT_TIMESTAMP
+			ORDER BY expires_at
+			LIMIT $1
+		) DELETE FROM phone_identifier_verification_challenges p USING doomed d WHERE p.ctid = d.ctid`},
 		{&result.SocialAuthAttempts, `WITH doomed AS (
 			SELECT ctid FROM social_auth_attempts
 			WHERE consumed_at IS NOT NULL OR expires_at <= CURRENT_TIMESTAMP
