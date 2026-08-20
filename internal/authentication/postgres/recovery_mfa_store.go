@@ -149,8 +149,8 @@ func (s *Store) FinalizePendingRecoveryAuthentication(ctx context.Context, final
 	}
 	var sessionID int64
 	if err := tx.QueryRowContext(ctx, `
-		INSERT INTO sessions(public_id,application_instance_id,user_id,idle_expires_at,expires_at)
-		VALUES($1,$2,$3,$4,$5) RETURNING id`, final.SessionPublicID, appID, userID, final.IdleExpiresAt.UTC(), final.ExpiresAt.UTC()).Scan(&sessionID); err != nil {
+		INSERT INTO sessions(public_id,application_instance_id,user_id,idle_expires_at,expires_at,mfa_method)
+		VALUES($1,$2,$3,$4,$5,'recovery_code') RETURNING id`, final.SessionPublicID, appID, userID, final.IdleExpiresAt.UTC(), final.ExpiresAt.UTC()).Scan(&sessionID); err != nil {
 		return authentication.RecoveryAuthenticationResult{}, classifyRecoveryError(ctx, err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO session_refresh_credentials(session_id,verifier_hash) VALUES($1,$2)`, sessionID, final.RefreshVerifier[:]); err != nil {
