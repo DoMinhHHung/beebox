@@ -89,14 +89,14 @@ func totpHTTPFixture(service *totpHTTPServiceStub, completion *totpCompletionStu
 	now := time.Now().UTC()
 	app := applicationinstance.Instance{InternalID: 1, PublicID: passkeyTestApp}
 	record := session.Record{
-		PublicID:            passkeyTestSID,
-		UserPublicID:        string(passkeyTestUser),
-		UserInternalID:      2,
-		ApplicationPublicID: string(passkeyTestApp),
+		PublicID:              passkeyTestSID,
+		UserPublicID:          string(passkeyTestUser),
+		UserInternalID:        2,
+		ApplicationPublicID:   string(passkeyTestApp),
 		ApplicationInstanceID: 1,
-		CreatedAt:           now.Add(-time.Minute),
-		IdleExpiresAt:       now.Add(time.Hour),
-		ExpiresAt:           now.Add(24 * time.Hour),
+		CreatedAt:             now.Add(-time.Minute),
+		IdleExpiresAt:         now.Add(time.Hour),
+		ExpiresAt:             now.Add(24 * time.Hour),
 	}
 	return WithTOTP(
 		http.NotFoundHandler(),
@@ -176,8 +176,8 @@ func TestTOTPHTTPPendingCompletionUsesPendingAuthorityNotBearerSession(t *testin
 	}
 
 	for name, mutate := range map[string]func(*http.Request){
-		"wrong app":    func(r *http.Request) { r.Header.Set(PublishableKeyHeader, "pk_other") },
-		"wrong origin": func(r *http.Request) { r.Header.Set("Origin", "https://evil.example") },
+		"wrong app":      func(r *http.Request) { r.Header.Set(PublishableKeyHeader, "pk_other") },
+		"wrong origin":   func(r *http.Request) { r.Header.Set("Origin", "https://evil.example") },
 		"missing origin": func(r *http.Request) { r.Header.Del("Origin") },
 	} {
 		t.Run(name, func(t *testing.T) {
