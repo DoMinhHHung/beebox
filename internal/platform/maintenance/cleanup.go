@@ -22,13 +22,16 @@ type Result struct {
 	SocialLinkAttempts      int64
 	SocialCompletionGrants  int64
 	PasskeyAttempts         int64
+	TOTPEnrollments         int64
+	PendingMFA              int64
 }
 
 // CleanupSecurityState removes only operational rows whose security lifetime
 // has ended. Each table is bounded by batchSize. Audit events, sessions, phone
-// identifiers, external identities, passkey credentials, and refresh credentials
-// are deliberately outside this primitive. Correctness never depends on this
-// cleanup: proof paths still enforce expiry and one-time consumption themselves.
+// identifiers, external identities, passkey credentials, TOTP credentials, and
+// refresh credentials are deliberately outside this primitive. Correctness never
+// depends on this cleanup: proof paths still enforce expiry and one-time
+// consumption themselves.
 func CleanupSecurityState(ctx context.Context, db *sql.DB, batchSize int) (Result, error) {
 	if db == nil || batchSize <= 0 || batchSize > 10_000 {
 		return Result{}, ErrInvalidBatchSize
@@ -108,6 +111,18 @@ func CleanupSecurityState(ctx context.Context, db *sql.DB, batchSize int) (Resul
 			ORDER BY expires_at
 			LIMIT $1
 		) DELETE FROM passkey_attempts p USING doomed d WHERE p.ctid = d.ctid`},
+		{&result.TOTPEnrollments, `WITH doomed AS (
+			SELECT ctid FROM totp_enrollments
+			WHERE consumed_at IS NOT NULL OR expires_at <= CURRENT_TIMESTAMP
+			ORDER BY expires_at
+			LIMIT $1
+		) DELETE FROM totp_enrollments p USING doomed d WHERE p.ctid = d.ctid`},
+		{&result.PendingMFA, `WITH doomed AS (
+			SELECT ctid FROM pending_mfa_authentications
+			WHERE consumed_at IS NOT NULL OR expires_at <= CURRENT_TIMESTAMP
+			ORDER BY expires_at
+			LIMIT $1
+		) DELETE FROM pending_mfa_authentications p USING doomed d WHERE p.ctid = d.ctid`},
 	}
 	for _, cleanup := range queries {
 		if err := ctx.Err(); err != nil {
