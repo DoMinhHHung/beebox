@@ -4,7 +4,7 @@ package postgres
 
 import (
 	"context"
-	"crypto/sha256"
+	cryptosha256 "crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -52,7 +52,7 @@ func TestPasskeyAuthenticationAuditFailureRollsBackSessionAndCredentialState(t *
 	}
 	store := New(pool)
 	now := time.Now().UTC()
-	challenge := sha256.Sum256([]byte("audit-auth"))
+	challenge := cryptosha256.Sum256([]byte("audit-auth"))
 	attemptID, err := store.CreatePasskeyAttempt(ctx, authentication.PasskeyAttemptWrite{ApplicationInstanceID: app.InternalID, Purpose: "authentication", Origin: "https://app.example", RPID: "app.example", SessionData: json.RawMessage(`{"challenge":"audit"}`), ChallengeHash: challenge, CreatedAt: now, ExpiresAt: now.Add(2 * time.Minute)})
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +62,7 @@ func TestPasskeyAuthenticationAuditFailureRollsBackSessionAndCredentialState(t *
 	}
 	forcePasskeyAuditFailure(t, ctx, db)
 	correlation, _ := audit.NewCorrelationID()
-	refresh := sha256.Sum256([]byte("refresh-verifier"))
+	refresh := cryptosha256.Sum256([]byte("refresh-verifier"))
 	_, err = store.FinalizePasskeyAuthentication(ctx, authentication.PasskeyAuthFinalize{
 		AttemptPublicID: attemptID, UserID: user.InternalID,
 		Credential:      authentication.PasskeyCredential{RPID: "app.example", CredentialID: credentialID, CredentialJSON: json.RawMessage(`{"id":"credential","authenticator":{"signCount":2}}`)},
@@ -110,7 +110,7 @@ func TestPasskeyRemovalAuditFailureRollsBackDeletion(t *testing.T) {
 
 func createConsumedRegistrationAttempt(t *testing.T, ctx context.Context, store *Store, appID applicationinstance.InternalID, userID identity.InternalID, sessionID string, created time.Time) authentication.PasskeyAttempt {
 	t.Helper()
-	challenge := sha256.Sum256([]byte("audit-register"))
+	challenge := cryptosha256.Sum256([]byte("audit-register"))
 	attemptID, err := store.CreatePasskeyAttempt(ctx, authentication.PasskeyAttemptWrite{ApplicationInstanceID: appID, UserID: userID, SessionPublicID: sessionID, Purpose: "registration", Origin: "https://app.example", RPID: "app.example", SessionData: json.RawMessage(`{"challenge":"audit"}`), ChallengeHash: challenge, CreatedAt: created.Add(time.Minute), ExpiresAt: created.Add(2 * time.Minute)})
 	if err != nil {
 		t.Fatal(err)
