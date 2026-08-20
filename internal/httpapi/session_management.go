@@ -23,6 +23,9 @@ type SessionManagementService interface {
 	SignOut(context.Context, applicationinstance.InternalID, string, string, audit.CorrelationID) error
 	GetSession(context.Context, applicationinstance.InternalID, string) (session.Record, error)
 	RevokeSession(context.Context, applicationinstance.InternalID, string, audit.CorrelationID) error
+}
+
+type SessionSelfService interface {
 	ListSessions(context.Context, applicationinstance.InternalID, string, string, int, string) (session.Page, error)
 	RevokeOwnSession(context.Context, applicationinstance.InternalID, string, string, string, audit.CorrelationID) (bool, error)
 	RevokeOtherSessions(context.Context, applicationinstance.InternalID, string, string, audit.CorrelationID) error
@@ -34,6 +37,7 @@ type sessionManagementHTTP struct {
 	applications ApplicationResolver
 	secrets      SecretApplicationAuthenticator
 	sessions     SessionManagementService
+	selfService  SessionSelfService
 }
 
 type publicSessionResponse struct {
@@ -60,7 +64,8 @@ type selfServiceSessionPageResponse struct {
 }
 
 func WithSessionManagement(base http.Handler, applications ApplicationResolver, secrets SecretApplicationAuthenticator, sessions SessionManagementService) http.Handler {
-	return &sessionManagementHTTP{base: base, applications: applications, secrets: secrets, sessions: sessions}
+	selfService, _ := sessions.(SessionSelfService)
+	return &sessionManagementHTTP{base: base, applications: applications, secrets: secrets, sessions: sessions, selfService: selfService}
 }
 
 func (h *sessionManagementHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -104,6 +109,10 @@ func (h *sessionManagementHTTP) handleListSessions(w http.ResponseWriter, r *htt
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "The HTTP method is not allowed.", requestID)
 		return
 	}
+	if h.selfService == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Session management is temporarily unavailable.", requestID)
+		return
+	}
 	limit, cursor, ok := parseSessionListQuery(w, r, requestID)
 	if !ok {
 		return
@@ -112,7 +121,7 @@ func (h *sessionManagementHTTP) handleListSessions(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	page, err := h.sessions.ListSessions(r.Context(), app.InternalID, string(app.PublicID), token, limit, cursor)
+	page, err := h.selfService.ListSessions(r.Context(), app.InternalID, string(app.PublicID), token, limit, cursor)
 	if err != nil {
 		if errors.Is(err, session.ErrSessionInvalidRequest) {
 			writeError(w, http.StatusBadRequest, "invalid_request", "The session list request is invalid.", requestID)
@@ -207,6 +216,10 @@ func (h *sessionManagementHTTP) handleRevokeOwnSession(w http.ResponseWriter, r 
 		methodNotAllowed(w, requestID)
 		return
 	}
+	if h.selfService == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Session management is temporarily unavailable.", requestID)
+		return
+	}
 	selected := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/sessions/"), "/revoke")
 	if selected == "" || strings.Contains(selected, "/") || !session.ValidPublicID(selected) {
 		writeError(w, http.StatusNotFound, "session_not_found", "The session was not found.", requestID)
@@ -216,7 +229,7 @@ func (h *sessionManagementHTTP) handleRevokeOwnSession(w http.ResponseWriter, r 
 	if !ok {
 		return
 	}
-	revokedCurrent, err := h.sessions.RevokeOwnSession(r.Context(), app.InternalID, string(app.PublicID), token, selected, correlationID)
+	revokedCurrent, err := h.selfService.RevokeOwnSession(r.Context(), app.InternalID, string(app.PublicID), token, selected, correlationID)
 	if err != nil {
 		h.writeSelfServiceMutationError(w, requestID, err)
 		return
@@ -232,11 +245,15 @@ func (h *sessionManagementHTTP) handleRevokeOtherSessions(w http.ResponseWriter,
 		methodNotAllowed(w, requestID)
 		return
 	}
+	if h.selfService == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Session management is temporarily unavailable.", requestID)
+		return
+	}
 	app, token, ok := h.resolveUserContext(w, r, requestID)
 	if !ok {
 		return
 	}
-	if err := h.sessions.RevokeOtherSessions(r.Context(), app.InternalID, string(app.PublicID), token, correlationID); err != nil {
+	if err := h.selfService.RevokeOtherSessions(r.Context(), app.InternalID, string(app.PublicID), token, correlationID); err != nil {
 		h.writeSelfServiceMutationError(w, requestID, err)
 		return
 	}
@@ -248,11 +265,15 @@ func (h *sessionManagementHTTP) handleSignOutEverywhere(w http.ResponseWriter, r
 		methodNotAllowed(w, requestID)
 		return
 	}
+	if h.selfService == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Session management is temporarily unavailable.", requestID)
+		return
+	}
 	app, token, ok := h.resolveUserContext(w, r, requestID)
 	if !ok {
 		return
 	}
-	if err := h.sessions.SignOutEverywhere(r.Context(), app.InternalID, string(app.PublicID), token, correlationID); err != nil {
+	if err := h.selfService.SignOutEverywhere(r.Context(), app.InternalID, string(app.PublicID), token, correlationID); err != nil {
 		h.writeSelfServiceMutationError(w, requestID, err)
 		return
 	}
