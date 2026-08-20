@@ -109,14 +109,7 @@ type SocialLinkService struct {
 }
 
 func NewSocialLinkService(persistence SocialLinkPersistence, redirects SocialRedirectPolicy, admission SocialLinkAdmission, providers SocialProviderRegistry, protector *SocialStateProtector) *SocialLinkService {
-	return &SocialLinkService{
-		persistence: persistence,
-		redirects:   redirects,
-		admission:   admission,
-		providers:   providers,
-		protector:   protector,
-		now:         time.Now,
-	}
+	return &SocialLinkService{persistence: persistence, redirects: redirects, admission: admission, providers: providers, protector: protector, now: time.Now}
 }
 
 func (s *SocialLinkService) CreateLinkAttempt(ctx context.Context, app applicationinstance.Instance, current SocialLinkSession, provider Provider, redirectURL string) (SocialLinkResult, error) {
@@ -130,12 +123,10 @@ func (s *SocialLinkService) CreateLinkAttempt(ctx context.Context, app applicati
 		return SocialLinkResult{}, ErrSocialLinkInvalidSession
 	}
 	now := s.now().UTC()
-	createdAt := current.CreatedAt.UTC()
 	if current.Revoked || !current.ExpiresAt.UTC().After(now) || !current.IdleExpiresAt.UTC().After(now) {
 		return SocialLinkResult{}, ErrSocialLinkInvalidSession
 	}
-	authDeadline := createdAt.Add(SocialLinkFreshness)
-	if !now.Before(authDeadline) {
+	if err := RequireReverification(ctx, app.InternalID, current.UserID, current.PublicID, ReverificationPurposeSocialLink); err != nil {
 		return SocialLinkResult{}, ErrSocialLinkReverificationRequired
 	}
 	canonicalRedirect, err := applicationinstance.CanonicalizeRedirectURL(redirectURL)
@@ -159,7 +150,6 @@ func (s *SocialLinkService) CreateLinkAttempt(ctx context.Context, app applicati
 		}
 		return SocialLinkResult{}, ErrSocialLinkUnavailable
 	}
-
 	stateSecret, stateHash, err := newSocialSecret()
 	if err != nil {
 		return SocialLinkResult{}, ErrSocialLinkUnavailable
@@ -175,10 +165,10 @@ func (s *SocialLinkService) CreateLinkAttempt(ctx context.Context, app applicati
 		}
 		nonceHash = &hash
 	}
-	var providerVerifier, providerChallenge string
+	var providerChallenge string
 	var providerCiphertext []byte
 	if adapter.UsesPKCE() {
-		providerVerifier, err = generatePKCEVerifier()
+		providerVerifier, err := generatePKCEVerifier()
 		if err != nil || s.protector == nil {
 			return SocialLinkResult{}, ErrSocialLinkUnavailable
 		}
@@ -192,7 +182,7 @@ func (s *SocialLinkService) CreateLinkAttempt(ctx context.Context, app applicati
 	if err != nil {
 		return SocialLinkResult{}, ErrSocialLinkUnavailable
 	}
-	expiresAt := earliestTime(now.Add(SocialLinkAttemptTTL), authDeadline, current.ExpiresAt.UTC(), current.IdleExpiresAt.UTC())
+	expiresAt := earliestTime(now.Add(SocialLinkAttemptTTL), current.ExpiresAt.UTC(), current.IdleExpiresAt.UTC())
 	remaining := expiresAt.Sub(now)
 	if remaining < time.Second {
 		return SocialLinkResult{}, ErrSocialLinkInvalidSession
@@ -204,7 +194,7 @@ func (s *SocialLinkService) CreateLinkAttempt(ctx context.Context, app applicati
 		Provider:               provider,
 		CanonicalRedirectURL:   canonicalRedirect,
 		StateHash:              stateHash,
-		RecentAuthAt:           createdAt,
+		RecentAuthAt:           now,
 		OIDCNonceHash:          nonceHash,
 		ProviderPKCECiphertext: providerCiphertext,
 		CreatedAt:              now,
@@ -274,12 +264,7 @@ func (s *SocialLinkService) CompleteLinkCallback(ctx context.Context, callbackPr
 	if err != nil || proof.Provider != attempt.Provider || !validProviderSubject(proof.Subject) {
 		return fail()
 	}
-	if err := s.persistence.FinalizeSocialLink(ctx, SocialLinkFinalize{
-		AttemptID:       attempt.AttemptID,
-		ProviderSubject: proof.Subject,
-		Now:             s.now().UTC(),
-		CorrelationID:   correlationID,
-	}); err != nil {
+	if err := s.persistence.FinalizeSocialLink(ctx, SocialLinkFinalize{AttemptID: attempt.AttemptID, ProviderSubject: proof.Subject, Now: s.now().UTC(), CorrelationID: correlationID}); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return SocialLinkCallbackResult{}, ctxErr
 		}
