@@ -21,12 +21,14 @@ type Result struct {
 	SocialAuthAttempts      int64
 	SocialLinkAttempts      int64
 	SocialCompletionGrants  int64
+	PasskeyAttempts         int64
 }
 
 // CleanupSecurityState removes only operational rows whose security lifetime
 // has ended. Each table is bounded by batchSize. Audit events, sessions, phone
-// identifiers, external identities, and refresh credentials are deliberately
-// outside this primitive.
+// identifiers, external identities, passkey credentials, and refresh credentials
+// are deliberately outside this primitive. Correctness never depends on this
+// cleanup: proof paths still enforce expiry and one-time consumption themselves.
 func CleanupSecurityState(ctx context.Context, db *sql.DB, batchSize int) (Result, error) {
 	if db == nil || batchSize <= 0 || batchSize > 10_000 {
 		return Result{}, ErrInvalidBatchSize
@@ -100,6 +102,12 @@ func CleanupSecurityState(ctx context.Context, db *sql.DB, batchSize int) (Resul
 			ORDER BY expires_at
 			LIMIT $1
 		) DELETE FROM social_auth_completion_grants p USING doomed d WHERE p.ctid = d.ctid`},
+		{&result.PasskeyAttempts, `WITH doomed AS (
+			SELECT ctid FROM passkey_attempts
+			WHERE consumed_at IS NOT NULL OR expires_at <= CURRENT_TIMESTAMP
+			ORDER BY expires_at
+			LIMIT $1
+		) DELETE FROM passkey_attempts p USING doomed d WHERE p.ctid = d.ctid`},
 	}
 	for _, cleanup := range queries {
 		if err := ctx.Err(); err != nil {
