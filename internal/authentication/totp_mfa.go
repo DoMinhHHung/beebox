@@ -19,6 +19,7 @@ type PendingTOTPAuthenticationSnapshot struct {
 	CredentialID          string
 	Envelope              TOTPSecretEnvelope
 	LastAcceptedTimestep  *int64
+	FailedAttempts        int
 	ExpiresAt             time.Time
 }
 
@@ -41,6 +42,7 @@ type TOTPAuthenticationResult struct {
 
 type TOTPAuthenticationPersistence interface {
 	LoadPendingTOTPAuthentication(context.Context, string, [32]byte) (PendingTOTPAuthenticationSnapshot, error)
+	RecordPendingTOTPFailure(context.Context, string, [32]byte) error
 	FinalizePendingTOTPAuthentication(context.Context, TOTPAuthenticationFinalize) (TOTPAuthenticationResult, error)
 }
 
@@ -64,7 +66,7 @@ func (s *TOTPService) CompletePendingAuthentication(
 		return TOTPAuthenticationResult{}, mapTOTPError(ctx, err)
 	}
 	now := s.now().UTC()
-	if snapshot.PendingPublicID != pendingPublicID || snapshot.TokenHash != tokenHash || snapshot.ApplicationInstanceID != expectedAppID || !snapshot.UserID.Valid() || snapshot.PrimaryMethod == "" || snapshot.PrimaryContext == "" || snapshot.CredentialID == "" || !now.Before(snapshot.ExpiresAt.UTC()) {
+	if snapshot.PendingPublicID != pendingPublicID || snapshot.TokenHash != tokenHash || snapshot.ApplicationInstanceID != expectedAppID || !snapshot.UserID.Valid() || snapshot.PrimaryMethod == "" || snapshot.PrimaryContext == "" || snapshot.CredentialID == "" || snapshot.FailedAttempts < 0 || snapshot.FailedAttempts >= 5 || !now.Before(snapshot.ExpiresAt.UTC()) {
 		return TOTPAuthenticationResult{}, ErrTOTPEnrollmentInvalid
 	}
 	secretRaw, err := s.protector.DecryptTOTP(TOTPSecretContext{
@@ -77,6 +79,9 @@ func (s *TOTPService) CompletePendingAuthentication(
 	}
 	timestep, valid, err := s.protocol.Verify(secretRaw, code, now)
 	if err != nil || !valid {
+		if recordErr := persistence.RecordPendingTOTPFailure(ctx, pendingPublicID, tokenHash); recordErr != nil {
+			return TOTPAuthenticationResult{}, mapTOTPError(ctx, recordErr)
+		}
 		return TOTPAuthenticationResult{}, ErrTOTPInvalidCode
 	}
 	if snapshot.LastAcceptedTimestep != nil && timestep <= *snapshot.LastAcceptedTimestep {

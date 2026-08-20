@@ -161,6 +161,43 @@ func TestPendingTOTPAuthenticationAuditFailureRollsBackAuthorityState(t *testing
 	}
 }
 
+func TestPendingTOTPAuthenticationLocksAfterFiveFailedProofs(t *testing.T) {
+	pool, ctx := socialAccountManagementDatabase(t, "totp-mfa-failure-limit")
+	app, err := applicationpostgres.New(pool).Create(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := identitypostgres.New(pool).Create(ctx, app.InternalID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := pool.OpenSQLDB()
+	defer db.Close()
+	seedTOTPCredential(t, ctx, db, int64(app.InternalID), int64(user.InternalID), 400)
+	pendingID, tokenHash := seedPendingMFA(t, ctx, db, int64(app.InternalID), int64(user.InternalID), "mfp_123e4567-e89b-42d3-a456-426614174401", "failure-token", "password-proof")
+	store := New(pool)
+
+	for attempt := 1; attempt <= 5; attempt++ {
+		if err := store.RecordPendingTOTPFailure(ctx, pendingID, tokenHash); err != nil {
+			t.Fatalf("attempt %d: %v", attempt, err)
+		}
+	}
+	if err := store.RecordPendingTOTPFailure(ctx, pendingID, tokenHash); !errors.Is(err, authentication.ErrPendingMFAInvalid) {
+		t.Fatalf("sixth attempt error=%v", err)
+	}
+	if _, err := store.LoadPendingTOTPAuthentication(ctx, pendingID, tokenHash); !errors.Is(err, authentication.ErrPendingMFAInvalid) {
+		t.Fatalf("locked pending authentication load error=%v", err)
+	}
+	var attempts int
+	if err := db.QueryRowContext(ctx, `SELECT failed_attempts FROM pending_mfa_authentications WHERE public_id=$1`, pendingID).Scan(&attempts); err != nil || attempts != 5 {
+		t.Fatalf("failed attempts=%d err=%v", attempts, err)
+	}
+	var sessions int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM sessions WHERE application_instance_id=$1 AND user_id=$2`, int64(app.InternalID), int64(user.InternalID)).Scan(&sessions); err != nil || sessions != 0 {
+		t.Fatalf("sessions=%d err=%v", sessions, err)
+	}
+}
+
 func seedTOTPCredential(t *testing.T, ctx context.Context, db *sql.DB, appID, userID, lastTimestep int64) {
 	t.Helper()
 	nonce := []byte("123456789012")

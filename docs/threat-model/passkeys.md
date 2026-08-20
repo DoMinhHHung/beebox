@@ -1,6 +1,6 @@
 # P2.5 passkey / WebAuthn threat-model delta
 
-This document extends the initial BeeBox threat model for the P2.5 passkey implementation. It does not define TOTP/MFA behavior; TOTP remains P2.6.
+This document extends the initial BeeBox threat model for the P2.5 passkey implementation. The implemented P2.6 TOTP continuation and downgrade controls are defined separately in `docs/threat-model/totp-mfa.md`.
 
 ## Trust and key boundary
 
@@ -26,13 +26,13 @@ Concurrent/replayed authentication cannot use the same ceremony twice. Credentia
 
 Passkey registration and removal are sensitive account mutations. They require the persisted initiating/current session itself to be inside the accepted recent-authentication window; merely refreshing an access token for an old session does not renew that evidence. Registration is bound to that exact application/user/session. Removal resolves ownership from the current application/user and an opaque `pky_` locator.
 
-A passkey participates in last-usable-authentication-method protection only when it is a stored credential for the exact current application/user under the implemented passkey contract. Cross-application credentials never count. Removing the sole usable passkey is denied. Removal is allowed when another usable passkey or another currently usable BeeBox primary/recovery path remains, using the same application-scoped availability rules as social unlink. P2.5 does not classify passkeys as TOTP/MFA and does not bypass future configured TOTP requirements.
+A passkey participates in last-usable-authentication-method protection only when it is a stored credential for the exact current application/user under the implemented passkey contract. Cross-application credentials never count. Removing the sole usable passkey is denied. Removal is allowed when another usable passkey or another currently usable BeeBox primary path remains, using the same application-scoped availability rules as social unlink. A passkey is not itself classified as TOTP/MFA and does not bypass active TOTP: successful passkey proof enters the same pending-MFA continuation as every other primary method.
 
 Social-account unlink likewise counts a same-application/user passkey as a usable remaining primary authentication path. This prevents P2.4B from incorrectly stranding a passkey-capable account while preserving the previous behavior when no passkey exists.
 
 ## Transaction and audit integrity
 
-Successful registration persists the credential and its passkey-registration audit fact in the same transaction. Successful authentication persists updated credential state, ordinary session/refresh state and its authentication audit fact coherently in one transaction. Successful removal deletes the credential and writes its removal audit fact in one transaction. Induced audit-insert failure must roll back the corresponding credential/session mutation.
+Successful registration persists the credential and its passkey-registration audit fact in the same transaction. Successful authentication persists updated credential state and either a pending-MFA transaction or ordinary session/refresh state with its authentication audit fact coherently in one transaction. Successful removal deletes the credential and writes its removal audit fact in one transaction. Induced audit-insert failure must roll back the corresponding credential/session mutation.
 
 Audit data contains BeeBox-owned action/outcome/application/user context and an opaque `passkey:<pky_...>` resource reference where a credential resource exists. Raw WebAuthn browser responses, challenges, credential public-key blobs, credential IDs and authenticator-private material are not audit payloads.
 

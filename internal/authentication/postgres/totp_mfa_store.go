@@ -24,22 +24,25 @@ func (s *Store) LoadPendingTOTPAuthentication(ctx context.Context, pendingPublic
 	var appID, userID int64
 	var version int
 	var keyID, credentialID string
-	var nonce, ciphertext []byte
+	var storedTokenHash, nonce, ciphertext []byte
 	var last sql.NullInt64
 	err := db.QueryRowContext(ctx, `
-		SELECT p.public_id,p.token_hash,p.application_instance_id,p.user_id,p.primary_method,p.primary_context,p.expires_at,
+		SELECT p.public_id,p.token_hash,p.application_instance_id,p.user_id,p.primary_method,p.primary_context,p.failed_attempts,p.expires_at,
 		       c.public_id,c.encryption_version,c.encryption_key_id,c.encryption_nonce,c.encrypted_secret,c.last_accepted_timestep
 		FROM pending_mfa_authentications p
 		JOIN totp_credentials c ON c.application_instance_id=p.application_instance_id AND c.user_id=p.user_id
 		WHERE p.public_id=$1 AND p.token_hash=$2 AND p.purpose='authentication' AND p.required_factor='totp'
-		  AND p.consumed_at IS NULL AND p.expires_at>CURRENT_TIMESTAMP`, pendingPublicID, tokenHash[:],
-	).Scan(&out.PendingPublicID, &out.TokenHash, &appID, &userID, &out.PrimaryMethod, &out.PrimaryContext, &out.ExpiresAt,
+		  AND p.consumed_at IS NULL AND p.expires_at>CURRENT_TIMESTAMP AND p.failed_attempts<5`, pendingPublicID, tokenHash[:],
+	).Scan(&out.PendingPublicID, &storedTokenHash, &appID, &userID, &out.PrimaryMethod, &out.PrimaryContext, &out.FailedAttempts, &out.ExpiresAt,
 		&credentialID, &version, &keyID, &nonce, &ciphertext, &last)
 	if errors.Is(err, sql.ErrNoRows) {
 		return authentication.PendingTOTPAuthenticationSnapshot{}, authentication.ErrPendingMFAInvalid
 	}
 	if err != nil {
 		return authentication.PendingTOTPAuthenticationSnapshot{}, classifyTOTPError(ctx, err)
+	}
+	if !copyFixedHash32(&out.TokenHash, storedTokenHash) || out.TokenHash != tokenHash {
+		return authentication.PendingTOTPAuthenticationSnapshot{}, authentication.ErrPendingMFAInvalid
 	}
 	out.ApplicationInstanceID = applicationinstance.InternalID(appID)
 	out.UserID = identity.InternalID(userID)
@@ -51,6 +54,38 @@ func (s *Store) LoadPendingTOTPAuthentication(ctx context.Context, pendingPublic
 	}
 	out.ExpiresAt = out.ExpiresAt.UTC()
 	return out, nil
+}
+
+func (s *Store) RecordPendingTOTPFailure(ctx context.Context, pendingPublicID string, tokenHash [32]byte) error {
+	if s == nil || s.pool == nil || !publicid.IsUUIDv4(pendingPublicID, "mfp") || tokenHash == ([32]byte{}) {
+		return authentication.ErrPendingMFAInvalid
+	}
+	db := s.pool.OpenSQLDB()
+	defer db.Close()
+	result, err := db.ExecContext(ctx, `
+		UPDATE pending_mfa_authentications
+		SET failed_attempts=failed_attempts+1
+		WHERE public_id=$1 AND token_hash=$2 AND purpose='authentication' AND required_factor='totp'
+		  AND consumed_at IS NULL AND expires_at>CURRENT_TIMESTAMP AND failed_attempts<5`, pendingPublicID, tokenHash[:])
+	if err != nil {
+		return classifyTOTPError(ctx, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return authentication.ErrTOTPPersistence
+	}
+	if rows != 1 {
+		return authentication.ErrPendingMFAInvalid
+	}
+	return nil
+}
+
+func copyFixedHash32(dst *[32]byte, src []byte) bool {
+	if dst == nil || len(src) != len(*dst) {
+		return false
+	}
+	copy(dst[:], src)
+	return true
 }
 
 func (s *Store) FinalizePendingTOTPAuthentication(ctx context.Context, final authentication.TOTPAuthenticationFinalize) (authentication.TOTPAuthenticationResult, error) {
@@ -69,12 +104,13 @@ func (s *Store) FinalizePendingTOTPAuthentication(ctx context.Context, final aut
 	var primaryMethod, primaryContext, purpose, factor string
 	var expiresAt sql.NullTime
 	var consumedAt sql.NullTime
+	var failedAttempts int
 	err = tx.QueryRowContext(ctx, `
-		SELECT application_instance_id,user_id,purpose,primary_method,primary_context,required_factor,expires_at,consumed_at
+		SELECT application_instance_id,user_id,purpose,primary_method,primary_context,required_factor,failed_attempts,expires_at,consumed_at
 		FROM pending_mfa_authentications
 		WHERE public_id=$1 AND token_hash=$2
 		FOR UPDATE`, final.PendingPublicID, final.TokenHash[:],
-	).Scan(&appID, &userID, &purpose, &primaryMethod, &primaryContext, &factor, &expiresAt, &consumedAt)
+	).Scan(&appID, &userID, &purpose, &primaryMethod, &primaryContext, &factor, &failedAttempts, &expiresAt, &consumedAt)
 	if errors.Is(err, sql.ErrNoRows) || consumedAt.Valid || !expiresAt.Valid {
 		return authentication.TOTPAuthenticationResult{}, authentication.ErrPendingMFAInvalid
 	}
@@ -89,7 +125,7 @@ func (s *Store) FinalizePendingTOTPAuthentication(ctx context.Context, final aut
 		return authentication.TOTPAuthenticationResult{}, authentication.ErrPendingMFAExpired
 	}
 	snapshot := final.Snapshot
-	if purpose != "authentication" || factor != "totp" || appID != int64(snapshot.ApplicationInstanceID) || userID != int64(snapshot.UserID) || primaryMethod != snapshot.PrimaryMethod || primaryContext != snapshot.PrimaryContext || snapshot.PendingPublicID != final.PendingPublicID || snapshot.TokenHash != final.TokenHash {
+	if purpose != "authentication" || factor != "totp" || failedAttempts >= 5 || failedAttempts != snapshot.FailedAttempts || appID != int64(snapshot.ApplicationInstanceID) || userID != int64(snapshot.UserID) || primaryMethod != snapshot.PrimaryMethod || primaryContext != snapshot.PrimaryContext || snapshot.PendingPublicID != final.PendingPublicID || snapshot.TokenHash != final.TokenHash {
 		return authentication.TOTPAuthenticationResult{}, authentication.ErrPendingMFAInvalid
 	}
 

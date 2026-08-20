@@ -36,20 +36,21 @@ type refreshRequest struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
-type pendingMFAResponse struct {
-	Factor    string `json:"factor"`
-	Token     string `json:"token"`
-	ExpiresIn int64  `json:"expires_in"`
+type authenticationSessionResponse struct {
+	ID string `json:"id"`
 }
 
 type tokenResponse struct {
-	Status       string              `json:"status,omitempty"`
-	AccessToken  string              `json:"access_token,omitempty"`
-	TokenType    string              `json:"token_type,omitempty"`
-	ExpiresIn    int64               `json:"expires_in,omitempty"`
-	SessionID    string              `json:"session_id,omitempty"`
-	RefreshToken string              `json:"refresh_token,omitempty"`
-	PendingMFA   *pendingMFAResponse `json:"pending_mfa,omitempty"`
+	Status           string                         `json:"status"`
+	Session          *authenticationSessionResponse `json:"session,omitempty"`
+	AccessToken      string                         `json:"access_token,omitempty"`
+	TokenType        string                         `json:"token_type,omitempty"`
+	ExpiresIn        int64                          `json:"expires_in,omitempty"`
+	SessionID        string                         `json:"session_id,omitempty"`
+	RefreshToken     string                         `json:"refresh_token,omitempty"`
+	PendingMFAToken  string                         `json:"pending_mfa_token,omitempty"`
+	ExpiresAt        *time.Time                     `json:"expires_at,omitempty"`
+	AvailableMethods []string                       `json:"available_methods,omitempty"`
 }
 
 func WithSessions(base http.Handler, applications ApplicationResolver, origins OriginPolicy, sessions SessionService, ring *session.KeyRing) http.Handler {
@@ -230,17 +231,18 @@ func (h *sessionHTTP) handleSessionPreflight(w http.ResponseWriter, r *http.Requ
 
 func writeAuthenticationTokenPair(w http.ResponseWriter, r *http.Request, pair session.TokenPair, appPublicID applicationinstance.PublicID) {
 	if pair.PendingMFA != nil {
+		expiresAt := pair.PendingMFA.ExpiresAt.UTC()
 		writeJSON(w, http.StatusOK, tokenResponse{
-			Status: "mfa_required",
-			PendingMFA: &pendingMFAResponse{
-				Factor:    "totp",
-				Token:     pair.PendingMFA.Token,
-				ExpiresIn: pair.PendingMFA.ExpiresIn,
-			},
+			Status:           "mfa_required",
+			PendingMFAToken:  pair.PendingMFA.Token,
+			ExpiresAt:        &expiresAt,
+			AvailableMethods: append([]string(nil), pair.PendingMFA.AvailableMethods...),
 		})
 		return
 	}
 	response := tokenResponse{
+		Status:      "authenticated",
+		Session:     &authenticationSessionResponse{ID: pair.SessionID},
 		AccessToken: pair.AccessToken,
 		TokenType:   "Bearer",
 		ExpiresIn:   pair.ExpiresIn,

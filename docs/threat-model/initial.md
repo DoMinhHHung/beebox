@@ -1,16 +1,16 @@
 # Initial BeeBox Threat Model
 
-> Status: repository-owned threat model for ratified Phase 1, implemented P2.1 passwordless email OTP, implemented P2.2 phone-first signup + verified-phone SMS OTP authentication, implemented P2.3 social OAuth/OIDC, implemented P2.4A explicit authenticated social account linking, implemented P2.4B linked social account listing/unlink, and **accepted** Phase 2 trust contracts for later work.
+> Status: repository-owned threat model for ratified Phase 1, implemented P2.1 passwordless email OTP, P2.2 phone-first signup + verified-phone SMS OTP authentication, P2.3 social OAuth/OIDC, P2.4A/P2.4B social account linking/management, P2.5 passkeys and P2.6 TOTP MFA, plus **accepted** Phase 2 trust contracts for later work.
 > Governance baseline: `Instruction.md`, `docs/contracts/conventions.md`, and accepted ADRs 0001–0007.
-> ADRs 0004–0007 remain architecture/security requirements. P2.4B does not implement existing-account phone enrollment/change/removal, principal merge, provider-side consent/token revocation, MFA, generic P2.8 reverification runtime, passkeys, recovery, device management or hosted auth.
+> ADRs 0004–0007 remain architecture/security requirements. The current P2.6 boundary does not implement expanded identifier self-service, principal merge, provider-side consent/token revocation, recovery codes, generic P2.8 reverification, device self-service or hosted auth.
 
 ## 1. Scope and trust model
 
 BeeBox is one Go modular monolith with PostgreSQL as the correctness source of truth. `application_instance` is the root isolation boundary. Email, phone and external identities are application-scoped. Equality of email, phone or provider profile claims is never implicit account-link, merge or adoption authority. BeeBox consumes external OAuth/OIDC providers for authentication and explicit social linking; it is not itself an OAuth/OIDC authorization server.
 
-The reachable implemented surface covers email/password signup and ownership verification, password signin/reset, P2.1 email OTP primary authentication, P2.2 phone-first SMS possession signup and verified-phone SMS OTP primary authentication, P2.3 social OAuth/OIDC signup/signin, P2.4A explicit authenticated social-link initiation/callback, P2.4B self-service linked-social listing/unlink, ordinary session/current/refresh/revoke/signout, Ed25519 JWT/JWKS, backend session management, bounded metrics and the Go SDK.
+The reachable implemented surface covers email/password signup and ownership verification, password signin/reset, P2.1 email OTP primary authentication, P2.2 phone-first SMS possession signup and verified-phone SMS OTP primary authentication, P2.3 social OAuth/OIDC signup/signin, P2.4A/P2.4B social linking/management, P2.5 passkeys, P2.6 TOTP enrollment/removal and pending authentication, ordinary session/current/refresh/revoke/signout, Ed25519 JWT/JWKS, backend session management, bounded metrics and the Go SDK.
 
-P2.3 provides exactly three BeeBox social-auth public operations: initiate, provider callback, and completion exchange. P2.4A additively provides `POST /v1/social-links/attempts` and reuses the existing provider callback with purpose-separated server-issued state. P2.4B adds `GET /v1/social-links` and `DELETE /v1/social-links/{social_link_id}` using opaque BeeBox-owned social-link public IDs. No social management route exposes provider-specific public models, provider subjects or provider-token APIs. Existing-account phone add/change/remove/switch, principal merge, passkeys, MFA, generic recovery codes, generic P2.8 step-up/reverification runtime, hosted authentication and device-management behavior remain unimplemented. Accepted ADRs 0004–0007 define the security contracts applicable to implemented social signup/signin/linking/management and later slices.
+P2.3 provides exactly three BeeBox social-auth public operations: initiate, provider callback, and completion exchange. P2.4A additively provides `POST /v1/social-links/attempts` and reuses the existing provider callback with purpose-separated server-issued state. P2.4B adds `GET /v1/social-links` and `DELETE /v1/social-links/{social_link_id}` using opaque BeeBox-owned social-link public IDs. P2.5 adds WebAuthn and P2.6 adds TOTP lifecycle plus one common pending-MFA boundary for every implemented primary method. Expanded identifier self-service, principal merge, recovery codes, generic P2.8 reverification, hosted authentication and device-management behavior remain unimplemented at this checkpoint.
 
 ## 2. Assets and secret/PII handling
 
@@ -299,13 +299,13 @@ The last-usable-method predicate is intentionally concrete rather than a generic
 | Provider-side revocation confusion | BeeBox does not persist provider access/refresh tokens and DELETE performs no vendor disconnect/consent/token-revocation call; public docs state this explicitly. |
 | Audit leaks provider identity | Success/denial audit uses exact app/current actor+subject and opaque `sli_` reference only; no raw provider subject/email/profile/token/state/PKCE material. |
 
-## 19. Accepted Phase 2 assurance, MFA and recovery requirements
+## 19. Implemented TOTP assurance and accepted recovery requirements
 
-| Threat | Accepted control / required later evidence |
+| Threat | Control and evidence |
 | --- | --- |
-| MFA downgrade via alternate primary method | Required MFA applies regardless of password/email OTP/phone OTP/social primary method. P2.1/P2.2/P2.3 encode primary proof only, not bypass. |
+| MFA downgrade via alternate primary method | Active TOTP applies after password, email OTP, phone OTP, social or passkey primary proof through the shared assurance finalizer. |
 | Treating arbitrary two steps as independent MFA | Factor independence/security property must be evaluated by the implemented factor set. |
-| Full session before required MFA | Primary proof, pending additional assurance and fully authenticated state are conceptually distinct. No additional-assurance runtime is configured yet. |
+| Full session before required MFA | Active TOTP produces only a five-minute hash-only pending transaction. Session/access/refresh authority is issued atomically only after valid non-replayed TOTP completion. |
 | Stale-session sensitive mutation | Sensitive operations require recent trusted server-side reverification. P2.4A/P2.4B implement only the narrow `session.created_at` 10-minute model; richer P2.8 step-up is not implemented. |
 | Client-forged freshness | Client timestamps or claimed methods are not authority; evidence is server-recorded and bound to app/user/session/flow. P2.4A/P2.4B already enforce this for social linking/unlink. |
 | Recovery downgrade/replay | Recovery credentials are purpose-specific and one-time; replay fails closed and cannot silently erase configured assurance. |
@@ -338,9 +338,9 @@ P2.4A/P2.4B now provide concrete evidence for explicit social-link session-switc
 
 ## 22. Implemented versus accepted boundary
 
-ADRs 0001–0007 are accepted architecture/security contracts. Existing code/tests provide Phase 1 runtime evidence, P2.1 email OTP evidence, P2.2 phone-first/SMS OTP evidence, P2.3 social OAuth/OIDC evidence, and this branch's P2.4A explicit authenticated social-link plus P2.4B linked-account-management evidence described above.
+ADRs 0001–0007 are accepted architecture/security contracts. Existing code/tests provide Phase 1 runtime evidence and P2.1 through P2.6 evidence. The TOTP-specific crypto, downgrade, replay, concurrency and transaction evidence is detailed in `docs/threat-model/totp-mfa.md`.
 
-P2.3 **does** mean social signup/signin runtime exists for the exact eleven provider keys, including exact application redirect/state/completion controls, external-identity ownership, provider proof adapters, provider-token non-retention and provider-email non-authority. P2.4A **does** mean an already-authenticated user with an accepted fresh persisted session may explicitly attach a newly proved unowned provider subject to that same bound principal. P2.4B **does** mean the current authenticated user may list minimized linked-social metadata and unlink one owned social identity only when a usable authentication path remains, with concurrency/pending-state/audit semantics in section 18. It does **not** mean principal merge, MFA/TOTP, recovery codes, generic P2.8 step-up/reverification, passkeys, provider-side consent revocation, device management or hosted authentication are deployed.
+P2.3 **does** mean social signup/signin runtime exists for the exact eleven provider keys, including exact application redirect/state/completion controls, external-identity ownership, provider proof adapters, provider-token non-retention and provider-email non-authority. P2.4A/P2.4B implement explicit authenticated social linking/management. P2.5 implements passkeys. P2.6 implements TOTP MFA with a downgrade-resistant tagged result and atomic pending completion. It does **not** mean principal merge, recovery codes, generic P2.8 reverification, provider-side consent revocation, device management or hosted authentication are deployed.
 
 The deterministic provider-contract suite proves BeeBox request/response compatibility with independently accepted provider wire contracts without requiring live user accounts. Slack uses current first-party Slack SIWS/token/discovery evidence and deterministic local OIDC/JWKS fixtures; no live Slack account or credential is required. Facebook uses the Human-accepted current Meta manual Website/access-token/User evidence plus audited `fbsamples/fedcm-example-app@4a244376676473fe639f6ab186386c60eca21f8d` consumer `/me` evidence. Its deterministic tests independently pin the selected v25.0 authorization/token literals, dedicated GET/query exchange, unversioned `/me?fields=id` query-token request, opaque-string `id`, safe error collapse, no retry and secret/token non-leakage. This does not claim v25.0 is Meta's globally latest version, does not claim Bearer is unsupported, and does not opt into Meta's separately documented OIDC+PKCE extension.
 

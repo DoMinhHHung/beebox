@@ -50,7 +50,7 @@ func TestTOTPSDKLifecycleUsesTrustedHeadersAndExactRoutes(t *testing.T) {
 			if body["pending_mfa_token"] != "mfp.token" || body["code"] != "654321" {
 				t.Fatalf("body=%v", body)
 			}
-			_, _ = w.Write([]byte(`{"access_token":"access-new","token_type":"Bearer","expires_in":300,"session_id":"ses_test","refresh_token":"refresh"}`))
+			_, _ = w.Write([]byte(`{"status":"authenticated","session":{"id":"ses_test"},"access_token":"access-new","token_type":"Bearer","expires_in":300,"session_id":"ses_test","refresh_token":"refresh"}`))
 		case "DELETE /v1/mfa/totp":
 			if r.Header.Get("Authorization") != "Bearer access" {
 				t.Fatalf("authorization=%q", r.Header.Get("Authorization"))
@@ -98,7 +98,7 @@ func TestTOTPSDKLifecycleUsesTrustedHeadersAndExactRoutes(t *testing.T) {
 func TestSDKDecodesPendingMFAWithoutInventingSession(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"mfa_required","pending_mfa":{"factor":"totp","token":"mfp.token","expires_in":300}}`))
+		_, _ = w.Write([]byte(`{"status":"mfa_required","pending_mfa_token":"mfp.token","expires_at":"2026-08-20T00:05:00Z","available_methods":["totp"]}`))
 	}))
 	defer server.Close()
 	client, err := NewClient(server.URL, "pk_test")
@@ -109,10 +109,10 @@ func TestSDKDecodesPendingMFAWithoutInventingSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != "mfa_required" || result.PendingMFA == nil || result.PendingMFA.Factor != "totp" || result.PendingMFA.Token != "mfp.token" {
+	if result.Status != "mfa_required" || result.PendingMFAToken != "mfp.token" || result.ExpiresAt != "2026-08-20T00:05:00Z" || len(result.AvailableMethods) != 1 || result.AvailableMethods[0] != "totp" {
 		t.Fatalf("result=%+v", result)
 	}
-	if result.AccessToken != "" || result.RefreshToken != "" || result.SessionID != "" {
+	if result.AccessToken != "" || result.RefreshToken != "" || result.SessionID != "" || result.Session != nil {
 		t.Fatalf("pending MFA response invented ordinary session material: %+v", result)
 	}
 }

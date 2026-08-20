@@ -116,7 +116,7 @@ func (s *EmailOTPService) Confirm(ctx context.Context, appID applicationinstance
 		if result.PendingMFAPublicID != finalize.PendingMFA.PublicID || !result.PendingMFAExpiresAt.Equal(finalize.PendingMFA.ExpiresAt) {
 			return TokenPair{}, ErrSessionUnavailable
 		}
-		return TokenPair{PendingMFA: &PendingMFA{Token: pendingToken, ExpiresIn: int64(authentication.PendingMFATTL / time.Second)}}, nil
+		return TokenPair{PendingMFA: &PendingMFA{Token: pendingToken, ExpiresAt: result.PendingMFAExpiresAt.UTC(), AvailableMethods: []string{"totp"}}}, nil
 	}
 	access, err := s.ring.Sign(result.UserPublicID, result.ApplicationPublicID, finalize.SessionPublicID, issuedAt)
 	if err != nil {

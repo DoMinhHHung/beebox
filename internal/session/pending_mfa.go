@@ -12,8 +12,9 @@ import (
 )
 
 type PendingMFA struct {
-	Token     string
-	ExpiresIn int64
+	Token            string
+	ExpiresAt        time.Time
+	AvailableMethods []string
 }
 
 func preparePendingMFA(method, primaryContext string, now time.Time) (authentication.PendingMFAWrite, string, error) {
@@ -25,7 +26,10 @@ func preparePendingMFA(method, primaryContext string, now time.Time) (authentica
 	if _, err := rand.Read(secret); err != nil {
 		return authentication.PendingMFAWrite{}, "", ErrSessionUnavailable
 	}
-	hash := sha256.Sum256(secret)
+	hashInput := make([]byte, 0, len("beebox:v1:pending-mfa-token\x00")+len(secret))
+	hashInput = append(hashInput, "beebox:v1:pending-mfa-token\x00"...)
+	hashInput = append(hashInput, secret...)
+	hash := sha256.Sum256(hashInput)
 	raw := base64.RawURLEncoding.EncodeToString(secret)
 	write := authentication.PendingMFAWrite{
 		PublicID:       publicID,
@@ -51,5 +55,8 @@ func parsePendingMFAToken(token string) (string, [32]byte, bool) {
 	if err != nil || len(secret) != 32 {
 		return "", zero, false
 	}
-	return publicID, sha256.Sum256(secret), true
+	hashInput := make([]byte, 0, len("beebox:v1:pending-mfa-token\x00")+len(secret))
+	hashInput = append(hashInput, "beebox:v1:pending-mfa-token\x00"...)
+	hashInput = append(hashInput, secret...)
+	return publicID, sha256.Sum256(hashInput), true
 }

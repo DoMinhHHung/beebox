@@ -174,6 +174,18 @@ func TestTOTPHTTPPendingCompletionUsesPendingAuthorityNotBearerSession(t *testin
 	if rr.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("cache-control=%q", rr.Header().Get("Cache-Control"))
 	}
+	for _, required := range []string{
+		`"status":"authenticated"`,
+		`"session":{"id":"ses_123e4567-e89b-42d3-a456-426614174503"}`,
+		`"access_token":"access-new"`,
+	} {
+		if !strings.Contains(rr.Body.String(), required) {
+			t.Fatalf("authenticated result missing %s: %s", required, rr.Body.String())
+		}
+	}
+	if strings.Contains(rr.Body.String(), "pending_mfa_token") {
+		t.Fatalf("authenticated result includes pending authority: %s", rr.Body.String())
+	}
 
 	for name, mutate := range map[string]func(*http.Request){
 		"wrong app":      func(r *http.Request) { r.Header.Set(PublishableKeyHeader, "pk_other") },

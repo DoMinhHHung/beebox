@@ -92,7 +92,7 @@ func (s *SocialCompletionService) Exchange(ctx context.Context, appID applicatio
 		if assurance.PendingMFAPublicID != pending.PublicID || !assurance.PendingMFAExpiresAt.Equal(pending.ExpiresAt) {
 			return TokenPair{}, ErrSessionUnavailable
 		}
-		return TokenPair{PendingMFA: &PendingMFA{Token: pendingToken, ExpiresIn: int64(authentication.PendingMFATTL / time.Second)}}, nil
+		return TokenPair{PendingMFA: &PendingMFA{Token: pendingToken, ExpiresAt: assurance.PendingMFAExpiresAt.UTC(), AvailableMethods: []string{"totp"}}}, nil
 	}
 	access, err := s.ring.Sign(result.UserPublicID, result.ApplicationPublicID, sessionID, issuedAt)
 	if err != nil {

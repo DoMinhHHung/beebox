@@ -84,6 +84,22 @@ func TestPublicOpenAPIContract(t *testing.T) {
 		"PasskeyList:",
 		"pattern: '^pka_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'",
 		"pattern: '^pky_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'",
+		"  /v1/mfa/totp/enrollments:",
+		"  /v1/mfa/totp/enrollments/confirm:",
+		"  /v1/mfa/totp:",
+		"  /v1/mfa/totp/complete:",
+		"operationId: startTOTPEnrollment",
+		"operationId: confirmTOTPEnrollment",
+		"operationId: getTOTPState",
+		"operationId: removeTOTP",
+		"operationId: completeTOTPAuthentication",
+		"TOTPEnrollment:",
+		"TOTPAuthenticationCompleteRequest:",
+		"MFARequiredAuthenticationResult:",
+		"discriminator:",
+		"propertyName: status",
+		"const: authenticated",
+		"const: mfa_required",
 		"  /v1/sessions/refresh:",
 		"  /v1/sessions/current:",
 		"  /v1/sessions/sign-out:",
@@ -113,7 +129,7 @@ func TestPublicOpenAPIContract(t *testing.T) {
 		"provider email is not account-link authority",
 		"provider access, refresh, and id tokens are never",
 		"original rfc 7636 verifier",
-		"does not implement mfa",
+		"tagged authenticated result",
 		"account linking",
 		"exact current application, user, and session",
 		"does not reset this freshness evidence",
@@ -135,6 +151,9 @@ func TestPublicOpenAPIContract(t *testing.T) {
 		"private key remains authenticator-owned",
 		"webAuthn request and response payloads are opaque json",
 		"one-time ceremony",
+		"no session, access token or refresh token exists before this operation commits successfully",
+		"limited to five failed proofs",
+		"one accepted timestep may authorize at most once",
 	} {
 		if !strings.Contains(normalizedText, strings.ToLower(requiredSemantics)) {
 			t.Fatalf("v1 spec missing authentication semantic %q", requiredSemantics)
@@ -147,6 +166,11 @@ func TestPublicOpenAPIContract(t *testing.T) {
 	} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("v1 spec leaks internal/provider contract term %q", forbidden)
+		}
+	}
+	for _, stale := range []string{"does not implement mfa", "once p2.6 totp is configured"} {
+		if strings.Contains(normalizedText, stale) {
+			t.Fatalf("v1 spec contains stale pre-P2.6 contract %q", stale)
 		}
 	}
 }

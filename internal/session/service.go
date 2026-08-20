@@ -132,7 +132,7 @@ func (s *Service) issueNewSession(ctx context.Context, appID applicationinstance
 			if result.PendingMFAPublicID != pending.PublicID || !result.PendingMFAExpiresAt.Equal(pending.ExpiresAt) {
 				return TokenPair{}, ErrSessionUnavailable
 			}
-			return TokenPair{PendingMFA: &PendingMFA{Token: pendingToken, ExpiresIn: int64(authentication.PendingMFATTL / time.Second)}}, nil
+			return TokenPair{PendingMFA: &PendingMFA{Token: pendingToken, ExpiresAt: result.PendingMFAExpiresAt.UTC(), AvailableMethods: []string{"totp"}}}, nil
 		}
 	} else if err := s.store.CreateSession(ctx, appID, record.UserInternalID, record.CredentialGeneration, sessionID, refreshHash, now.Add(InactivityLifetime), now.Add(AbsoluteLifetime), correlationID); err != nil {
 		return TokenPair{}, err

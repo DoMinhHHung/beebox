@@ -7,8 +7,8 @@ info:
     P2.1 passwordless email OTP, P2.2 phone-first signup plus verified-phone
     SMS OTP primary authentication, P2.3 headless social authentication,
     P2.4A explicit authenticated social account linking, P2.4B linked social
-    account listing/unlink, and P2.5 passkey/WebAuthn primary authentication
-    are implemented. BeeBox is not an OAuth or OpenID Connect authorization
+    account listing/unlink, P2.5 passkey/WebAuthn primary authentication, and
+    P2.6 TOTP MFA are implemented. BeeBox is not an OAuth or OpenID Connect authorization
     server. Public resource identifiers are opaque locators and never establish
     authorization by themselves.
 servers:
@@ -156,7 +156,9 @@ paths:
         Invalid credentials are anti-enumerating. Browser requests with an allowed
         Origin receive the refresh credential only in an application-specific
         Secure HttpOnly SameSite=Strict __Host- cookie. Non-browser callers receive
-        the refresh credential in JSON.
+        the refresh credential in JSON. Success is a status-discriminated result:
+        active TOTP returns only pending-MFA authority, while users without active
+        TOTP receive the authenticated session/token result.
       security: [{publishableKey: []}]
       requestBody:
         required: true
@@ -165,7 +167,7 @@ paths:
             schema: {$ref: '#/components/schemas/SignInRequest'}
       responses:
         '200':
-          description: Session and fresh access credential.
+          description: Tagged authenticated or MFA-required result after valid password proof.
           headers:
             Cache-Control: {$ref: '#/components/headers/NoStore'}
             X-Request-ID: {$ref: '#/components/headers/RequestID'}
@@ -214,7 +216,8 @@ paths:
         Browser requests with an allowed Origin receive refresh state only in the
         application-specific Secure HttpOnly SameSite=Strict __Host- cookie;
         non-browser callers receive the refresh credential in JSON. Email OTP is a
-        primary authentication method and does not override future required MFA.
+        primary authentication method. Active TOTP returns the MFA-required result and
+        no ordinary session/access/refresh authority is created before MFA completion.
       security: [{publishableKey: []}]
       requestBody:
         required: true
@@ -223,7 +226,7 @@ paths:
             schema: {$ref: '#/components/schemas/EmailOTPConfirmRequest'}
       responses:
         '200':
-          description: Ordinary BeeBox session and fresh access credential after one-time OTP consumption.
+          description: Tagged authenticated or MFA-required result after one-time OTP consumption.
           headers:
             Cache-Control: {$ref: '#/components/headers/NoStore'}
             X-Request-ID: {$ref: '#/components/headers/RequestID'}
@@ -270,8 +273,8 @@ paths:
         Confirmation is one-time and replay-safe. Unknown/unverified phones and
         absent, wrong, expired, consumed, attempt-limited, stale/replaced, or
         cross-application challenge state is collapsed into invalid_credentials.
-        Phone OTP is a primary authentication method; it does not bypass future
-        additional assurance requirements and is not ranked permanently above or
+        Phone OTP is a primary authentication method; active TOTP returns the
+        MFA-required result without session/access/refresh authority and is not ranked permanently above or
         below password or email OTP. Browser/non-browser refresh transport is the
         same ordinary BeeBox session transport used by other primary methods.
       security: [{publishableKey: []}]
@@ -282,7 +285,7 @@ paths:
             schema: {$ref: '#/components/schemas/PhoneConfirmRequest'}
       responses:
         '200':
-          description: Ordinary BeeBox session after successful one-time phone OTP consumption.
+          description: Tagged authenticated or MFA-required result after successful one-time phone OTP consumption.
           headers:
             Cache-Control: {$ref: '#/components/headers/NoStore'}
             X-Request-ID: {$ref: '#/components/headers/RequestID'}
@@ -493,9 +496,9 @@ paths:
         Browser-origin-bound P2.3 exchange. The one-time five-minute completion code is
         useless without the original client PKCE verifier: BeeBox validates S256,
         application scope, expiry, one-time consumption, and current user ownership,
-        then atomically creates the same ordinary BeeBox session and refresh state used
-        by other primary authentication methods. The operation is not safe for blind
-        automatic retry after an ambiguous client response and does not implement MFA,
+        then atomically chooses the tagged authenticated result or a five-minute
+        pending-MFA result when the user has active TOTP. The operation is not safe for
+        blind automatic retry after an ambiguous client response and does not perform
         account linking, provider-token storage, or profile enrichment.
       security: [{publishableKey: []}]
       parameters:
@@ -507,7 +510,7 @@ paths:
             schema: {$ref: '#/components/schemas/SocialAuthExchangeRequest'}
       responses:
         '200':
-          description: Ordinary BeeBox session after one-time social completion consumption.
+          description: Tagged authenticated or MFA-required result after one-time social completion consumption.
           headers:
             Cache-Control: {$ref: '#/components/headers/NoStore'}
             X-Request-ID: {$ref: '#/components/headers/RequestID'}
@@ -519,6 +522,130 @@ paths:
         '401': {$ref: '#/components/responses/InvalidCredentials'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/mfa/totp/enrollments:
+    post:
+      operationId: startTOTPEnrollment
+      summary: Start one TOTP enrollment for the current user
+      description: >-
+        Requires the exact current application, user and persisted session plus accepted
+        recent reverification. BeeBox generates a SHA-1, six-digit, 30-second TOTP secret,
+        returns its Base32 setup value and otpauth URI exactly once, and persists only an
+        AES-256-GCM envelope bound to purpose, application, user and credential. The
+        enrollment expires within ten minutes and cannot replace an active credential.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      responses:
+        '201':
+          description: One-time TOTP setup material.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TOTPEnrollment'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/TOTPForbidden'}
+        '409': {$ref: '#/components/responses/TOTPConflict'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/mfa/totp/enrollments/confirm:
+    post:
+      operationId: confirmTOTPEnrollment
+      summary: Confirm and atomically activate TOTP
+      description: >-
+        Verifies the one-time enrollment under the previous/current/next 30-second
+        timestep window, records the accepted timestep, consumes enrollment state and
+        appends required audit evidence atomically. The Base32 secret is never returned
+        again, logged, audited or emitted as a metric label.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TOTPEnrollmentConfirmRequest'}
+      responses:
+        '200':
+          description: Active TOTP credential metadata.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TOTPCredential'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidTOTPProof'}
+        '403': {$ref: '#/components/responses/TOTPForbidden'}
+        '409': {$ref: '#/components/responses/TOTPConflict'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/mfa/totp:
+    get:
+      operationId: getTOTPState
+      summary: Read minimized current-user TOTP state
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      responses:
+        '200':
+          description: Whether TOTP is active plus its opaque BeeBox credential ID.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TOTPState'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+    delete:
+      operationId: removeTOTP
+      summary: Remove the current user's active TOTP credential
+      description: >-
+        Requires the exact current application, user and persisted session plus accepted
+        recent reverification. Removal is atomic with audit evidence and is denied when
+        it would strand the user without a usable primary authentication method.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      responses:
+        '204': {description: TOTP removed or already absent in the exact current scope.}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/TOTPForbidden'}
+        '409': {$ref: '#/components/responses/LastAuthenticationMethod'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/mfa/totp/complete:
+    post:
+      operationId: completeTOTPAuthentication
+      summary: Complete pending primary authentication with TOTP
+      description: >-
+        Accepts the opaque pending-MFA token only in the POST body. The token is five-minute,
+        application/user/primary-proof bound, hash-only at rest, limited to five failed
+        proofs and consumed atomically on success. The previous/current/next timestep is
+        accepted, but one accepted timestep may authorize at most once. No session, access
+        token or refresh token exists before this operation commits successfully.
+      security: [{publishableKey: []}]
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TOTPAuthenticationCompleteRequest'}
+      responses:
+        '200':
+          description: Tagged authenticated result after successful one-time TOTP completion.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TokenResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidTOTPProof'}
+        '403': {$ref: '#/components/responses/Forbidden'}
         '503': {$ref: '#/components/responses/Unavailable'}
 
   /v1/passkeys/registration/attempts:
@@ -590,8 +717,8 @@ paths:
         Resolves the exact application from the publishable key and requires one exact
         allowed Origin. BeeBox derives the RP ID from that trusted Origin and issues a
         short-lived one-time authentication ceremony requiring WebAuthn user verification.
-        Passkey is a primary authentication method and does not bypass configured MFA;
-        once P2.6 TOTP is configured, passkey proof must enter the same pending-MFA path.
+        Passkey is a primary authentication method and does not bypass configured TOTP;
+        active TOTP makes the verified passkey proof enter the same pending-MFA path.
       security: [{publishableKey: []}]
       parameters:
         - {$ref: '#/components/parameters/BrowserOrigin'}
@@ -614,8 +741,9 @@ paths:
         Consumes one exact application/Origin/RP-bound one-time ceremony, verifies the
         authenticator response and required user verification, resolves credential owner
         only inside that application and RP scope, updates verifier-owned credential state,
-        creates the ordinary BeeBox session/refresh verifier and appends required audit
-        coherently. Replay, expiry, cross-application substitution, wrong owner, wrong
+        atomically chooses either pending TOTP assurance or the ordinary BeeBox
+        session/refresh verifier and appends required audit coherently. Replay, expiry,
+        cross-application substitution, wrong owner, wrong
         challenge, wrong Origin/RP or malformed authenticator responses fail closed.
       security: [{publishableKey: []}]
       parameters:
@@ -627,7 +755,7 @@ paths:
             schema: {$ref: '#/components/schemas/PasskeyAuthenticationCompleteRequest'}
       responses:
         '200':
-          description: Ordinary BeeBox session after valid passkey primary proof.
+          description: Tagged authenticated or MFA-required result after valid passkey primary proof.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/TokenResponse'}
@@ -1081,6 +1209,63 @@ components:
           maxLength: 128
           pattern: '^[A-Za-z0-9._~-]+$'
           description: Original RFC 7636 verifier retained by the client and never sent to the social provider.
+    TOTPEnrollment:
+      type: object
+      additionalProperties: false
+      required: [enrollment_id, secret, otpauth_uri, expires_in]
+      properties:
+        enrollment_id:
+          type: string
+          pattern: '^mfe_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+        secret:
+          type: string
+          pattern: '^[A-Z2-7]+$'
+          writeOnly: true
+          description: One-time Base32 setup secret. BeeBox never returns it after enrollment starts.
+        otpauth_uri:
+          type: string
+          format: uri
+          writeOnly: true
+          description: One-time repository-owned TOTP provisioning URI containing the setup secret.
+        expires_in: {type: integer, minimum: 1, maximum: 600}
+    TOTPEnrollmentConfirmRequest:
+      type: object
+      additionalProperties: false
+      required: [enrollment_id, code]
+      properties:
+        enrollment_id:
+          type: string
+          pattern: '^mfe_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+        code: {type: string, pattern: '^[0-9]{6}$'}
+    TOTPAuthenticationCompleteRequest:
+      type: object
+      additionalProperties: false
+      required: [pending_mfa_token, code]
+      properties:
+        pending_mfa_token:
+          type: string
+          minLength: 84
+          maxLength: 84
+          description: Opaque five-minute pending-MFA authority accepted only in this POST body.
+        code: {type: string, pattern: '^[0-9]{6}$'}
+    TOTPCredential:
+      type: object
+      additionalProperties: false
+      required: [id, created_at]
+      properties:
+        id:
+          type: string
+          pattern: '^mfc_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+        created_at: {type: string, format: date-time}
+    TOTPState:
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: {type: boolean}
+        credential_id:
+          type: string
+          pattern: '^mfc_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
     PasskeyAttempt:
       type: object
       additionalProperties: false
@@ -1157,11 +1342,21 @@ components:
           type: string
           minLength: 43
           description: One-time opaque refresh credential. The server persists only verifier material.
-    TokenResponse:
+    AuthenticationSession:
       type: object
       additionalProperties: false
-      required: [access_token, token_type, expires_in, session_id]
+      required: [id]
       properties:
+        id:
+          type: string
+          pattern: '^ses_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+    AuthenticatedAuthenticationResult:
+      type: object
+      additionalProperties: false
+      required: [status, session, access_token, token_type, expires_in, session_id]
+      properties:
+        status: {type: string, const: authenticated}
+        session: {$ref: '#/components/schemas/AuthenticationSession'}
         access_token:
           type: string
           description: Ed25519/EdDSA JWT with required iss, sub, aud, sid, exp, nbf, iat and jti claims.
@@ -1173,6 +1368,36 @@ components:
         refresh_token:
           type: string
           description: Present only in non-browser mode. Browser mode uses the application-specific __Host- refresh cookie.
+    MFARequiredAuthenticationResult:
+      type: object
+      additionalProperties: false
+      required: [status, pending_mfa_token, expires_at, available_methods]
+      properties:
+        status: {type: string, const: mfa_required}
+        pending_mfa_token:
+          type: string
+          minLength: 84
+          maxLength: 84
+          description: Opaque five-minute token; only a domain-separated SHA-256 verifier is persisted.
+        expires_at: {type: string, format: date-time}
+        available_methods:
+          type: array
+          minItems: 1
+          maxItems: 2
+          uniqueItems: true
+          items:
+            type: string
+            enum: [totp, recovery_code]
+          description: Exact methods currently usable for this pending transaction.
+    TokenResponse:
+      oneOf:
+        - {$ref: '#/components/schemas/AuthenticatedAuthenticationResult'}
+        - {$ref: '#/components/schemas/MFARequiredAuthenticationResult'}
+      discriminator:
+        propertyName: status
+        mapping:
+          authenticated: '#/components/schemas/AuthenticatedAuthenticationResult'
+          mfa_required: '#/components/schemas/MFARequiredAuthenticationResult'
     Session:
       type: object
       additionalProperties: false
@@ -1265,6 +1490,21 @@ components:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
     InvalidPasskeyProof:
       description: Passkey ceremony or authenticator proof is invalid, expired, replayed or outside the trusted application/origin/RP/credential ownership scope without exposing verifier detail.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    InvalidTOTPProof:
+      description: TOTP enrollment or pending-MFA proof is invalid, expired, exhausted, replayed, cross-application or already consumed without exposing protected state.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    TOTPForbidden:
+      description: TOTP management returns origin_not_allowed for a disallowed Origin or reverification_required when accepted exact-session reverification evidence is missing or expired.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    TOTPConflict:
+      description: TOTP enrollment is rejected because one active logical credential already exists for the exact application/user.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}

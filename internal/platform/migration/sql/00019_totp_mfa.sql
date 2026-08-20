@@ -88,6 +88,7 @@ CREATE TABLE pending_mfa_authentications (
     primary_method TEXT NOT NULL,
     primary_context TEXT NOT NULL,
     required_factor TEXT NOT NULL,
+    failed_attempts SMALLINT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     expires_at TIMESTAMPTZ NOT NULL,
     consumed_at TIMESTAMPTZ,
@@ -106,6 +107,9 @@ CREATE TABLE pending_mfa_authentications (
         char_length(primary_context) BETWEEN 1 AND 128
     ),
     CONSTRAINT pending_mfa_authentications_required_factor_check CHECK (required_factor = 'totp'),
+    CONSTRAINT pending_mfa_authentications_failed_attempts_check CHECK (
+        failed_attempts BETWEEN 0 AND 5
+    ),
     CONSTRAINT pending_mfa_authentications_time_check CHECK (
         created_at < expires_at
         AND expires_at <= created_at + INTERVAL '5 minutes'

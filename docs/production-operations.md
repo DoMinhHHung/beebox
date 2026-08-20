@@ -22,6 +22,23 @@ Publishable keys are non-secret application context selectors. Secret applicatio
 
 New secret values and generated signing private material are intentional one-time command output. Do not capture them in structured application logs.
 
+## TOTP secret-encryption keys
+
+TOTP setup secrets are encrypted with the bounded keyring configured by `BEEBOX_SECRET_ENCRYPTION_KEYS` and `BEEBOX_SECRET_ENCRYPTION_ACTIVE_KEY_ID`. Each key entry is `key-id:base64url-raw-32-byte-key`; entries are comma separated, key IDs are unique and the total keyring is limited to eight keys. Store root keys in an appropriate secret manager, never in the repository, image, database, command output capture or application logs.
+
+Rotation is additive:
+
+1. generate a new independent 32-byte root key and add it to every instance's keyring while retaining all historical keys;
+2. deploy and verify that every instance can start with the expanded keyring;
+3. change the active key ID to the new key on every instance; new enrollments now use it;
+4. retain an old key while any `totp_credentials` or unconsumed `totp_enrollments` envelope references it;
+5. re-encrypt or replace all remaining referenced credentials under a separately reviewed operation before removing the old key;
+6. remove the historical key only after the persisted reference inventory is empty on every environment and backup/restore requirements have been addressed.
+
+BeeBox startup reads the persisted version/key-ID inventory and fails closed when ciphertext references a missing key or unsupported version. This intentionally makes premature key removal an availability failure instead of silently losing or bypassing MFA. An invalid keyring also fails startup. Never "fix" readiness by deleting TOTP rows, disabling MFA or editing ciphertext in a hosted database.
+
+If a root key may be compromised, stop treating ordinary overlap as sufficient: introduce a new active key, assess exposure of encrypted seeds and backups, require affected users to replace TOTP credentials through the authorized recovery lifecycle, preserve audit evidence and follow the deployment's incident process. Removing the compromised key before referenced credentials are safely replaced only locks users out; it does not revoke knowledge already obtained by an attacker.
+
 ## KDF resource admission
 
 Argon2id remains the verifier primitive for passwords and the current short-lived email/reset challenge verifiers. Each operation uses 64 MiB of Argon2 memory with the Phase 1 parameters. BeeBox therefore has a separate process resource-admission boundary in addition to PostgreSQL abuse rate limits.
@@ -43,7 +60,9 @@ Each invocation deletes at most 500 rows from each eligible category:
 - expired `public_auth_rate_limits` rows;
 - expired `public_auth_idempotency` rows;
 - expired or consumed email-verification challenges;
-- expired or consumed password-reset challenges.
+- expired or consumed password-reset challenges;
+- expired or consumed TOTP enrollments;
+- expired or consumed pending-MFA authentication transactions.
 
 Execution is repeatable and cancellation-aware. Live challenge/idempotency/rate-limit rows are not eligible. `audit_events` are never pruned by this command.
 
