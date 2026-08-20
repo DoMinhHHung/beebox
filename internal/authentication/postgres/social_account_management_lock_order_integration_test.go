@@ -14,22 +14,24 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
 	applicationpostgres "github.com/DoMinhHHung/beebox/internal/applicationinstance/postgres"
 	"github.com/DoMinhHHung/beebox/internal/audit"
 	"github.com/DoMinhHHung/beebox/internal/authentication"
+	"github.com/DoMinhHHung/beebox/internal/identity"
 	identitypostgres "github.com/DoMinhHHung/beebox/internal/identity/postgres"
 	"github.com/DoMinhHHung/beebox/internal/session"
 )
 
 const (
-	createReadyKey   int64 = 810001
-	createBarrierKey int64 = 810002
-	finalReadyKey    int64 = 810011
-	finalBarrierKey  int64 = 810012
-	proofReadyKey    int64 = 810021
-	proofBarrierKey  int64 = 810022
-	exchangeReadyKey int64 = 810031
-	exchangeBarrierKey int64 = 810032
+	createReadyKey      int64 = 810001
+	createBarrierKey    int64 = 810002
+	finalReadyKey       int64 = 810011
+	finalBarrierKey     int64 = 810012
+	proofReadyKey       int64 = 810021
+	proofBarrierKey     int64 = 810022
+	exchangeReadyKey    int64 = 810031
+	exchangeBarrierKey  int64 = 810032
 )
 
 func TestSocialUnlinkNoKeyUpdateAllowsFKProtectionAndStillSerializesInventory(t *testing.T) {
@@ -53,14 +55,14 @@ func TestSocialUnlinkNoKeyUpdateAllowsFKProtectionAndStillSerializesInventory(t 
 	state := cryptosha256.Sum256([]byte("no-key-update-fk"))
 	write := authentication.SocialLinkAttemptWrite{
 		ApplicationInstanceID: app.InternalID,
-		UserID: user.InternalID,
-		SessionPublicID: sessionID,
-		Provider: authentication.ProviderGitHub,
-		CanonicalRedirectURL: "https://app.example.test/link-complete",
-		StateHash: state,
-		RecentAuthAt: created,
-		CreatedAt: time.Now().UTC(),
-		ExpiresAt: created.Add(authentication.SocialLinkFreshness),
+		UserID:                user.InternalID,
+		SessionPublicID:       sessionID,
+		Provider:              authentication.ProviderGitHub,
+		CanonicalRedirectURL:  "https://app.example.test/link-complete",
+		StateHash:             state,
+		RecentAuthAt:          created,
+		CreatedAt:             time.Now().UTC(),
+		ExpiresAt:             created.Add(authentication.SocialLinkFreshness),
 	}
 	childCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
@@ -94,16 +96,16 @@ func TestCreateSocialLinkAttemptAndUnlinkForcedLockCrossing(t *testing.T) {
 
 	state := cryptosha256.Sum256([]byte("forced-create-unlink"))
 	write := authentication.SocialLinkAttemptWrite{
-		ApplicationInstanceID: app.InternalID,
-		UserID: user.InternalID,
-		SessionPublicID: sessionID,
-		Provider: authentication.ProviderGitHub,
-		CanonicalRedirectURL: "https://app.example.test/link-complete",
-		StateHash: state,
-		RecentAuthAt: created,
+		ApplicationInstanceID:  app.InternalID,
+		UserID:                 user.InternalID,
+		SessionPublicID:        sessionID,
+		Provider:               authentication.ProviderGitHub,
+		CanonicalRedirectURL:   "https://app.example.test/link-complete",
+		StateHash:              state,
+		RecentAuthAt:           created,
 		ProviderPKCECiphertext: []byte("forced-create-pkce"),
-		CreatedAt: time.Now().UTC(),
-		ExpiresAt: created.Add(authentication.SocialLinkFreshness),
+		CreatedAt:              time.Now().UTC(),
+		ExpiresAt:              created.Add(authentication.SocialLinkFreshness),
 	}
 	current := socialAccountSession(app, user.InternalID, sessionID, created)
 	store := New(pool)
@@ -343,11 +345,9 @@ func waitForAdvisoryHeld(t *testing.T, ctx context.Context, db *sql.DB, key int6
 	}
 }
 
-func waitForUserInventoryLock(t *testing.T, ctx context.Context, db *sql.DB, appID interface{ Valid() bool }, userID interface{ Valid() bool }) {
+func waitForUserInventoryLock(t *testing.T, ctx context.Context, db *sql.DB, appID applicationinstance.InternalID, userID identity.InternalID) {
 	t.Helper()
-	app, okApp := appID.(interface{ Valid() bool })
-	usr, okUser := userID.(interface{ Valid() bool })
-	if !okApp || !okUser || !app.Valid() || !usr.Valid() {
+	if !appID.Valid() || !userID.Valid() {
 		t.Fatal("invalid inventory lock identifiers")
 	}
 	for {
@@ -359,7 +359,7 @@ func waitForUserInventoryLock(t *testing.T, ctx context.Context, db *sql.DB, app
 			t.Fatal(err)
 		}
 		var id int64
-		err = tx.QueryRowContext(ctx, `SELECT id FROM users WHERE application_instance_id=$1 AND id=$2 FOR NO KEY UPDATE NOWAIT`, appID, userID).Scan(&id)
+		err = tx.QueryRowContext(ctx, `SELECT id FROM users WHERE application_instance_id=$1 AND id=$2 FOR NO KEY UPDATE NOWAIT`, int64(appID), int64(userID)).Scan(&id)
 		_ = tx.Rollback()
 		if isLockNotAvailable(err) {
 			return
