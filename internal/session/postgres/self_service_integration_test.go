@@ -216,10 +216,10 @@ func TestSessionSelfServiceAuditFailureRollsBackRevocation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	correlation := mustCorrelation(t)
-	if _, err := db.ExecContext(ctx, `INSERT INTO audit_events(application_instance_id,actor_kind,actor_user_id,subject_user_id,action,resource_category,outcome,correlation_id,source) VALUES($1,'user',$2,$2,'test.reserved','session','success',$3,'test')`, int64(app.InternalID), int64(user.InternalID), correlation[:]); err != nil {
+	if _, err := db.ExecContext(ctx, `ALTER TABLE audit_events ADD CONSTRAINT audit_events_test_reject_session_self CHECK (action <> 'authentication.session.self_revoke')`); err != nil {
 		t.Fatal(err)
 	}
+	correlation := mustCorrelation(t)
 	current := session.Record{PublicID: currentID, ApplicationInstanceID: app.InternalID, UserInternalID: user.InternalID, IdleExpiresAt: now.Add(time.Hour), ExpiresAt: now.Add(2 * time.Hour)}
 	if err := New(pool).RevokeUserSession(ctx, current, targetID, correlation); !errors.Is(err, session.ErrSessionUnavailable) {
 		t.Fatalf("audit failure error=%v", err)
