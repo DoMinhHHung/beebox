@@ -260,7 +260,7 @@ func mapTOTPError(ctx context.Context, err error) error {
 		return ctxErr
 	}
 	switch {
-	case errors.Is(err, ErrTOTPInvalidSession), errors.Is(err, ErrTOTPReverificationRequired), errors.Is(err, ErrTOTPEnrollmentInvalid), errors.Is(err, ErrTOTPInvalidCode), errors.Is(err, ErrTOTPReplay), errors.Is(err, ErrTOTPAlreadyActive), errors.Is(err, ErrLastAuthenticationMethod):
+	case errors.Is(err, ErrTOTPInvalidSession), errors.Is(err, ErrTOTPReverificationRequired), errors.Is(err, ErrTOTPEnrollmentInvalid), errors.Is(err, ErrTOTPInvalidCode), errors.Is(err, ErrTOTPReplay), errors.Is(err, ErrTOTPAlreadyActive), errors.Is(err, ErrLastAuthenticationMethod), errors.Is(err, ErrPendingMFAInvalid), errors.Is(err, ErrPendingMFAExpired), errors.Is(err, ErrPendingMFAReplay):
 		return err
 	default:
 		return ErrTOTPPersistence
