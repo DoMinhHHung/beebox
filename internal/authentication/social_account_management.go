@@ -122,7 +122,7 @@ func (s *SocialAccountService) Unlink(ctx context.Context, current SocialAccount
 	if current.Revoked || !now.Before(current.IdleExpiresAt.UTC()) || !now.Before(current.ExpiresAt.UTC()) {
 		return ErrSocialAccountInvalidSession
 	}
-	if !now.Before(current.CreatedAt.UTC().Add(SocialLinkFreshness)) {
+	if err := RequireReverification(ctx, current.ApplicationInstanceID, current.UserID, current.SessionPublicID, ReverificationPurposeSocialUnlink); err != nil {
 		return ErrSocialAccountReverification
 	}
 	return s.persistence.UnlinkSocialAccount(ctx, current, publicID, s.availability, correlationID)
