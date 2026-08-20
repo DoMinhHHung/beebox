@@ -32,9 +32,9 @@ type TOTPState struct {
 	CredentialID string `json:"credential_id,omitempty"`
 }
 
-func (c *Client) StartTOTPEnrollment(ctx context.Context, origin, accessToken string) (TOTPEnrollment, error) {
+func (c *Client) StartTOTPEnrollment(ctx context.Context, origin, accessToken, reverificationToken string) (TOTPEnrollment, error) {
 	var out TOTPEnrollment
-	err := c.doJSON(ctx, http.MethodPost, "/v1/mfa/totp/enrollments", nil, &out, totpSessionHeaders(origin, accessToken), false)
+	err := c.doJSON(ctx, http.MethodPost, "/v1/mfa/totp/enrollments", nil, &out, reverificationHeaders(origin, accessToken, reverificationToken), false)
 	return out, err
 }
 
@@ -77,19 +77,19 @@ func (c *Client) RecoveryCodeState(ctx context.Context, origin, accessToken stri
 	return out, err
 }
 
-func (c *Client) RegenerateRecoveryCodes(ctx context.Context, origin, accessToken string) (RecoveryCodeSet, error) {
+func (c *Client) RegenerateRecoveryCodes(ctx context.Context, origin, accessToken, reverificationToken string) (RecoveryCodeSet, error) {
 	var out RecoveryCodeSet
-	err := c.doJSON(ctx, http.MethodPost, "/v1/mfa/recovery-codes/regenerate", nil, &out, totpSessionHeaders(origin, accessToken), false)
+	err := c.doJSON(ctx, http.MethodPost, "/v1/mfa/recovery-codes/regenerate", nil, &out, reverificationHeaders(origin, accessToken, reverificationToken), false)
 	return out, err
 }
 
-func (c *Client) RemoveTOTP(ctx context.Context, origin, accessToken string) error {
-	return c.doJSON(ctx, http.MethodDelete, "/v1/mfa/totp", nil, nil, totpSessionHeaders(origin, accessToken), false)
+func (c *Client) RemoveTOTP(ctx context.Context, origin, accessToken, reverificationToken string) error {
+	return c.doJSON(ctx, http.MethodDelete, "/v1/mfa/totp", nil, nil, reverificationHeaders(origin, accessToken, reverificationToken), false)
 }
 
-func (c *Client) StartTOTPReplacement(ctx context.Context, origin, accessToken, recoveryCode string) (TOTPEnrollment, error) {
+func (c *Client) StartTOTPReplacement(ctx context.Context, origin, accessToken, reverificationToken, recoveryCode string) (TOTPEnrollment, error) {
 	var out TOTPEnrollment
-	err := c.doJSON(ctx, http.MethodPost, "/v1/mfa/totp/replacements", map[string]string{"recovery_code": recoveryCode}, &out, totpSessionHeaders(origin, accessToken), false)
+	err := c.doJSON(ctx, http.MethodPost, "/v1/mfa/totp/replacements", map[string]string{"recovery_code": recoveryCode}, &out, reverificationHeaders(origin, accessToken, reverificationToken), false)
 	return out, err
 }
 
