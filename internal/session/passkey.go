@@ -40,7 +40,11 @@ func (s *PasskeyService) CompleteAuthentication(ctx context.Context, app applica
 		return TokenPair{}, ErrSessionUnavailable
 	}
 	now := s.now().UTC()
-	result, err := s.core.FinalizeAuthentication(ctx, authentication.PasskeyAuthFinalize{
+	pending, pendingToken, err := preparePendingMFA(authentication.PrimaryMethodPasskey, "passkey:"+attempt.PublicID, now)
+	if err != nil {
+		return TokenPair{}, ErrSessionUnavailable
+	}
+	result, assurance, err := s.core.FinalizeAuthenticationWithAssurance(ctx, authentication.PasskeyAuthFinalize{
 		AttemptPublicID: attempt.PublicID,
 		UserID:          user.UserID,
 		Credential:      credential,
@@ -49,9 +53,15 @@ func (s *PasskeyService) CompleteAuthentication(ctx context.Context, app applica
 		IdleExpiresAt:   now.Add(InactivityLifetime),
 		ExpiresAt:       now.Add(AbsoluteLifetime),
 		CorrelationID:   correlationID,
-	})
+	}, pending)
 	if err != nil {
 		return TokenPair{}, err
+	}
+	if assurance.MFARequired {
+		if assurance.PendingMFAPublicID != pending.PublicID || !assurance.PendingMFAExpiresAt.Equal(pending.ExpiresAt) {
+			return TokenPair{}, ErrSessionUnavailable
+		}
+		return TokenPair{PendingMFA: &PendingMFA{Token: pendingToken, ExpiresIn: int64(authentication.PendingMFATTL / time.Second)}}, nil
 	}
 	access, err := s.ring.Sign(string(result.UserPublicID), string(result.ApplicationPublicID), sessionID, now)
 	if err != nil {
