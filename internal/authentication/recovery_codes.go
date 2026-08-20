@@ -125,11 +125,11 @@ func (s *RecoveryCodeService) Regenerate(ctx context.Context, current TOTPSessio
 		return RecoveryCodeSetResult{}, ErrRecoveryUnavailable
 	}
 	now := s.now().UTC()
-	if err := validateTOTPFreshSession(current, now); err != nil {
-		if errors.Is(err, ErrTOTPReverificationRequired) {
-			return RecoveryCodeSetResult{}, ErrRecoveryReverification
-		}
+	if err := validateTOTPActiveSession(current, now); err != nil {
 		return RecoveryCodeSetResult{}, ErrRecoveryUnavailable
+	}
+	if err := RequireReverification(ctx, current.ApplicationInstanceID, current.UserID, current.SessionPublicID, ReverificationPurposeRecoveryRegenerate); err != nil {
+		return RecoveryCodeSetResult{}, ErrRecoveryReverification
 	}
 	set, codes, err := GenerateRecoveryCodeSet(current.ApplicationInstanceID, current.UserID, current.SessionPublicID, "regeneration", now)
 	if err != nil {
@@ -145,8 +145,7 @@ func (s *RecoveryCodeService) State(ctx context.Context, current TOTPSession) (R
 	if s == nil || s.persistence == nil || s.now == nil || !validTOTPSession(current) {
 		return RecoveryCodeState{}, ErrRecoveryUnavailable
 	}
-	now := s.now().UTC()
-	if current.Revoked || !now.Before(current.IdleExpiresAt.UTC()) || !now.Before(current.ExpiresAt.UTC()) {
+	if err := validateTOTPActiveSession(current, s.now().UTC()); err != nil {
 		return RecoveryCodeState{}, ErrRecoveryUnavailable
 	}
 	state, err := s.persistence.RecoveryCodeState(ctx, current.ApplicationInstanceID, current.UserID)
