@@ -29,15 +29,18 @@ func TestSocialAccountManagementMigrationUpgradesVersion16(t *testing.T) {
 		t.Fatal(err)
 	}
 	version16 := fstest.MapFS{}
+	version17 := fstest.MapFS{}
 	for _, entry := range entries {
-		if entry.Name() == "00017_social_account_management.sql" {
-			continue
-		}
 		data, err := fs.ReadFile(sources, entry.Name())
 		if err != nil {
 			t.Fatal(err)
 		}
-		version16[entry.Name()] = &fstest.MapFile{Data: data}
+		if entry.Name() != "00017_social_account_management.sql" && entry.Name() != "00018_passkeys.sql" {
+			version16[entry.Name()] = &fstest.MapFile{Data: data}
+		}
+		if entry.Name() != "00018_passkeys.sql" {
+			version17[entry.Name()] = &fstest.MapFile{Data: data}
+		}
 	}
 	if err := upWithSources(ctx, pool.OpenSQLDB(), version16); err != nil {
 		t.Fatal(err)
@@ -50,7 +53,7 @@ func TestSocialAccountManagementMigrationUpgradesVersion16(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `INSERT INTO external_identities(application_instance_id,user_id,provider,provider_subject) VALUES($1,$2,'github','existing')`, int64(app.InternalID), int64(user.InternalID)); err != nil {
 		t.Fatal(err)
 	}
-	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
+	if err := upWithSources(ctx, pool.OpenSQLDB(), version17); err != nil {
 		t.Fatalf("upgrade to 17: %v", err)
 	}
 	assertMigrationState(t, ctx, pool, 17)
