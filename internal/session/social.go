@@ -12,9 +12,13 @@ import (
 	"github.com/DoMinhHHung/beebox/internal/authentication"
 )
 
+type SocialCompletionAssurancePersistence interface {
+	ExchangeSocialCompletionWithAssurance(context.Context, authentication.SocialCompletionFinalize, authentication.PendingMFAWrite) (authentication.SocialCompletionResult, authentication.PrimaryAssuranceResult, error)
+}
+
 // SocialCompletionService turns a one-time, client-PKCE-bound social completion
-// grant into the ordinary BeeBox session class. Provider credentials and claims
-// never cross this boundary.
+// grant into either pending additional assurance or the ordinary BeeBox session
+// class. Provider credentials and claims never cross this boundary.
 type SocialCompletionService struct {
 	persistence authentication.SocialCompletionPersistence
 	admission   authentication.SocialAdmission
@@ -54,7 +58,7 @@ func (s *SocialCompletionService) Exchange(ctx context.Context, appID applicatio
 		return TokenPair{}, ErrSessionUnavailable
 	}
 	issuedAt := s.now().UTC()
-	result, err := s.persistence.ExchangeSocialCompletion(ctx, authentication.SocialCompletionFinalize{
+	final := authentication.SocialCompletionFinalize{
 		ApplicationInstanceID: appID,
 		CompletionCodeHash:    codeHash,
 		ClientCodeChallenge:   challenge,
@@ -63,7 +67,18 @@ func (s *SocialCompletionService) Exchange(ctx context.Context, appID applicatio
 		IdleExpiresAt:         issuedAt.Add(InactivityLifetime),
 		ExpiresAt:             issuedAt.Add(AbsoluteLifetime),
 		CorrelationID:         correlationID,
-	})
+	}
+	pending, pendingToken, err := preparePendingMFA(authentication.PrimaryMethodSocial, "social_completion", issuedAt)
+	if err != nil {
+		return TokenPair{}, ErrSessionUnavailable
+	}
+	var result authentication.SocialCompletionResult
+	var assurance authentication.PrimaryAssuranceResult
+	if p, ok := s.persistence.(SocialCompletionAssurancePersistence); ok {
+		result, assurance, err = p.ExchangeSocialCompletionWithAssurance(ctx, final, pending)
+	} else {
+		result, err = s.persistence.ExchangeSocialCompletion(ctx, final)
+	}
 	if err != nil {
 		if errors.Is(err, authentication.ErrSocialCompletionInvalid) {
 			return TokenPair{}, ErrInvalidCredentials
@@ -72,6 +87,12 @@ func (s *SocialCompletionService) Exchange(ctx context.Context, appID applicatio
 			return TokenPair{}, ctxErr
 		}
 		return TokenPair{}, ErrSessionUnavailable
+	}
+	if assurance.MFARequired {
+		if assurance.PendingMFAPublicID != pending.PublicID || !assurance.PendingMFAExpiresAt.Equal(pending.ExpiresAt) {
+			return TokenPair{}, ErrSessionUnavailable
+		}
+		return TokenPair{PendingMFA: &PendingMFA{Token: pendingToken, ExpiresIn: int64(authentication.PendingMFATTL / time.Second)}}, nil
 	}
 	access, err := s.ring.Sign(result.UserPublicID, result.ApplicationPublicID, sessionID, issuedAt)
 	if err != nil {
