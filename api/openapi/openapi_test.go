@@ -38,6 +38,16 @@ func TestPublicOpenAPIContract(t *testing.T) {
 		"operationId: confirmPhoneOTPSignIn",
 		"pattern: '^\\+[1-9][0-9]{1,14}$'",
 		"pattern: '^[0-9]{6}$'",
+		"  /v1/reverifications:",
+		"operationId: createReverification",
+		"ReverificationGrantHeader:",
+		"name: X-BeeBox-Reverification",
+		"ReverificationPurpose:",
+		"ReverificationRequest:",
+		"ReverificationGrant:",
+		"proof_access_token:",
+		"reverification_token:",
+		"enum: [totp_enroll, totp_remove, totp_replace, recovery_regenerate, passkey_register, passkey_remove, social_link, social_unlink, session_revoke, session_revoke_others, sign_out_everywhere, identifier_add, identifier_remove, identifier_primary]",
 		"  /v1/social-auth/attempts:",
 		"  /v1/social-links/attempts:",
 		"  /v1/social-links:",
@@ -127,6 +137,9 @@ func TestPublicOpenAPIContract(t *testing.T) {
 			t.Fatalf("v1 spec missing required contract anchor %q", required)
 		}
 	}
+	if got := strings.Count(text, "#/components/parameters/ReverificationGrantHeader"); got != 8 {
+		t.Fatalf("protected reverification header references=%d want=8", got)
+	}
 	normalizedText := strings.Join(strings.Fields(strings.ToLower(text)), " ")
 	for _, requiredSemantics := range []string{
 		"response is intentionally generic",
@@ -144,14 +157,23 @@ func TestPublicOpenAPIContract(t *testing.T) {
 		"tagged authenticated result",
 		"account linking",
 		"exact current application, user, and session",
-		"does not reset this freshness evidence",
+		"authorization bearer identifies the target session",
+		"proof_access_token identifies an independently authenticated proof session",
+		"proof session may differ from the target session",
+		"same exact application and user",
+		"both target and proof sessions must remain active",
+		"ten-minute accepted proof-freshness ceiling",
+		"one-time, purpose-bound and target-session-bound",
+		"expired, replayed, wrong-purpose or wrong-target grants fail closed",
+		"configured totp requires totp mfa provenance",
+		"recovery_code provenance cannot mint generic reverification while totp remains configured",
+		"grant and proof secrets are not logged",
 		"callback-time browser session",
 		"never merges accounts",
 		"beebox_link=success",
 		"beebox_error=social_link_failed",
 		"listing does not require recent authentication",
 		"only the beebox-owned social-link id, provider key, and creation time are returned",
-		"refreshing an access token for that same older session does not renew freshness",
 		"same idempotent 204 response without revealing ownership",
 		"at least one currently usable authentication method must remain",
 		"existing ordinary beebox sessions remain active",
@@ -159,9 +181,8 @@ func TestPublicOpenAPIContract(t *testing.T) {
 		"does not call provider-side oauth consent or token revocation apis",
 		"passkey is a primary authentication method",
 		"does not bypass configured mfa",
-		"recent authentication is required for passkey registration and removal",
 		"private key remains authenticator-owned",
-		"webAuthn request and response payloads are opaque json",
+		"webauthn request and response payloads are opaque json",
 		"one-time ceremony",
 		"no session, access token or refresh token exists before this operation commits successfully",
 		"limited to five failed proofs",
@@ -183,9 +204,18 @@ func TestPublicOpenAPIContract(t *testing.T) {
 			t.Fatalf("v1 spec leaks internal/provider contract term %q", forbidden)
 		}
 	}
-	for _, stale := range []string{"does not implement mfa", "once p2.6 totp is configured"} {
+	for _, stale := range []string{
+		"does not implement mfa",
+		"once p2.6 totp is configured",
+		"freshness is derived from persisted session created_at",
+		"created_at must be within the accepted ten-minute recent-authentication window",
+		"refreshing an access token for that same older session does not renew freshness",
+		"refreshing an old session does not reset its original created_at",
+		"recent authentication is required for passkey registration and removal",
+		"authenticate again to obtain a new ordinary session",
+	} {
 		if strings.Contains(normalizedText, stale) {
-			t.Fatalf("v1 spec contains stale pre-P2.6 contract %q", stale)
+			t.Fatalf("v1 spec contains stale authentication authority %q", stale)
 		}
 	}
 }
