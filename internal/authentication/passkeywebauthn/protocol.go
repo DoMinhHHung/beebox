@@ -20,9 +20,9 @@ type user struct {
 	creds    []webauthn.Credential
 }
 
-func (u *user) WebAuthnID() []byte                         { return []byte(u.snapshot.PublicID) }
-func (u *user) WebAuthnName() string                       { return string(u.snapshot.PublicID) }
-func (u *user) WebAuthnDisplayName() string                { return string(u.snapshot.PublicID) }
+func (u *user) WebAuthnID() []byte                          { return []byte(u.snapshot.PublicID) }
+func (u *user) WebAuthnName() string                        { return string(u.snapshot.PublicID) }
+func (u *user) WebAuthnDisplayName() string                 { return string(u.snapshot.PublicID) }
 func (u *user) WebAuthnCredentials() []webauthn.Credential { return u.creds }
 
 func makeUser(snapshot authentication.PasskeyProtocolUser) (*user, error) {
@@ -68,7 +68,6 @@ func (p *Protocol) BeginRegistration(snapshot authentication.PasskeyProtocolUser
 	}
 	creation, sessionData, err := wa.BeginRegistration(u,
 		webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementRequired),
-		webauthn.WithUserVerification(protocol.VerificationRequired),
 		webauthn.WithExclusions(webauthn.Credentials(u.creds).CredentialDescriptors()),
 	)
 	if err != nil {
