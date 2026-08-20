@@ -4,7 +4,7 @@ package postgres
 
 import (
 	"context"
-	"crypto/sha256"
+	cryptoSHA256 "crypto/sha256"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -40,7 +40,7 @@ func TestPasskeyStoreCeremonyScopeReplayAndAuditAtomicity(t *testing.T) {
 	sessionID, created := insertSocialLinkSession(t, ctx, db, app.InternalID, user.InternalID, time.Minute)
 	now := created.Add(time.Minute)
 	store := New(pool)
-	challenge := sha256.Sum256([]byte("registration-one"))
+	challenge := cryptoSHA256.Sum256([]byte("registration-one"))
 	attemptID, err := store.CreatePasskeyAttempt(ctx, authentication.PasskeyAttemptWrite{
 		ApplicationInstanceID: app.InternalID, UserID: user.InternalID, SessionPublicID: sessionID,
 		Purpose: "registration", Origin: "https://app.example", RPID: "app.example",
@@ -78,7 +78,7 @@ func TestPasskeyStoreCeremonyScopeReplayAndAuditAtomicity(t *testing.T) {
 		t.Fatalf("cross-app list=%#v err=%v", cross, err)
 	}
 
-	secondChallenge := sha256.Sum256([]byte("registration-two"))
+	secondChallenge := cryptoSHA256.Sum256([]byte("registration-two"))
 	secondID, err := store.CreatePasskeyAttempt(ctx, authentication.PasskeyAttemptWrite{
 		ApplicationInstanceID: app.InternalID, UserID: user.InternalID, SessionPublicID: sessionID,
 		Purpose: "registration", Origin: "https://app.example", RPID: "app.example",
@@ -133,7 +133,7 @@ func TestPasskeyAttemptExpiryFailsClosed(t *testing.T) {
 	db := pool.OpenSQLDB()
 	defer db.Close()
 	sessionID, _ := insertSocialLinkSession(t, ctx, db, app.InternalID, user.InternalID, time.Minute)
-	challenge := sha256.Sum256([]byte("expired"))
+	challenge := cryptoSHA256.Sum256([]byte("expired"))
 	var attemptID string
 	if err := db.QueryRowContext(ctx, `INSERT INTO passkey_attempts(application_instance_id,user_id,session_public_id,purpose,origin,rp_id,session_data,challenge_hash,created_at,expires_at) VALUES($1,$2,$3,'registration','https://app.example','app.example','{}'::jsonb,$4,CURRENT_TIMESTAMP-INTERVAL '5 minutes',CURRENT_TIMESTAMP-INTERVAL '1 second') RETURNING public_id`, int64(app.InternalID), int64(user.InternalID), sessionID, challenge[:]).Scan(&attemptID); err != nil {
 		t.Fatal(err)
