@@ -11,9 +11,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
 	applicationpostgres "github.com/DoMinhHHung/beebox/internal/applicationinstance/postgres"
 	"github.com/DoMinhHHung/beebox/internal/audit"
 	"github.com/DoMinhHHung/beebox/internal/authentication"
+	"github.com/DoMinhHHung/beebox/internal/identity"
 	identitypostgres "github.com/DoMinhHHung/beebox/internal/identity/postgres"
 )
 
@@ -28,9 +30,7 @@ func TestPasskeyRegistrationAuditFailureRollsBackCredential(t *testing.T) {
 	attempt := createConsumedRegistrationAttempt(t, ctx, store, app.InternalID, user.InternalID, sessionID, created)
 	forcePasskeyAuditFailure(t, ctx, db)
 	correlation, _ := audit.NewCorrelationID()
-	_, err := store.CreatePasskeyCredential(ctx, attempt, authentication.PasskeyCredential{
-		RPID: "app.example", CredentialID: []byte("audit-register-credential"), CredentialJSON: json.RawMessage(`{"id":"must-not-commit"}`),
-	}, correlation)
+	_, err := store.CreatePasskeyCredential(ctx, attempt, authentication.PasskeyCredential{RPID: "app.example", CredentialID: []byte("audit-register-credential"), CredentialJSON: json.RawMessage(`{"id":"must-not-commit"}`)}, correlation)
 	if !errors.Is(err, authentication.ErrPasskeyPersistence) {
 		t.Fatalf("registration audit failure=%v", err)
 	}
