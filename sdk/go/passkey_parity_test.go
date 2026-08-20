@@ -23,8 +23,10 @@ func TestPasskeySDKHTTPParityAndOneShotRequests(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch key {
 		case "POST /v1/passkeys/registration/attempts", "POST /v1/passkeys/authentication/attempts":
-			if key == "POST /v1/passkeys/registration/attempts" && r.Header.Get("Authorization") != "Bearer access" {
-				t.Fatalf("registration authorization=%q", r.Header.Get("Authorization"))
+			if key == "POST /v1/passkeys/registration/attempts" {
+				if r.Header.Get("Authorization") != "Bearer access" || r.Header.Get(ReverificationHeader) != "reverify-register" {
+					t.Fatalf("registration security headers=%v", r.Header)
+				}
 			}
 			_, _ = w.Write([]byte(`{"attempt_id":"pka_123e4567-e89b-42d3-a456-426614174000","public_key":{"opaque":"browser-value"},"expires_in":300}`))
 		case "POST /v1/passkeys/registration/complete":
@@ -42,8 +44,8 @@ func TestPasskeySDKHTTPParityAndOneShotRequests(t *testing.T) {
 			}
 			_, _ = w.Write([]byte(`{"items":[{"id":"pky_123e4567-e89b-42d3-a456-426614174001","name":"Laptop","created_at":"2026-08-20T00:00:00Z"}]}`))
 		case "DELETE /v1/passkeys/pky_123e4567-e89b-42d3-a456-426614174001":
-			if r.Header.Get("Authorization") != "Bearer access" {
-				t.Fatalf("remove authorization=%q", r.Header.Get("Authorization"))
+			if r.Header.Get("Authorization") != "Bearer access" || r.Header.Get(ReverificationHeader) != "reverify-remove" {
+				t.Fatalf("remove security headers=%v", r.Header)
 			}
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -56,7 +58,7 @@ func TestPasskeySDKHTTPParityAndOneShotRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	if _, err := client.BeginPasskeyRegistration(ctx, "access", "https://app.example"); err != nil {
+	if _, err := client.BeginPasskeyRegistration(ctx, "access", "https://app.example", "reverify-register"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.CompletePasskeyRegistration(ctx, "access", "https://app.example", PasskeyRegistrationCompleteRequest{AttemptID: "pka_123e4567-e89b-42d3-a456-426614174000", Name: "Laptop", Credential: json.RawMessage(`{"id":"opaque-registration"}`)}); err != nil {
@@ -72,7 +74,7 @@ func TestPasskeySDKHTTPParityAndOneShotRequests(t *testing.T) {
 	if err != nil || len(list.Items) != 1 {
 		t.Fatalf("list=%+v err=%v", list, err)
 	}
-	if err := client.RemovePasskey(ctx, "access", "https://app.example", "pky_123e4567-e89b-42d3-a456-426614174001"); err != nil {
+	if err := client.RemovePasskey(ctx, "access", "https://app.example", "reverify-remove", "pky_123e4567-e89b-42d3-a456-426614174001"); err != nil {
 		t.Fatal(err)
 	}
 	mu.Lock()
