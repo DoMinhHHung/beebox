@@ -94,7 +94,9 @@ func TestPasskeyBeginRegistrationBindsAndHashesChallenge(t *testing.T) {
 	store := &passkeyPersistenceStub{}
 	service := NewPasskeyService(store, passkeyProtocolStub{challenge: base64.RawURLEncoding.EncodeToString(rawChallenge)})
 	service.now = func() time.Time { return now }
-	result, err := service.BeginRegistration(context.Background(), freshPasskeySession(now), "https://app.example")
+	current := freshPasskeySession(now)
+	ctx := testReverificationContext(current.ApplicationInstanceID, current.UserID, current.SessionPublicID, ReverificationPurposePasskeyRegister)
+	result, err := service.BeginRegistration(ctx, current, "https://app.example")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,19 +111,23 @@ func TestPasskeyBeginRegistrationBindsAndHashesChallenge(t *testing.T) {
 	}
 }
 
-func TestPasskeyRegistrationRequiresRecentAuthentication(t *testing.T) {
+func TestPasskeyRegistrationRequiresScopedReverification(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0).UTC()
 	store := &passkeyPersistenceStub{}
 	service := NewPasskeyService(store, passkeyProtocolStub{challenge: base64.RawURLEncoding.EncodeToString([]byte("0123456789abcdef"))})
 	service.now = func() time.Time { return now }
 	current := freshPasskeySession(now)
-	current.CreatedAt = now.Add(-SocialLinkFreshness)
+	current.CreatedAt = now.Add(-24 * time.Hour)
 	_, err := service.BeginRegistration(context.Background(), current, "https://app.example")
 	if !errors.Is(err, ErrPasskeyReverificationRequired) {
-		t.Fatalf("got %v", err)
+		t.Fatalf("missing reverification got %v", err)
 	}
 	if store.attemptWrite.Purpose != "" {
-		t.Fatal("stale session created an attempt")
+		t.Fatal("unauthorized session created an attempt")
+	}
+	ctx := testReverificationContext(current.ApplicationInstanceID, current.UserID, current.SessionPublicID, ReverificationPurposePasskeyRegister)
+	if _, err := service.BeginRegistration(ctx, current, "https://app.example"); err != nil {
+		t.Fatalf("old active session with trusted reverification got %v", err)
 	}
 }
 
@@ -129,8 +135,10 @@ func TestPasskeyRejectsNonCanonicalOriginShape(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0).UTC()
 	service := NewPasskeyService(&passkeyPersistenceStub{}, passkeyProtocolStub{challenge: base64.RawURLEncoding.EncodeToString([]byte("0123456789abcdef"))})
 	service.now = func() time.Time { return now }
+	current := freshPasskeySession(now)
+	ctx := testReverificationContext(current.ApplicationInstanceID, current.UserID, current.SessionPublicID, ReverificationPurposePasskeyRegister)
 	for _, origin := range []string{"https://app.example/path", "https://user@app.example", "app.example", "https://app.example?x=1"} {
-		if _, err := service.BeginRegistration(context.Background(), freshPasskeySession(now), origin); !errors.Is(err, ErrPasskeyInvalidRequest) {
+		if _, err := service.BeginRegistration(ctx, current, origin); !errors.Is(err, ErrPasskeyInvalidRequest) {
 			t.Fatalf("origin %q: got %v", origin, err)
 		}
 	}
@@ -141,7 +149,9 @@ func TestPasskeyRemovePreservesLastMethodError(t *testing.T) {
 	store := &passkeyPersistenceStub{removeErr: ErrLastAuthenticationMethod}
 	service := NewPasskeyService(store, passkeyProtocolStub{})
 	service.now = func() time.Time { return now }
-	err := service.Remove(context.Background(), freshPasskeySession(now), "pky_123e4567-e89b-42d3-a456-426614174003", audit.CorrelationID{1})
+	current := freshPasskeySession(now)
+	ctx := testReverificationContext(current.ApplicationInstanceID, current.UserID, current.SessionPublicID, ReverificationPurposePasskeyRemove)
+	err := service.Remove(ctx, current, "pky_123e4567-e89b-42d3-a456-426614174003", audit.CorrelationID{1})
 	if !errors.Is(err, ErrLastAuthenticationMethod) {
 		t.Fatalf("got %v", err)
 	}
