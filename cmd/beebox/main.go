@@ -17,6 +17,7 @@ import (
 	applicationpostgres "github.com/DoMinhHHung/beebox/internal/applicationinstance/postgres"
 	"github.com/DoMinhHHung/beebox/internal/authentication"
 	"github.com/DoMinhHHung/beebox/internal/authentication/metricsdelivery"
+	"github.com/DoMinhHHung/beebox/internal/authentication/passkeywebauthn"
 	authpostgres "github.com/DoMinhHHung/beebox/internal/authentication/postgres"
 	"github.com/DoMinhHHung/beebox/internal/authentication/smtpdelivery"
 	"github.com/DoMinhHHung/beebox/internal/authentication/socialprovider"
@@ -152,11 +153,16 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 		socialLinkCore := authentication.NewSocialLinkService(authStore, integrationStore, authStore, socialRegistry, socialProtector)
 		base = httpapi.WithSocialLinks(base, integrationService, integrationStore, sessionService, socialLinkCore)
 	}
-	managementCore := authentication.NewSocialAccountService(authStore, authentication.SocialMethodAvailability{
+	availability := authentication.SocialMethodAvailability{
 		EmailOTP: smtpdelivery.Configured(sender),
 		PhoneOTP: smsEnabled,
 		Social:   socialRegistry,
-	})
+	}
+	authStore.SetMethodAvailability(availability)
+	passkeyCore := authentication.NewPasskeyService(authStore, passkeywebauthn.New())
+	passkeyCompletion := session.NewPasskeyService(passkeyCore, ring)
+	base = httpapi.WithPasskeys(base, integrationService, integrationStore, sessionService, passkeyCore, passkeyCompletion)
+	managementCore := authentication.NewSocialAccountService(authStore, availability)
 	base = httpapi.WithSocialAccountManagement(base, integrationService, integrationStore, sessionService, managementCore)
 	base = httpapi.WithSessionManagement(base, integrationService, integrationService, sessionService)
 	return httpapi.WithMetrics(base, recorder), nil
@@ -184,7 +190,7 @@ func parseMode(args []string) (processMode, error) {
 	}
 }
 
-func runServeMode(ctx context.Context, logger *slog.Logger, lookup config.LookupEnv, dependencies runtimeDependencies) error {
+func runServeMode(ctx context.Context, logger *slog.Logger, lookup config.LookupEnv, dependencies runtimeDependencies, args []string) error {
 	cfg, err := config.Load(lookup)
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
