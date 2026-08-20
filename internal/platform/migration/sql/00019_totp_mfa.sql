@@ -82,6 +82,7 @@ CREATE TABLE pending_mfa_authentications (
     token_hash BYTEA NOT NULL UNIQUE,
     application_instance_id BIGINT NOT NULL,
     user_id BIGINT NOT NULL,
+    purpose TEXT NOT NULL DEFAULT 'authentication',
     primary_method TEXT NOT NULL,
     primary_context TEXT NOT NULL,
     required_factor TEXT NOT NULL,
@@ -95,6 +96,7 @@ CREATE TABLE pending_mfa_authentications (
     CONSTRAINT pending_mfa_authentications_token_hash_check CHECK (octet_length(token_hash) = 32),
     CONSTRAINT pending_mfa_authentications_user_scope_fk FOREIGN KEY (application_instance_id, user_id)
         REFERENCES users(application_instance_id, id),
+    CONSTRAINT pending_mfa_authentications_purpose_check CHECK (purpose = 'authentication'),
     CONSTRAINT pending_mfa_authentications_primary_method_check CHECK (
         primary_method IN ('password','email_otp','phone_otp','social','passkey')
     ),
