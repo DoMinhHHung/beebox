@@ -24,7 +24,7 @@ CREATE TABLE passkey_credentials (
         rp_id = lower(rp_id) AND char_length(rp_id) BETWEEN 1 AND 253
     ),
     CONSTRAINT passkey_credentials_id_length_check CHECK (
-        octet_length(credential_id) BETWEEN 16 AND 1024
+        octet_length(credential_id) BETWEEN 1 AND 1024
     ),
     CONSTRAINT passkey_credentials_name_check CHECK (
         name IS NULL OR char_length(name) BETWEEN 1 AND 64
