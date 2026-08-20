@@ -171,8 +171,15 @@ func (c *Client) doJSON(ctx context.Context, method, path string, input, output 
 		}
 		body = bytes.NewReader(encoded)
 	}
+	relative, err := url.Parse(path)
+	if err != nil || relative.IsAbs() || relative.Host != "" || relative.Fragment != "" || !strings.HasPrefix(relative.Path, "/") {
+		return ErrInvalidClient
+	}
 	u := *c.baseURL
-	u.Path = strings.TrimSuffix(u.Path, "/") + path
+	u.Path = strings.TrimSuffix(u.Path, "/") + relative.Path
+	u.RawPath = ""
+	u.RawQuery = relative.RawQuery
+	u.Fragment = ""
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)
 	if err != nil {
 		return err
