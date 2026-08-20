@@ -37,10 +37,10 @@ func TestSocialLinkMigrationUpgradesVersion15AndEnforcesBindings(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if entry.Name() != "00016_social_account_linking.sql" && entry.Name() != "00017_social_account_management.sql" && entry.Name() != "00018_passkeys.sql" {
+		if entry.Name() != "00016_social_account_linking.sql" && entry.Name() != "00017_social_account_management.sql" && entry.Name() != "00018_passkeys.sql" && entry.Name() != "00019_totp_mfa.sql" {
 			version15[entry.Name()] = &fstest.MapFile{Data: data}
 		}
-		if entry.Name() != "00017_social_account_management.sql" && entry.Name() != "00018_passkeys.sql" {
+		if entry.Name() != "00017_social_account_management.sql" && entry.Name() != "00018_passkeys.sql" && entry.Name() != "00019_totp_mfa.sql" {
 			version16[entry.Name()] = &fstest.MapFile{Data: data}
 		}
 	}
