@@ -26,6 +26,7 @@ type Record struct {
 	IdleExpiresAt         time.Time
 	ExpiresAt             time.Time
 	RevokedAt             *time.Time
+	MFAMethod             string
 }
 
 type managementStore interface {
