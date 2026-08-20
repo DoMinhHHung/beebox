@@ -6,10 +6,11 @@ info:
     BeeBox-owned B2C authentication contract. Phase 1 email/password behavior,
     P2.1 passwordless email OTP, P2.2 phone-first signup plus verified-phone
     SMS OTP primary authentication, P2.3 headless social authentication,
-    P2.4A explicit authenticated social account linking, and P2.4B linked social
-    account listing and unlink are implemented. BeeBox is not an OAuth or OpenID
-    Connect authorization server. Public resource identifiers are opaque locators
-    and never establish authorization by themselves.
+    P2.4A explicit authenticated social account linking, P2.4B linked social
+    account listing/unlink, and P2.5 passkey/WebAuthn primary authentication
+    are implemented. BeeBox is not an OAuth or OpenID Connect authorization
+    server. Public resource identifiers are opaque locators and never establish
+    authorization by themselves.
 servers:
   - url: /
 paths:
@@ -423,12 +424,12 @@ paths:
         recovery path would remain. Password counts only with a verified email; email
         OTP requires configured delivery and a verified email; phone OTP requires
         enabled SMS and a verified phone; remaining social identities count only when
-        their provider is configured for the exact application. Unimplemented MFA,
-        passkey, and recovery methods do not count. Existing ordinary BeeBox sessions
-        remain active. A successful unlink may conservatively invalidate pending
-        unexchanged social completion state and same-provider link attempts. BeeBox
-        removes only its ownership association and does not call provider-side OAuth
-        consent or token revocation APIs.
+        their provider is configured for the exact application; and an exact-scope
+        stored passkey counts as a usable primary authentication method. Existing
+        ordinary BeeBox sessions remain active. A successful unlink may conservatively
+        invalidate pending unexchanged social completion state and same-provider link
+        attempts. BeeBox removes only its ownership association and does not call
+        provider-side OAuth consent or token revocation APIs.
       security:
         - publishableKey: []
           bearerAuth: []
@@ -518,6 +519,171 @@ paths:
         '401': {$ref: '#/components/responses/InvalidCredentials'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/passkeys/registration/attempts:
+    post:
+      operationId: beginPasskeyRegistration
+      summary: Start a passkey registration ceremony for the current user
+      description: >-
+        Requires the exact current application, allowed Origin, ordinary BeeBox bearer
+        session, and server-trusted recent authentication. Recent authentication is
+        required for passkey registration and removal. BeeBox creates a one-time ceremony
+        bound to the exact application, user, session, Origin, RP ID and registration
+        purpose. The passkey private key remains authenticator-owned and is never sent to
+        BeeBox. WebAuthn request and response payloads are opaque JSON at the BeeBox
+        contract boundary.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      responses:
+        '201':
+          description: Opaque WebAuthn creation options and one-time BeeBox ceremony locator.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PasskeyAttempt'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/PasskeyForbidden'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/passkeys/registration/complete:
+    post:
+      operationId: completePasskeyRegistration
+      summary: Complete a one-time passkey registration ceremony
+      description: >-
+        Consumes the exact application/user/session/Origin-bound registration ceremony,
+        verifies the browser WebAuthn response using the trusted stored RP/origin state,
+        and atomically persists the BeeBox-owned passkey resource plus required audit.
+        Expired, replayed, wrong-application, wrong-Origin, wrong-RP, wrong-challenge,
+        malformed, duplicate, wrong-user-handle or otherwise invalid proof fails closed.
+        Completion is a one-time security mutation and must not be automatically retried
+        after an ambiguous client response.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PasskeyRegistrationCompleteRequest'}
+      responses:
+        '201':
+          description: Registered passkey metadata only; no private key or verifier state is exposed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Passkey'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidPasskeyProof'}
+        '403': {$ref: '#/components/responses/PasskeyForbidden'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/passkeys/authentication/attempts:
+    post:
+      operationId: beginPasskeyAuthentication
+      summary: Start discoverable passkey primary authentication
+      description: >-
+        Resolves the exact application from the publishable key and requires one exact
+        allowed Origin. BeeBox derives the RP ID from that trusted Origin and issues a
+        short-lived one-time authentication ceremony requiring WebAuthn user verification.
+        Passkey is a primary authentication method and does not bypass configured MFA;
+        once P2.6 TOTP is configured, passkey proof must enter the same pending-MFA path.
+      security: [{publishableKey: []}]
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      responses:
+        '201':
+          description: Opaque WebAuthn assertion options and one-time BeeBox ceremony locator.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PasskeyAttempt'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/passkeys/authentication/complete:
+    post:
+      operationId: completePasskeyAuthentication
+      summary: Complete passkey primary authentication and issue an ordinary session
+      description: >-
+        Consumes one exact application/Origin/RP-bound one-time ceremony, verifies the
+        authenticator response and required user verification, resolves credential owner
+        only inside that application and RP scope, updates verifier-owned credential state,
+        creates the ordinary BeeBox session/refresh verifier and appends required audit
+        coherently. Replay, expiry, cross-application substitution, wrong owner, wrong
+        challenge, wrong Origin/RP or malformed authenticator responses fail closed.
+      security: [{publishableKey: []}]
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PasskeyAuthenticationCompleteRequest'}
+      responses:
+        '200':
+          description: Ordinary BeeBox session after valid passkey primary proof.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TokenResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidPasskeyProof'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/passkeys:
+    get:
+      operationId: listPasskeys
+      summary: List passkeys owned by the current application user
+      description: >-
+        Requires exact application, allowed Origin and current user/session authority.
+        The bounded response exposes only opaque pky_ resource ID, optional bounded name
+        and creation time. Credential IDs, public-key material, counters, internal IDs,
+        user handles and verifier state are not exposed.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      responses:
+        '200':
+          description: Bounded passkey list for the current application/user.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PasskeyList'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/passkeys/{passkey_id}:
+    delete:
+      operationId: removePasskey
+      summary: Remove one owned passkey
+      description: >-
+        Requires exact current application/user/session ownership and recent authentication.
+        A pky_ locator never grants authority. Removal is rejected with
+        last_authentication_method when no other usable authentication path would remain;
+        an exact-scope remaining passkey may count as a primary method. Removal plus audit
+        is atomic. P2.5 does not classify a passkey as an MFA factor and does not bypass
+        configured MFA.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/PasskeyID'}
+      responses:
+        '204':
+          description: Owned passkey removed; a valid but absent/out-of-scope locator remains non-authoritative.
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/PasskeyForbidden'}
+        '409': {$ref: '#/components/responses/LastAuthenticationMethod'}
         '503': {$ref: '#/components/responses/Unavailable'}
 
   /v1/sessions/refresh:
@@ -713,6 +879,14 @@ components:
       required: false
       schema: {type: string, minLength: 1, maxLength: 512}
       description: Opaque pagination state for stable created_at plus public-ID ordering; it conveys no authority.
+    PasskeyID:
+      name: passkey_id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^pky_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+      description: Opaque BeeBox passkey resource locator; possession is never authorization.
     SessionID:
       name: session_id
       in: path
@@ -907,6 +1081,73 @@ components:
           maxLength: 128
           pattern: '^[A-Za-z0-9._~-]+$'
           description: Original RFC 7636 verifier retained by the client and never sent to the social provider.
+    PasskeyAttempt:
+      type: object
+      additionalProperties: false
+      required: [attempt_id, public_key, expires_in]
+      properties:
+        attempt_id:
+          type: string
+          pattern: '^pka_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+          description: One-time opaque BeeBox ceremony locator; it conveys no authority outside its stored scope.
+        public_key:
+          type: object
+          additionalProperties: true
+          description: Opaque browser WebAuthn creation or assertion options. BeeBox does not expose Go library types as public schema.
+        expires_in:
+          type: integer
+          minimum: 1
+          maximum: 300
+    PasskeyRegistrationCompleteRequest:
+      type: object
+      additionalProperties: false
+      required: [attempt_id, credential]
+      properties:
+        attempt_id:
+          type: string
+          pattern: '^pka_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+        name:
+          type: string
+          maxLength: 64
+          description: Optional bounded user-visible label; not authentication authority.
+        credential:
+          type: object
+          additionalProperties: true
+          description: Opaque browser WebAuthn registration response JSON consumed by BeeBox's maintained verifier.
+    PasskeyAuthenticationCompleteRequest:
+      type: object
+      additionalProperties: false
+      required: [attempt_id, credential]
+      properties:
+        attempt_id:
+          type: string
+          pattern: '^pka_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+        credential:
+          type: object
+          additionalProperties: true
+          description: Opaque browser WebAuthn assertion response JSON consumed by BeeBox's maintained verifier.
+    Passkey:
+      type: object
+      additionalProperties: false
+      required: [id, created_at]
+      properties:
+        id:
+          type: string
+          pattern: '^pky_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+          description: Opaque BeeBox-owned passkey resource locator.
+        name:
+          type: string
+          maxLength: 64
+        created_at: {type: string, format: date-time}
+    PasskeyList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items: {$ref: '#/components/schemas/Passkey'}
     RefreshRequest:
       type: object
       additionalProperties: false
@@ -1022,6 +1263,16 @@ components:
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
+    InvalidPasskeyProof:
+      description: Passkey ceremony or authenticator proof is invalid, expired, replayed or outside the trusted application/origin/RP/credential ownership scope without exposing verifier detail.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    PasskeyForbidden:
+      description: Passkey management returns origin_not_allowed for disallowed Origin or reverification_required when the exact persisted current session is outside the accepted recent-authentication window.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
     SocialLinkUnauthorized:
       description: Social-link initiation returns invalid_application for an invalid application credential or invalid_session for an invalid, revoked, expired, cross-application, or otherwise non-current BeeBox session.
       content:
@@ -1038,7 +1289,7 @@ components:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
     LastAuthenticationMethod:
-      description: Unlink is rejected with code last_authentication_method because at least one currently usable authentication method must remain; detailed method inventory is intentionally not exposed.
+      description: Unlink or passkey removal is rejected with code last_authentication_method because at least one currently usable authentication method must remain; detailed method inventory is intentionally not exposed.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
