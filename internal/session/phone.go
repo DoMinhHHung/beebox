@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"strconv"
 	"time"
 
 	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
@@ -115,9 +116,13 @@ func (s *PhoneSignupService) Confirm(ctx context.Context, appID applicationinsta
 	return TokenPair{AccessToken: access, RefreshToken: refresh, ExpiresIn: int64(AccessTokenLifetime / time.Second), SessionID: finalize.SessionPublicID}, nil
 }
 
+type PhoneOTPAssurancePersistence interface {
+	FinalizePhoneOTPWithAssurance(context.Context, authentication.PhoneOTPFinalize, authentication.PendingMFAWrite) (authentication.PhoneOTPFinalizeResult, authentication.PrimaryAssuranceResult, error)
+}
+
 // PhoneOTPService is a primary authentication method for an existing verified
-// phone identifier. It deliberately does not encode future MFA policy or any
-// password authority.
+// phone identifier. Production persistence gates the proof on active TOTP before
+// any ordinary session material is committed.
 type PhoneOTPService struct {
 	persistence authentication.PhoneOTPPersistence
 	ring        *KeyRing
@@ -182,8 +187,9 @@ func (s *PhoneOTPService) Confirm(ctx context.Context, appID applicationinstance
 		Matched:               matched,
 		CorrelationID:         correlationID,
 	}
-	var refresh string
+	var refresh, pendingToken string
 	var issuedAt time.Time
+	var pending authentication.PendingMFAWrite
 	if matched {
 		finalize.SessionPublicID, err = NewPublicID()
 		if err != nil {
@@ -196,8 +202,22 @@ func (s *PhoneOTPService) Confirm(ctx context.Context, appID applicationinstance
 		issuedAt = s.now().UTC()
 		finalize.IdleExpiresAt = issuedAt.Add(InactivityLifetime)
 		finalize.ExpiresAt = issuedAt.Add(AbsoluteLifetime)
+		pending, pendingToken, err = preparePendingMFA(authentication.PrimaryMethodPhoneOTP, "phone_otp:"+strconv.FormatInt(snapshot.ChallengeGeneration, 10), issuedAt)
+		if err != nil {
+			return TokenPair{}, ErrSessionUnavailable
+		}
 	}
-	result, err := s.persistence.FinalizePhoneOTP(ctx, finalize)
+	var result authentication.PhoneOTPFinalizeResult
+	var assurance authentication.PrimaryAssuranceResult
+	if matched {
+		if p, ok := s.persistence.(PhoneOTPAssurancePersistence); ok {
+			result, assurance, err = p.FinalizePhoneOTPWithAssurance(ctx, finalize, pending)
+		} else {
+			result, err = s.persistence.FinalizePhoneOTP(ctx, finalize)
+		}
+	} else {
+		result, err = s.persistence.FinalizePhoneOTP(ctx, finalize)
+	}
 	if err != nil {
 		if errors.Is(err, authentication.ErrPhoneOTPInvalid) || errors.Is(err, authentication.ErrPhoneOTPStale) {
 			return TokenPair{}, ErrInvalidCredentials
@@ -209,6 +229,12 @@ func (s *PhoneOTPService) Confirm(ctx context.Context, appID applicationinstance
 	}
 	if !matched {
 		return TokenPair{}, ErrInvalidCredentials
+	}
+	if assurance.MFARequired {
+		if assurance.PendingMFAPublicID != pending.PublicID || !assurance.PendingMFAExpiresAt.Equal(pending.ExpiresAt) {
+			return TokenPair{}, ErrSessionUnavailable
+		}
+		return TokenPair{PendingMFA: &PendingMFA{Token: pendingToken, ExpiresIn: int64(authentication.PendingMFATTL / time.Second)}}, nil
 	}
 	access, err := s.ring.Sign(result.UserPublicID, result.ApplicationPublicID, finalize.SessionPublicID, issuedAt)
 	if err != nil {
