@@ -163,7 +163,10 @@ func (s *TOTPService) StartEnrollment(ctx context.Context, current TOTPSession, 
 		return TOTPEnrollmentResult{}, ErrTOTPUnavailable
 	}
 	now := s.now().UTC()
-	if err := validateTOTPFreshSession(current, now); err != nil {
+	if err := validateTOTPActiveSession(current, now); err != nil {
+		return TOTPEnrollmentResult{}, err
+	}
+	if err := requireTOTPReverification(ctx, current, ReverificationPurposeTOTPEnroll); err != nil {
 		return TOTPEnrollmentResult{}, err
 	}
 	if correlationID == (audit.CorrelationID{}) {
@@ -181,17 +184,13 @@ func (s *TOTPService) StartEnrollment(ctx context.Context, current TOTPSession, 
 	if err != nil || len(generated.SecretRaw) == 0 || generated.Secret == "" || generated.URI == "" {
 		return TOTPEnrollmentResult{}, ErrTOTPUnavailable
 	}
-	envelope, err := s.protector.EncryptTOTP(TOTPSecretContext{
-		ApplicationID: current.ApplicationInstanceID,
-		UserID:        current.UserID,
-		CredentialID:  credentialID,
-	}, generated.SecretRaw)
+	envelope, err := s.protector.EncryptTOTP(TOTPSecretContext{ApplicationID: current.ApplicationInstanceID, UserID: current.UserID, CredentialID: credentialID}, generated.SecretRaw)
 	if err != nil {
 		return TOTPEnrollmentResult{}, ErrTOTPUnavailable
 	}
-	deadline := earliestTime(now.Add(TOTPEnrollmentTTL), current.CreatedAt.UTC().Add(SocialLinkFreshness), current.IdleExpiresAt.UTC(), current.ExpiresAt.UTC())
+	deadline := earliestTime(now.Add(TOTPEnrollmentTTL), current.IdleExpiresAt.UTC(), current.ExpiresAt.UTC())
 	if !deadline.After(now) {
-		return TOTPEnrollmentResult{}, ErrTOTPReverificationRequired
+		return TOTPEnrollmentResult{}, ErrTOTPInvalidSession
 	}
 	if err := s.persistence.CreateTOTPEnrollment(ctx, TOTPEnrollmentWrite{
 		EnrollmentID:          enrollmentID,
@@ -214,7 +213,7 @@ func (s *TOTPService) ConfirmEnrollment(ctx context.Context, current TOTPSession
 		return TOTPConfirmationResult{}, ErrTOTPEnrollmentInvalid
 	}
 	now := s.now().UTC()
-	if err := validateTOTPFreshSession(current, now); err != nil {
+	if err := validateTOTPActiveSession(current, now); err != nil {
 		return TOTPConfirmationResult{}, err
 	}
 	enrollment, err := s.persistence.LoadTOTPEnrollment(ctx, current.ApplicationInstanceID, current.UserID, enrollmentID)
@@ -224,11 +223,7 @@ func (s *TOTPService) ConfirmEnrollment(ctx context.Context, current TOTPSession
 	if enrollment.SessionPublicID != current.SessionPublicID || !now.Before(enrollment.ExpiresAt.UTC()) {
 		return TOTPConfirmationResult{}, ErrTOTPEnrollmentInvalid
 	}
-	secretRaw, err := s.protector.DecryptTOTP(TOTPSecretContext{
-		ApplicationID: current.ApplicationInstanceID,
-		UserID:        current.UserID,
-		CredentialID:  enrollment.CredentialID,
-	}, enrollment.Envelope)
+	secretRaw, err := s.protector.DecryptTOTP(TOTPSecretContext{ApplicationID: current.ApplicationInstanceID, UserID: current.UserID, CredentialID: enrollment.CredentialID}, enrollment.Envelope)
 	if err != nil {
 		return TOTPConfirmationResult{}, ErrTOTPUnavailable
 	}
@@ -252,7 +247,10 @@ func (s *TOTPService) StartReplacement(ctx context.Context, current TOTPSession,
 		return TOTPEnrollmentResult{}, ErrTOTPUnavailable
 	}
 	now := s.now().UTC()
-	if err := validateTOTPFreshSession(current, now); err != nil {
+	if err := validateTOTPActiveSession(current, now); err != nil {
+		return TOTPEnrollmentResult{}, err
+	}
+	if err := requireTOTPReverification(ctx, current, ReverificationPurposeTOTPReplace); err != nil {
 		return TOTPEnrollmentResult{}, err
 	}
 	persistence, ok := s.persistence.(TOTPReplacementPersistence)
@@ -283,9 +281,9 @@ func (s *TOTPService) StartReplacement(ctx context.Context, current TOTPSession,
 	if err != nil {
 		return TOTPEnrollmentResult{}, ErrTOTPUnavailable
 	}
-	deadline := earliestTime(now.Add(TOTPEnrollmentTTL), current.CreatedAt.UTC().Add(SocialLinkFreshness), current.IdleExpiresAt.UTC(), current.ExpiresAt.UTC())
+	deadline := earliestTime(now.Add(TOTPEnrollmentTTL), current.IdleExpiresAt.UTC(), current.ExpiresAt.UTC())
 	if !deadline.After(now) {
-		return TOTPEnrollmentResult{}, ErrTOTPReverificationRequired
+		return TOTPEnrollmentResult{}, ErrTOTPInvalidSession
 	}
 	write := TOTPReplacementWrite{
 		Enrollment: TOTPEnrollmentWrite{
@@ -313,7 +311,7 @@ func (s *TOTPService) ConfirmReplacement(ctx context.Context, current TOTPSessio
 		return TOTPConfirmationResult{}, ErrTOTPEnrollmentInvalid
 	}
 	now := s.now().UTC()
-	if err := validateTOTPFreshSession(current, now); err != nil {
+	if err := validateTOTPActiveSession(current, now); err != nil {
 		return TOTPConfirmationResult{}, err
 	}
 	persistence, ok := s.persistence.(TOTPReplacementPersistence)
@@ -366,9 +364,8 @@ func (s *TOTPService) Current(ctx context.Context, current TOTPSession) (TOTPCre
 	if s == nil || s.persistence == nil || s.now == nil || !validTOTPSession(current) {
 		return TOTPCredentialView{}, ErrTOTPInvalidSession
 	}
-	now := s.now().UTC()
-	if current.Revoked || !now.Before(current.IdleExpiresAt.UTC()) || !now.Before(current.ExpiresAt.UTC()) {
-		return TOTPCredentialView{}, ErrTOTPInvalidSession
+	if err := validateTOTPActiveSession(current, s.now().UTC()); err != nil {
+		return TOTPCredentialView{}, err
 	}
 	view, err := s.persistence.GetTOTPCredential(ctx, current.ApplicationInstanceID, current.UserID)
 	if err != nil {
@@ -381,7 +378,10 @@ func (s *TOTPService) Remove(ctx context.Context, current TOTPSession, correlati
 	if s == nil || s.persistence == nil || s.now == nil || correlationID == (audit.CorrelationID{}) {
 		return ErrTOTPUnavailable
 	}
-	if err := validateTOTPFreshSession(current, s.now().UTC()); err != nil {
+	if err := validateTOTPActiveSession(current, s.now().UTC()); err != nil {
+		return err
+	}
+	if err := requireTOTPReverification(ctx, current, ReverificationPurposeTOTPRemove); err != nil {
 		return err
 	}
 	if err := s.persistence.RemoveTOTPCredential(ctx, current, correlationID); err != nil {
@@ -390,12 +390,16 @@ func (s *TOTPService) Remove(ctx context.Context, current TOTPSession, correlati
 	return nil
 }
 
-func validateTOTPFreshSession(current TOTPSession, now time.Time) error {
+func requireTOTPReverification(ctx context.Context, current TOTPSession, purpose string) error {
+	if err := RequireReverification(ctx, current.ApplicationInstanceID, current.UserID, current.SessionPublicID, purpose); err != nil {
+		return ErrTOTPReverificationRequired
+	}
+	return nil
+}
+
+func validateTOTPActiveSession(current TOTPSession, now time.Time) error {
 	if !validTOTPSession(current) || current.Revoked || !now.Before(current.IdleExpiresAt.UTC()) || !now.Before(current.ExpiresAt.UTC()) {
 		return ErrTOTPInvalidSession
-	}
-	if !now.Before(current.CreatedAt.UTC().Add(SocialLinkFreshness)) {
-		return ErrTOTPReverificationRequired
 	}
 	return nil
 }
