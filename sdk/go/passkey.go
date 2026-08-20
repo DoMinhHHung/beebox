@@ -35,14 +35,12 @@ type PasskeyList struct {
 }
 
 // BeginPasskeyRegistration returns WebAuthn creation options for the current
-// authenticated session. The SDK transports opaque browser WebAuthn JSON and
-// never interprets authenticator protocol structures.
-func (c *Client) BeginPasskeyRegistration(ctx context.Context, accessToken, origin string) (PasskeyAttempt, error) {
+// authenticated target session after the caller has supplied a one-time
+// passkey_register reverification grant. The SDK transports opaque browser
+// WebAuthn JSON and never interprets authenticator protocol structures.
+func (c *Client) BeginPasskeyRegistration(ctx context.Context, accessToken, origin, reverificationToken string) (PasskeyAttempt, error) {
 	var out PasskeyAttempt
-	err := c.doJSON(ctx, "POST", "/v1/passkeys/registration/attempts", struct{}{}, &out, map[string]string{
-		"Authorization": "Bearer " + accessToken,
-		"Origin":        origin,
-	}, false)
+	err := c.doJSON(ctx, "POST", "/v1/passkeys/registration/attempts", struct{}{}, &out, reverificationHeaders(origin, accessToken, reverificationToken), false)
 	return out, err
 }
 
@@ -76,9 +74,6 @@ func (c *Client) ListPasskeys(ctx context.Context, accessToken, origin string) (
 	return out, err
 }
 
-func (c *Client) RemovePasskey(ctx context.Context, accessToken, origin, passkeyID string) error {
-	return c.doJSON(ctx, "DELETE", "/v1/passkeys/"+url.PathEscape(passkeyID), nil, nil, map[string]string{
-		"Authorization": "Bearer " + accessToken,
-		"Origin":        origin,
-	}, false)
+func (c *Client) RemovePasskey(ctx context.Context, accessToken, origin, reverificationToken, passkeyID string) error {
+	return c.doJSON(ctx, "DELETE", "/v1/passkeys/"+url.PathEscape(passkeyID), nil, nil, reverificationHeaders(origin, accessToken, reverificationToken), false)
 }
