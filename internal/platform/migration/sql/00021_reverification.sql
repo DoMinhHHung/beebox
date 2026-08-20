@@ -1,8 +1,9 @@
 -- +goose Up
 ALTER TABLE sessions
-    ADD COLUMN mfa_method TEXT,
+    ADD COLUMN mfa_method TEXT;
+ALTER TABLE sessions
     ADD CONSTRAINT sessions_mfa_method_check CHECK (
-        mfa_method IS NULL OR mfa_method IN ('totp','recovery_code')
+        mfa_method IS NULL OR mfa_method IN ('totp', 'recovery_code')
     );
 
 CREATE TABLE reverification_grants (
@@ -11,7 +12,8 @@ CREATE TABLE reverification_grants (
     verifier_hash BYTEA NOT NULL,
     application_instance_id BIGINT NOT NULL,
     user_id BIGINT NOT NULL,
-    session_public_id TEXT NOT NULL,
+    target_session_public_id TEXT NOT NULL REFERENCES sessions(public_id) ON DELETE CASCADE,
+    proof_session_public_id TEXT NOT NULL REFERENCES sessions(public_id) ON DELETE CASCADE,
     purpose TEXT NOT NULL,
     failed_attempts SMALLINT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -23,9 +25,8 @@ CREATE TABLE reverification_grants (
     ),
     CONSTRAINT reverification_grants_verifier_hash_check CHECK (octet_length(verifier_hash) = 32),
     CONSTRAINT reverification_grants_verifier_hash_key UNIQUE (verifier_hash),
-    CONSTRAINT reverification_grants_session_scope_fk FOREIGN KEY (
-        application_instance_id, user_id, session_public_id
-    ) REFERENCES sessions(application_instance_id, user_id, public_id) ON DELETE CASCADE,
+    CONSTRAINT reverification_grants_user_scope_fk FOREIGN KEY (application_instance_id, user_id)
+        REFERENCES users(application_instance_id, id),
     CONSTRAINT reverification_grants_purpose_check CHECK (
         purpose IN (
             'totp_enroll','totp_remove','totp_replace','recovery_regenerate',
@@ -42,9 +43,11 @@ CREATE TABLE reverification_grants (
     )
 );
 
-CREATE INDEX reverification_grants_session_idx
-    ON reverification_grants(application_instance_id,user_id,session_public_id,created_at);
+CREATE INDEX reverification_grants_target_session_idx
+    ON reverification_grants(application_instance_id, user_id, target_session_public_id, created_at DESC);
+CREATE INDEX reverification_grants_proof_session_idx
+    ON reverification_grants(proof_session_public_id, created_at DESC);
 CREATE INDEX reverification_grants_expiry_idx
     ON reverification_grants(expires_at) WHERE consumed_at IS NULL;
 CREATE INDEX reverification_grants_cleanup_idx
-    ON reverification_grants(expires_at,consumed_at);
+    ON reverification_grants(expires_at, consumed_at);
