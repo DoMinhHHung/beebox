@@ -46,8 +46,8 @@ func (c *Client) CreateReverification(ctx context.Context, origin, accessToken, 
 
 func reverificationHeaders(origin, accessToken, reverificationToken string) map[string]string {
 	return map[string]string{
-		"Authorization":         "Bearer " + accessToken,
-		"Origin":                origin,
+		"Authorization":      "Bearer " + accessToken,
+		"Origin":             origin,
 		ReverificationHeader: reverificationToken,
 	}
 }
