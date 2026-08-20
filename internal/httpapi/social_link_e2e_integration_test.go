@@ -111,11 +111,13 @@ func TestSocialLinkHTTPLifecycleOverPostgreSQL(t *testing.T) {
 	linkCore := authentication.NewSocialLinkService(authStore, integrationStore, authStore, registry, nil)
 	socialCore := authentication.NewSocialService(authStore, integrationStore, authStore, registry, nil)
 	socialCompletion := session.NewSocialCompletionService(authStore, authStore, ring)
+	reverificationCore := authentication.NewReverificationService(authStore)
 	base := WithSocialAuth(http.NotFoundHandler(), integrations, integrationStore, socialCore, socialCompletion)
-	handler := WithSocialLinks(base, integrations, integrationStore, sessionService, linkCore)
+	base = WithSocialLinks(base, integrations, integrationStore, sessionService, linkCore)
+	handler := WithReverification(base, integrations, integrationStore, sessionService, reverificationCore)
 
 	t.Run("session switch callback stays bound to initiating principal", func(t *testing.T) {
-		state := createSocialLinkHTTPAttempt(t, handler, publishableA, originA, tokenA, redirectA, "github")
+		state := createSocialLinkHTTPAttempt(t, handler, publishableA, originA, tokenA, tokenA, redirectA, "github")
 		callback := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/v1/social-auth/callback/github?state="+url.QueryEscape(state)+"&code=provider-code&user_id="+url.QueryEscape(string(userB.PublicID))+"&session_id="+url.QueryEscape(sessionB)+"&redirect_url=https%3A%2F%2Fevil.example", nil)
 		req.Header.Set("Authorization", "Bearer "+tokenB)
@@ -135,42 +137,55 @@ func TestSocialLinkHTTPLifecycleOverPostgreSQL(t *testing.T) {
 		}
 	})
 
-	t.Run("fresh access token does not refresh old session authentication time", func(t *testing.T) {
+	t.Run("separate fresh proof authorizes an older active target session", func(t *testing.T) {
 		staleSession := insertSocialLinkHTTPSession(t, ctx, db, appA.InternalID, userA.InternalID, now.Add(-11*time.Minute), now.Add(time.Hour))
-		freshToken, err := ring.Sign(string(userA.PublicID), string(appA.PublicID), staleSession, time.Now().UTC())
+		proofSession := insertSocialLinkHTTPSession(t, ctx, db, appA.InternalID, userA.InternalID, time.Now().UTC().Add(-time.Minute), time.Now().UTC().Add(time.Hour))
+		staleToken, err := ring.Sign(string(userA.PublicID), string(appA.PublicID), staleSession, time.Now().UTC())
 		if err != nil {
 			t.Fatal(err)
 		}
-		res := socialLinkE2EPost(t, handler, publishableA, originA, freshToken, `{"provider":"github","redirect_url":"`+redirectA+`"}`)
-		assertSocialError(t, res, http.StatusForbidden, "reverification_required")
+		proofToken, err := ring.Sign(string(userA.PublicID), string(appA.PublicID), proofSession, time.Now().UTC())
+		if err != nil {
+			t.Fatal(err)
+		}
+		grant := createSocialLinkHTTPReverification(t, handler, publishableA, originA, staleToken, proofToken)
+		res := socialLinkE2EPost(t, handler, publishableA, originA, staleToken, grant, `{"provider":"github","redirect_url":"`+redirectA+`"}`)
+		if res.Code != http.StatusCreated {
+			t.Fatalf("older target with fresh proof status/body = %d %s", res.Code, res.Body.String())
+		}
 	})
 
 	t.Run("initiation rejects untrusted application origin redirect provider and principal input", func(t *testing.T) {
 		cases := []struct {
-			name        string
-			publishable string
-			origin      string
-			token       string
-			body        string
-			status      int
-			code        string
+			name                 string
+			publishable          string
+			origin               string
+			token                string
+			body                 string
+			needsReverification  bool
+			status               int
+			code                 string
 		}{
 			{name: "wrong audience", publishable: publishableB, origin: originB, token: tokenA, body: `{"provider":"github","redirect_url":"https://app-b.example/link"}`, status: http.StatusUnauthorized, code: "invalid_session"},
 			{name: "wrong origin", publishable: publishableA, origin: originB, token: tokenA, body: `{"provider":"github","redirect_url":"` + redirectA + `"}`, status: http.StatusForbidden, code: "origin_not_allowed"},
-			{name: "foreign redirect", publishable: publishableA, origin: originA, token: tokenA, body: `{"provider":"github","redirect_url":"` + foreignRedirect + `"}`, status: http.StatusUnprocessableEntity, code: "invalid_redirect"},
-			{name: "unsupported provider", publishable: publishableA, origin: originA, token: tokenA, body: `{"provider":"custom","redirect_url":"` + redirectA + `"}`, status: http.StatusUnprocessableEntity, code: "unsupported_provider"},
-			{name: "chosen principal", publishable: publishableA, origin: originA, token: tokenA, body: `{"provider":"github","redirect_url":"` + redirectA + `","user_id":"` + string(userB.PublicID) + `","session_id":"` + sessionB + `"}`, status: http.StatusBadRequest, code: "invalid_request"},
+			{name: "foreign redirect", publishable: publishableA, origin: originA, token: tokenA, body: `{"provider":"github","redirect_url":"` + foreignRedirect + `"}`, needsReverification: true, status: http.StatusUnprocessableEntity, code: "invalid_redirect"},
+			{name: "unsupported provider", publishable: publishableA, origin: originA, token: tokenA, body: `{"provider":"custom","redirect_url":"` + redirectA + `"}`, needsReverification: true, status: http.StatusUnprocessableEntity, code: "unsupported_provider"},
+			{name: "chosen principal", publishable: publishableA, origin: originA, token: tokenA, body: `{"provider":"github","redirect_url":"` + redirectA + `","user_id":"` + string(userB.PublicID) + `","session_id":"` + sessionB + `"}`, needsReverification: true, status: http.StatusBadRequest, code: "invalid_request"},
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
-				res := socialLinkE2EPost(t, handler, tc.publishable, tc.origin, tc.token, tc.body)
+				grant := ""
+				if tc.needsReverification {
+					grant = createSocialLinkHTTPReverification(t, handler, publishableA, originA, tokenA, tokenA)
+				}
+				res := socialLinkE2EPost(t, handler, tc.publishable, tc.origin, tc.token, grant, tc.body)
 				assertSocialError(t, res, tc.status, tc.code)
 			})
 		}
 	})
 
 	t.Run("purpose and provider substitution fail closed", func(t *testing.T) {
-		state := createSocialLinkHTTPAttempt(t, handler, publishableA, originA, tokenA, redirectA, "github")
+		state := createSocialLinkHTTPAttempt(t, handler, publishableA, originA, tokenA, tokenA, redirectA, "github")
 		wrongProvider := httptest.NewRecorder()
 		handler.ServeHTTP(wrongProvider, httptest.NewRequest(http.MethodGet, "/v1/social-auth/callback/gitlab?state="+url.QueryEscape(state)+"&code=provider-code", nil))
 		assertSocialError(t, wrongProvider, http.StatusBadRequest, "invalid_social_state")
@@ -202,7 +217,7 @@ func TestSocialLinkHTTPLifecycleOverPostgreSQL(t *testing.T) {
 	})
 
 	t.Run("provider denial skips proof and uses generic stored redirect", func(t *testing.T) {
-		state := createSocialLinkHTTPAttempt(t, handler, publishableA, originA, tokenA, redirectA, "github")
+		state := createSocialLinkHTTPAttempt(t, handler, publishableA, originA, tokenA, tokenA, redirectA, "github")
 		before := provider.exchangeCalls
 		res := httptest.NewRecorder()
 		handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/v1/social-auth/callback/github?state="+url.QueryEscape(state)+"&error=access_denied&error_description=provider-secret", nil))
@@ -221,7 +236,7 @@ func TestSocialLinkHTTPLifecycleOverPostgreSQL(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		state := createSocialLinkHTTPAttempt(t, handler, publishableA, originA, revocableToken, redirectA, "github")
+		state := createSocialLinkHTTPAttempt(t, handler, publishableA, originA, revocableToken, revocableToken, redirectA, "github")
 		if _, err := db.ExecContext(ctx, `UPDATE sessions SET revoked_at=CURRENT_TIMESTAMP WHERE application_instance_id=$1 AND public_id=$2`, int64(appA.InternalID), revocable); err != nil {
 			t.Fatal(err)
 		}
@@ -236,7 +251,7 @@ func TestSocialLinkHTTPLifecycleOverPostgreSQL(t *testing.T) {
 	})
 
 	t.Run("other owner conflict is generic and never transfers ownership", func(t *testing.T) {
-		state := createSocialLinkHTTPAttempt(t, handler, publishableA, originA, tokenB, redirectA, "github")
+		state := createSocialLinkHTTPAttempt(t, handler, publishableA, originA, tokenB, tokenB, redirectA, "github")
 		res := httptest.NewRecorder()
 		handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/v1/social-auth/callback/github?state="+url.QueryEscape(state)+"&code=provider-code", nil))
 		if res.Code != http.StatusSeeOther {
@@ -247,9 +262,10 @@ func TestSocialLinkHTTPLifecycleOverPostgreSQL(t *testing.T) {
 	})
 }
 
-func createSocialLinkHTTPAttempt(t *testing.T, handler http.Handler, publishable, origin, accessToken, redirect, provider string) string {
+func createSocialLinkHTTPAttempt(t *testing.T, handler http.Handler, publishable, origin, targetAccessToken, proofAccessToken, redirect, provider string) string {
 	t.Helper()
-	res := socialLinkE2EPost(t, handler, publishable, origin, accessToken, `{"provider":"`+provider+`","redirect_url":"`+redirect+`"}`)
+	grant := createSocialLinkHTTPReverification(t, handler, publishable, origin, targetAccessToken, proofAccessToken)
+	res := socialLinkE2EPost(t, handler, publishable, origin, targetAccessToken, grant, `{"provider":"`+provider+`","redirect_url":"`+redirect+`"}`)
 	if res.Code != http.StatusCreated {
 		t.Fatalf("create social link attempt status/body = %d %s", res.Code, res.Body.String())
 	}
@@ -272,7 +288,39 @@ func createSocialLinkHTTPAttempt(t *testing.T, handler http.Handler, publishable
 	return state
 }
 
-func socialLinkE2EPost(t *testing.T, handler http.Handler, publishable, origin, accessToken, body string) *httptest.ResponseRecorder {
+func createSocialLinkHTTPReverification(t *testing.T, handler http.Handler, publishable, origin, targetAccessToken, proofAccessToken string) string {
+	t.Helper()
+	body, err := json.Marshal(map[string]string{
+		"purpose":            authentication.ReverificationPurposeSocialLink,
+		"proof_access_token": proofAccessToken,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/reverifications", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(PublishableKeyHeader, publishable)
+	req.Header.Set("Origin", origin)
+	req.Header.Set("Authorization", "Bearer "+targetAccessToken)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusCreated {
+		t.Fatalf("create reverification status/body = %d %s", res.Code, res.Body.String())
+	}
+	if got := res.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("reverification Cache-Control=%q want no-store", got)
+	}
+	var grant authentication.ReverificationGrant
+	if err := json.Unmarshal(res.Body.Bytes(), &grant); err != nil {
+		t.Fatal(err)
+	}
+	if grant.Token == "" || grant.ExpiresAt.IsZero() {
+		t.Fatalf("invalid reverification response: %#v", grant)
+	}
+	return grant.Token
+}
+
+func socialLinkE2EPost(t *testing.T, handler http.Handler, publishable, origin, accessToken, reverificationToken, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/v1/social-links/attempts", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -284,6 +332,9 @@ func socialLinkE2EPost(t *testing.T, handler http.Handler, publishable, origin, 
 	}
 	if accessToken != "" {
 		req.Header.Set("Authorization", "Bearer "+accessToken)
+	}
+	if reverificationToken != "" {
+		req.Header.Set(ReverificationHeader, reverificationToken)
 	}
 	res := httptest.NewRecorder()
 	handler.ServeHTTP(res, req)
