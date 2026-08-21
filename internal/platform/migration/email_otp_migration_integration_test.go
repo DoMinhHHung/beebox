@@ -4,9 +4,7 @@ package migration
 
 import (
 	"context"
-	"io/fs"
 	"testing"
-	"testing/fstest"
 	"time"
 )
 
@@ -16,33 +14,11 @@ func TestEmailOTPMigrationUpgradesExisting00012Schema(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	sources, err := fs.Sub(embeddedSQL, "sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	throughTwelve := fstest.MapFS{}
-	throughThirteen := fstest.MapFS{}
-	entries, err := fs.ReadDir(sources, ".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, entry := range entries {
-		content, err := fs.ReadFile(sources, entry.Name())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if entry.Name() != "00014_phone_sms.sql" && entry.Name() != "00015_social_oauth.sql" && entry.Name() != "00016_social_account_linking.sql" && entry.Name() != "00017_social_account_management.sql" && entry.Name() != "00018_passkeys.sql" && entry.Name() != "00019_totp_mfa.sql" && entry.Name() != "00020_recovery_codes.sql" && entry.Name() != "00021_reverification.sql" && entry.Name() != "00022_session_self_service.sql" {
-			throughThirteen[entry.Name()] = &fstest.MapFile{Data: content}
-		}
-		if entry.Name() != "00013_email_otp_signin.sql" && entry.Name() != "00014_phone_sms.sql" && entry.Name() != "00015_social_oauth.sql" && entry.Name() != "00016_social_account_linking.sql" && entry.Name() != "00017_social_account_management.sql" && entry.Name() != "00018_passkeys.sql" && entry.Name() != "00019_totp_mfa.sql" && entry.Name() != "00020_recovery_codes.sql" && entry.Name() != "00021_reverification.sql" && entry.Name() != "00022_session_self_service.sql" {
-			throughTwelve[entry.Name()] = &fstest.MapFile{Data: content}
-		}
-	}
-	if err := upWithSources(ctx, pool.OpenSQLDB(), throughTwelve); err != nil {
+	if err := upWithSources(ctx, pool.OpenSQLDB(), migrationSourcesThrough(t, 12)); err != nil {
 		t.Fatalf("migrate through 00012 error = %v", err)
 	}
 	assertMigrationState(t, ctx, pool, 12)
-	if err := upWithSources(ctx, pool.OpenSQLDB(), throughThirteen); err != nil {
+	if err := upWithSources(ctx, pool.OpenSQLDB(), migrationSourcesThrough(t, 13)); err != nil {
 		t.Fatalf("upgrade to 00013 error = %v", err)
 	}
 	assertMigrationState(t, ctx, pool, 13)
