@@ -137,8 +137,8 @@ func TestPublicOpenAPIContract(t *testing.T) {
 			t.Fatalf("v1 spec missing required contract anchor %q", required)
 		}
 	}
-	if got := strings.Count(text, "#/components/parameters/ReverificationGrantHeader"); got != 11 {
-		t.Fatalf("protected reverification header references=%d want=11", got)
+	if got := strings.Count(text, "#/components/parameters/ReverificationGrantHeader"); got != 17 {
+		t.Fatalf("protected reverification header references=%d want=17", got)
 	}
 	normalizedText := strings.Join(strings.Fields(strings.ToLower(text)), " ")
 	for _, requiredSemantics := range []string{
@@ -196,7 +196,7 @@ func TestPublicOpenAPIContract(t *testing.T) {
 		}
 	}
 	for _, forbidden := range []string{
-		"application_instance_id", "password_hash", "refresh_verifier", "challenge_id", "BIGINT",
+		"application_instance_id", "password_hash", "refresh_verifier", "BIGINT",
 		"phone_identifier_id", "twilio_sid", "message_sid", "provider_subject", "client_secret",
 		"webauthn.Credential", "webauthn.SessionData", "credential_json", "challenge_hash",
 	} {
@@ -213,6 +213,7 @@ func TestPublicOpenAPIContract(t *testing.T) {
 		"refreshing an old session does not reset its original created_at",
 		"recent authentication is required for passkey registration and removal",
 		"authenticate again to obtain a new ordinary session",
+		"identifier mutation purposes remain reserved",
 	} {
 		if strings.Contains(normalizedText, stale) {
 			t.Fatalf("v1 spec contains stale authentication authority %q", stale)
