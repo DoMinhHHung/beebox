@@ -19,8 +19,9 @@ import (
 )
 
 const (
-	hostedCSRFCookie = "__Host-beebox-hosted-csrf"
-	hostedMFACookie  = "__Host-beebox-hosted-mfa"
+	hostedCSRFCookie   = "__Host-beebox-hosted-csrf"
+	hostedMFACookie    = "__Host-beebox-hosted-mfa"
+	hostedSocialCookie = "__Host-beebox-hosted-social"
 )
 
 type HostedTOTPCompletion interface {
@@ -35,16 +36,27 @@ type HostedEmailLinkCompletionLoader interface {
 	LoadConsumedEmailLinkCompletion(context.Context, applicationinstance.InternalID, string) (string, error)
 }
 
+type HostedSocialAttemptService interface {
+	CreateAttempt(context.Context, applicationinstance.Instance, authentication.Provider, string, string, string) (authentication.SocialAttemptResult, error)
+}
+
+type HostedSocialExchangeService interface {
+	Exchange(context.Context, applicationinstance.InternalID, string, string, audit.CorrelationID) (session.TokenPair, error)
+}
+
 type hostedHTTP struct {
-	base         http.Handler
-	origin       string
-	applications ApplicationResolver
-	redirects    authentication.EmailLinkRedirectPolicy
-	emailLinks   EmailLinkConfirmService
-	pending      session.PendingMFAContextLoader
-	totp         HostedTOTPCompletion
-	recovery     HostedRecoveryCompletion
-	destinations HostedEmailLinkCompletionLoader
+	base            http.Handler
+	origin          string
+	applications    ApplicationResolver
+	redirects       authentication.EmailLinkRedirectPolicy
+	emailLinks      EmailLinkConfirmService
+	pending         session.PendingMFAContextLoader
+	totp            HostedTOTPCompletion
+	recovery        HostedRecoveryCompletion
+	destinations    HostedEmailLinkCompletionLoader
+	socialAttempts  HostedSocialAttemptService
+	socialExchange  HostedSocialExchangeService
+	socialProtector *authentication.SocialStateProtector
 }
 
 type hostedEmailLinkConfirmRequest struct {
@@ -54,6 +66,20 @@ type hostedEmailLinkConfirmRequest struct {
 
 type hostedMFARequest struct {
 	Code string `json:"code"`
+}
+
+type hostedSocialStartRequest struct {
+	Provider      string `json:"provider"`
+	CompletionURL string `json:"completion_url"`
+}
+
+type hostedSocialExchangeRequest struct {
+	Code string `json:"code"`
+}
+
+type hostedSocialStartResponse struct {
+	AuthorizationURL string `json:"authorization_url"`
+	ExpiresIn        int64  `json:"expires_in"`
 }
 
 type hostedTokenResponse struct {
@@ -78,6 +104,9 @@ func WithHostedAuth(
 	totp HostedTOTPCompletion,
 	recovery HostedRecoveryCompletion,
 	destinations HostedEmailLinkCompletionLoader,
+	socialAttempts HostedSocialAttemptService,
+	socialExchange HostedSocialExchangeService,
+	socialProtector *authentication.SocialStateProtector,
 ) http.Handler {
 	if base == nil || hostedOrigin == "" {
 		return base
@@ -85,6 +114,7 @@ func WithHostedAuth(
 	return &hostedHTTP{
 		base: base, origin: hostedOrigin, applications: applications, redirects: redirects,
 		emailLinks: emailLinks, pending: pending, totp: totp, recovery: recovery, destinations: destinations,
+		socialAttempts: socialAttempts, socialExchange: socialExchange, socialProtector: socialProtector,
 	}
 }
 
@@ -95,7 +125,7 @@ func (h *hostedHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	h.setSecurityHeaders(w)
 	switch {
-	case r.URL.Path == "/auth" || r.URL.Path == "/auth/" || r.URL.Path == "/auth/email-link":
+	case r.URL.Path == "/auth" || r.URL.Path == "/auth/" || r.URL.Path == "/auth/email-link" || r.URL.Path == "/auth/social/callback":
 		h.servePage(w, r)
 	case r.URL.Path == "/auth/app.js":
 		h.serveAsset(w, r, "text/javascript; charset=utf-8", hostedJS)
@@ -103,13 +133,17 @@ func (h *hostedHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveAsset(w, r, "text/css; charset=utf-8", hostedCSS)
 	case r.URL.Path == "/auth/api/email-link/confirm":
 		h.withMutationContext(w, r, h.confirmEmailLink)
-	case r.URL.Path == "/auth/api/email-link/mfa/totp":
+	case r.URL.Path == "/auth/api/social/start":
+		h.withMutationContext(w, r, h.startSocial)
+	case r.URL.Path == "/auth/api/social/exchange":
+		h.withMutationContext(w, r, h.exchangeSocial)
+	case r.URL.Path == "/auth/api/mfa/totp":
 		h.withMutationContext(w, r, func(w http.ResponseWriter, r *http.Request, requestID string, correlationID audit.CorrelationID) {
-			h.completeEmailLinkMFA(w, r, requestID, correlationID, false)
+			h.completeHostedMFA(w, r, requestID, correlationID, false)
 		})
-	case r.URL.Path == "/auth/api/email-link/mfa/recovery":
+	case r.URL.Path == "/auth/api/mfa/recovery":
 		h.withMutationContext(w, r, func(w http.ResponseWriter, r *http.Request, requestID string, correlationID audit.CorrelationID) {
-			h.completeEmailLinkMFA(w, r, requestID, correlationID, true)
+			h.completeHostedMFA(w, r, requestID, correlationID, true)
 		})
 	case strings.HasPrefix(r.URL.Path, "/auth/api/v1/"):
 		h.proxyHeadless(w, r)
@@ -283,10 +317,7 @@ func (h *hostedHTTP) confirmEmailLink(w http.ResponseWriter, r *http.Request, re
 		return
 	}
 	if result.TokenPair.PendingMFA != nil {
-		http.SetCookie(w, &http.Cookie{
-			Name: hostedMFACookie, Value: result.TokenPair.PendingMFA.Token, Path: "/auth", Secure: true, HttpOnly: true,
-			SameSite: http.SameSiteLaxMode, MaxAge: int(authentication.PendingMFATTL / time.Second),
-		})
+		setHostedMFACookie(w, result.TokenPair.PendingMFA.Token)
 		expiresAt := result.TokenPair.PendingMFA.ExpiresAt.UTC()
 		writeJSON(w, http.StatusOK, hostedTokenResponse{
 			Status: "mfa_required", ExpiresAt: &expiresAt,
@@ -301,7 +332,7 @@ func (h *hostedHTTP) confirmEmailLink(w http.ResponseWriter, r *http.Request, re
 	h.writeHostedAuthenticated(w, app.PublicID, result.TokenPair, result.CompletionURL)
 }
 
-func (h *hostedHTTP) completeEmailLinkMFA(w http.ResponseWriter, r *http.Request, requestID string, correlationID audit.CorrelationID, recovery bool) {
+func (h *hostedHTTP) startSocial(w http.ResponseWriter, r *http.Request, requestID string, _ audit.CorrelationID) {
 	if r.Method != http.MethodPost {
 		methodNotAllowed(w, requestID)
 		return
@@ -310,8 +341,97 @@ func (h *hostedHTTP) completeEmailLinkMFA(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	var input hostedSocialStartRequest
+	if decodeJSON(w, r, &input) != nil || h.socialAttempts == nil || h.socialProtector == nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "The hosted social request is invalid.", requestID)
+		return
+	}
+	provider := authentication.Provider(input.Provider)
+	if !provider.Valid() || !h.currentRedirectAllowed(r.Context(), app.InternalID, input.CompletionURL) {
+		writeError(w, http.StatusBadRequest, "invalid_request", "The hosted social request is invalid.", requestID)
+		return
+	}
+	callbackURL := h.origin + "/auth/social/callback"
+	if !h.currentRedirectAllowed(r.Context(), app.InternalID, callbackURL) {
+		writeError(w, http.StatusBadRequest, "invalid_destination", "The hosted social callback is not configured for this application.", requestID)
+		return
+	}
+	verifier, err := authentication.NewSocialPKCEVerifier()
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Social authentication is temporarily unavailable.", requestID)
+		return
+	}
+	challenge, ok := authentication.S256Challenge(verifier)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Social authentication is temporarily unavailable.", requestID)
+		return
+	}
+	attempt, err := h.socialAttempts.CreateAttempt(r.Context(), app, provider, callbackURL, challenge, "S256")
+	if err != nil {
+		h.writeHostedSocialError(w, requestID, err)
+		return
+	}
+	now := time.Now().UTC()
+	sealed, err := h.socialProtector.SealHostedContext(authentication.HostedSocialContext{
+		ApplicationInstanceID: app.InternalID,
+		ApplicationPublicID:   app.PublicID,
+		PKCEVerifier:          verifier,
+		CompletionURL:         input.CompletionURL,
+		IssuedAt:              now,
+		ExpiresAt:             now.Add(authentication.SocialAttemptTTL),
+	})
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Social authentication is temporarily unavailable.", requestID)
+		return
+	}
+	setHostedSocialCookie(w, sealed)
+	writeJSON(w, http.StatusOK, hostedSocialStartResponse{AuthorizationURL: attempt.AuthorizationURL, ExpiresIn: attempt.ExpiresIn})
+}
+
+func (h *hostedHTTP) exchangeSocial(w http.ResponseWriter, r *http.Request, requestID string, correlationID audit.CorrelationID) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, requestID)
+		return
+	}
+	var input hostedSocialExchangeRequest
+	if decodeJSON(w, r, &input) != nil || input.Code == "" || h.socialExchange == nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "The hosted social request is invalid.", requestID)
+		return
+	}
+	context, ok := h.hostedSocialContext(w, r, requestID)
+	if !ok {
+		return
+	}
+	if !h.currentRedirectAllowed(r.Context(), context.ApplicationInstanceID, context.CompletionURL) {
+		clearHostedSocialCookie(w)
+		writeError(w, http.StatusBadRequest, "invalid_destination", "The hosted authentication destination is invalid.", requestID)
+		return
+	}
+	pair, err := h.socialExchange.Exchange(r.Context(), context.ApplicationInstanceID, input.Code, context.PKCEVerifier, correlationID)
+	if err != nil {
+		h.writeHostedAuthenticationError(w, requestID, err)
+		return
+	}
+	if pair.PendingMFA != nil {
+		setHostedMFACookie(w, pair.PendingMFA.Token)
+		expiresAt := pair.PendingMFA.ExpiresAt.UTC()
+		writeJSON(w, http.StatusOK, hostedTokenResponse{
+			Status: "mfa_required", ExpiresAt: &expiresAt,
+			AvailableMethods: append([]string(nil), pair.PendingMFA.AvailableMethods...),
+		})
+		return
+	}
+	clearHostedSocialCookie(w)
+	h.writeHostedAuthenticated(w, context.ApplicationPublicID, pair, context.CompletionURL)
+}
+
+func (h *hostedHTTP) completeHostedMFA(w http.ResponseWriter, r *http.Request, requestID string, correlationID audit.CorrelationID, recovery bool) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, requestID)
+		return
+	}
 	var input hostedMFARequest
-	if decodeJSON(w, r, &input) != nil || input.Code == "" || h.pending == nil || h.destinations == nil {
+	if decodeJSON(w, r, &input) != nil || input.Code == "" || h.pending == nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "The hosted authentication request is invalid.", requestID)
 		return
 	}
@@ -321,8 +441,16 @@ func (h *hostedHTTP) completeEmailLinkMFA(w http.ResponseWriter, r *http.Request
 		return
 	}
 	binding, err := session.ResolvePendingMFAContext(r.Context(), h.pending, cookie.Value)
-	if err != nil || binding.ApplicationInstanceID != app.InternalID || binding.PrimaryMethod != authentication.PrimaryMethodEmailLink || !authentication.ValidEmailLinkChallengeID(binding.PrimaryContext) {
+	if err != nil {
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "The supplied credentials are invalid.", requestID)
+		return
+	}
+	appPublicID, completionURL, socialFlow, ok := h.resolveMFACompletion(w, r, requestID, binding)
+	if !ok {
+		return
+	}
+	if !h.currentRedirectAllowed(r.Context(), binding.ApplicationInstanceID, completionURL) {
+		writeError(w, http.StatusBadRequest, "invalid_destination", "The hosted authentication destination is invalid.", requestID)
 		return
 	}
 	var pair session.TokenPair
@@ -331,25 +459,85 @@ func (h *hostedHTTP) completeEmailLinkMFA(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Authentication is temporarily unavailable.", requestID)
 			return
 		}
-		pair, err = h.recovery.Complete(r.Context(), app.InternalID, cookie.Value, input.Code, correlationID)
+		pair, err = h.recovery.Complete(r.Context(), binding.ApplicationInstanceID, cookie.Value, input.Code, correlationID)
 	} else {
 		if h.totp == nil {
 			writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Authentication is temporarily unavailable.", requestID)
 			return
 		}
-		pair, err = h.totp.Complete(r.Context(), app.InternalID, cookie.Value, input.Code, correlationID)
+		pair, err = h.totp.Complete(r.Context(), binding.ApplicationInstanceID, cookie.Value, input.Code, correlationID)
 	}
 	if err != nil {
 		h.writeHostedAuthenticationError(w, requestID, err)
 		return
 	}
-	completionURL, err := h.destinations.LoadConsumedEmailLinkCompletion(r.Context(), app.InternalID, binding.PrimaryContext)
-	if err != nil || !h.currentRedirectAllowed(r.Context(), app.InternalID, completionURL) {
+	if !h.currentRedirectAllowed(r.Context(), binding.ApplicationInstanceID, completionURL) {
 		writeError(w, http.StatusBadRequest, "invalid_destination", "The hosted authentication destination is invalid.", requestID)
 		return
 	}
 	clearHostedMFACookie(w)
-	h.writeHostedAuthenticated(w, app.PublicID, pair, completionURL)
+	if socialFlow {
+		clearHostedSocialCookie(w)
+	}
+	h.writeHostedAuthenticated(w, appPublicID, pair, completionURL)
+}
+
+func (h *hostedHTTP) resolveMFACompletion(w http.ResponseWriter, r *http.Request, requestID string, binding session.PendingMFAContext) (applicationinstance.PublicID, string, bool, bool) {
+	switch binding.PrimaryMethod {
+	case authentication.PrimaryMethodEmailLink:
+		if h.destinations == nil || !authentication.ValidEmailLinkChallengeID(binding.PrimaryContext) {
+			writeError(w, http.StatusUnauthorized, "invalid_credentials", "The supplied credentials are invalid.", requestID)
+			return "", "", false, false
+		}
+		app, ok := h.resolveHostedApplication(w, r, requestID)
+		if !ok || app.InternalID != binding.ApplicationInstanceID {
+			if ok {
+				writeError(w, http.StatusUnauthorized, "invalid_credentials", "The supplied credentials are invalid.", requestID)
+			}
+			return "", "", false, false
+		}
+		completionURL, err := h.destinations.LoadConsumedEmailLinkCompletion(r.Context(), app.InternalID, binding.PrimaryContext)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "invalid_credentials", "The supplied credentials are invalid.", requestID)
+			return "", "", false, false
+		}
+		return app.PublicID, completionURL, false, true
+	case authentication.PrimaryMethodSocial:
+		if binding.PrimaryContext != "social_completion" {
+			writeError(w, http.StatusUnauthorized, "invalid_credentials", "The supplied credentials are invalid.", requestID)
+			return "", "", false, false
+		}
+		context, ok := h.hostedSocialContext(w, r, requestID)
+		if !ok || context.ApplicationInstanceID != binding.ApplicationInstanceID {
+			if ok {
+				writeError(w, http.StatusUnauthorized, "invalid_credentials", "The supplied credentials are invalid.", requestID)
+			}
+			return "", "", false, false
+		}
+		return context.ApplicationPublicID, context.CompletionURL, true, true
+	default:
+		writeError(w, http.StatusUnauthorized, "invalid_credentials", "The supplied credentials are invalid.", requestID)
+		return "", "", false, false
+	}
+}
+
+func (h *hostedHTTP) hostedSocialContext(w http.ResponseWriter, r *http.Request, requestID string) (authentication.HostedSocialContext, bool) {
+	if h.socialProtector == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Social authentication is temporarily unavailable.", requestID)
+		return authentication.HostedSocialContext{}, false
+	}
+	cookie, err := r.Cookie(hostedSocialCookie)
+	if err != nil || cookie.Value == "" {
+		writeError(w, http.StatusUnauthorized, "invalid_credentials", "The supplied credentials are invalid.", requestID)
+		return authentication.HostedSocialContext{}, false
+	}
+	context, err := h.socialProtector.OpenHostedContext(cookie.Value, time.Now().UTC())
+	if err != nil {
+		clearHostedSocialCookie(w)
+		writeError(w, http.StatusUnauthorized, "invalid_credentials", "The supplied credentials are invalid.", requestID)
+		return authentication.HostedSocialContext{}, false
+	}
+	return context, true
 }
 
 func (h *hostedHTTP) currentRedirectAllowed(ctx context.Context, appID applicationinstance.InternalID, completionURL string) bool {
@@ -361,7 +549,7 @@ func (h *hostedHTTP) currentRedirectAllowed(ctx context.Context, appID applicati
 }
 
 func (h *hostedHTTP) writeHostedAuthenticated(w http.ResponseWriter, appPublicID applicationinstance.PublicID, pair session.TokenPair, completionURL string) {
-	if pair.PendingMFA != nil || pair.AccessToken == "" || pair.RefreshToken == "" || pair.SessionID == "" || completionURL == "" {
+	if !appPublicID.Valid() || pair.PendingMFA != nil || pair.AccessToken == "" || pair.RefreshToken == "" || pair.SessionID == "" || completionURL == "" {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Authentication is temporarily unavailable.", "request_unavailable")
 		return
 	}
@@ -376,11 +564,44 @@ func (h *hostedHTTP) writeHostedAuthenticated(w http.ResponseWriter, appPublicID
 	})
 }
 
+func setHostedMFACookie(w http.ResponseWriter, token string) {
+	http.SetCookie(w, &http.Cookie{
+		Name: hostedMFACookie, Value: token, Path: "/", Secure: true, HttpOnly: true,
+		SameSite: http.SameSiteLaxMode, MaxAge: int(authentication.PendingMFATTL / time.Second),
+	})
+}
+
 func clearHostedMFACookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{
-		Name: hostedMFACookie, Value: "", Path: "/auth", Secure: true, HttpOnly: true,
+		Name: hostedMFACookie, Value: "", Path: "/", Secure: true, HttpOnly: true,
 		SameSite: http.SameSiteLaxMode, MaxAge: -1,
 	})
+}
+
+func setHostedSocialCookie(w http.ResponseWriter, value string) {
+	http.SetCookie(w, &http.Cookie{
+		Name: hostedSocialCookie, Value: value, Path: "/", Secure: true, HttpOnly: true,
+		SameSite: http.SameSiteLaxMode, MaxAge: int(authentication.SocialAttemptTTL / time.Second),
+	})
+}
+
+func clearHostedSocialCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name: hostedSocialCookie, Value: "", Path: "/", Secure: true, HttpOnly: true,
+		SameSite: http.SameSiteLaxMode, MaxAge: -1,
+	})
+}
+
+func (h *hostedHTTP) writeHostedSocialError(w http.ResponseWriter, requestID string, err error) {
+	switch {
+	case errors.Is(err, authentication.ErrSocialInvalidRequest), errors.Is(err, authentication.ErrSocialUnsupportedProvider):
+		writeError(w, http.StatusBadRequest, "invalid_request", "The hosted social request is invalid.", requestID)
+	case errors.Is(err, authentication.ErrSocialRateLimited):
+		w.Header().Set("Retry-After", "60")
+		writeError(w, http.StatusTooManyRequests, "rate_limited", "Too many requests were received.", requestID)
+	default:
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Social authentication is temporarily unavailable.", requestID)
+	}
 }
 
 func (h *hostedHTTP) writeHostedAuthenticationError(w http.ResponseWriter, requestID string, err error) {
