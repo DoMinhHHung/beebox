@@ -12,6 +12,7 @@ type Sender interface {
 	DeliverVerificationCode(context.Context, string, string, time.Time) error
 	DeliverPasswordResetCode(context.Context, string, string, time.Time) error
 	DeliverSignInCode(context.Context, string, string, time.Time) error
+	DeliverSignInLink(context.Context, string, string, time.Time) error
 }
 
 type unavailable struct{}
@@ -25,6 +26,10 @@ func (unavailable) DeliverPasswordResetCode(context.Context, string, string, tim
 }
 
 func (unavailable) DeliverSignInCode(context.Context, string, string, time.Time) error {
+	return ErrDelivery
+}
+
+func (unavailable) DeliverSignInLink(context.Context, string, string, time.Time) error {
 	return ErrDelivery
 }
 
