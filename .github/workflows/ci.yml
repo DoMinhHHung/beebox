@@ -111,12 +111,18 @@ jobs:
             exit "$status"
           fi
 
+      - name: Capture PostgreSQL service log
+        if: always()
+        shell: bash
+        run: |
+          docker logs "${{ job.services.postgres.id }}" > /tmp/beebox-postgres-service.log 2>&1 || true
+
       - name: Upload PostgreSQL integration logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: postgresql-integration-logs
-          path: /tmp/beebox-pg-*.log
+          path: /tmp/beebox-*.log
           if-no-files-found: warn
           retention-days: 1
 
