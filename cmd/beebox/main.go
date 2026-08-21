@@ -122,8 +122,9 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 	reset := authentication.NewPasswordResetService(authStore, delivery)
 	emailOTP := authentication.NewEmailOTPService(authStore, delivery)
 	var emailLink *authentication.EmailLinkService
+	hostedOrigin := ""
 	if rawHostedOrigin, configured := lookup("BEEBOX_HOSTED_AUTH_ORIGIN"); configured && rawHostedOrigin != "" {
-		hostedOrigin, err := applicationinstance.CanonicalizeOrigin(rawHostedOrigin)
+		hostedOrigin, err = applicationinstance.CanonicalizeOrigin(rawHostedOrigin)
 		if err != nil {
 			return nil, errors.New("load hosted authentication origin")
 		}
@@ -195,6 +196,7 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 	base = httpapi.WithAccountManagement(base, integrationService, integrationStore, sessionService, accountCore)
 	reverificationCore := authentication.NewReverificationService(authStore)
 	base = httpapi.WithReverification(base, integrationService, integrationStore, sessionService, reverificationCore)
+	base = httpapi.WithHostedAuth(base, hostedOrigin, integrationService, integrationStore, emailLinkSession, authStore, totpCompletion, recoveryCompletion, authStore)
 	return httpapi.WithMetrics(base, recorder), nil
 }
 
