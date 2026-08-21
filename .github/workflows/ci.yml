@@ -54,6 +54,11 @@ jobs:
             exit 1
           fi
 
+      - name: Build microservice binaries
+        run: |
+          go build ./cmd/beebox-gateway
+          go build ./cmd/beebox-identity
+
       - name: Vet
         run: go vet ./...
 
@@ -99,6 +104,7 @@ jobs:
             ./internal/authentication/postgres \
             ./internal/session/postgres \
             ./internal/httpapi \
+            ./internal/gateway \
             2>&1 | tee /tmp/beebox-pg-integration.log
           status=${PIPESTATUS[0]}
           set -e
