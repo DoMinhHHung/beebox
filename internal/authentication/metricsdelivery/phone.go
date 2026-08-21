@@ -33,6 +33,15 @@ func (d *PhoneInstrumented) DeliverPhoneSignInCode(ctx context.Context, destinat
 	return err
 }
 
+// DeliverPhoneIdentifierVerificationCode intentionally reuses the provider's
+// possession-verification SMS transport/message rather than creating a second
+// provider protocol. Metrics retain a distinct bounded operation label.
+func (d *PhoneInstrumented) DeliverPhoneIdentifierVerificationCode(ctx context.Context, destination, code string, expiresAt time.Time) error {
+	err := d.inner.DeliverPhoneSignupCode(ctx, destination, code, expiresAt)
+	d.observe("sms_phone_identifier_verification_delivery", err)
+	return err
+}
+
 func (d *PhoneInstrumented) observe(operation string, err error) {
 	if d == nil || d.metrics == nil {
 		return

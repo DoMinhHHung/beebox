@@ -289,19 +289,21 @@ func TestFacebookTokenFailuresAreSafeAndDoNotRetry(t *testing.T) {
 
 	t.Run("timeout", func(t *testing.T) {
 		var calls atomic.Int32
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			calls.Add(1)
-			time.Sleep(50 * time.Millisecond)
-		}))
-		defer server.Close()
-		client := noRedirectClient(server.Client())
-		client.Timeout = 5 * time.Millisecond
+		client := &http.Client{
+			Timeout: 5 * time.Millisecond,
+			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+				calls.Add(1)
+				<-r.Context().Done()
+				return nil, r.Context().Err()
+			}),
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		}
 		a := &adapter{
 			provider:      authentication.ProviderFacebook,
 			clientID:      "fake-client",
 			clientSecret:  secret,
-			redirectURL:   server.URL + "/callback",
-			tokenURL:      server.URL + "/v25.0/oauth/access_token",
+			redirectURL:   "https://auth.example.test/callback",
+			tokenURL:      "https://graph.facebook.com/v25.0/oauth/access_token",
 			tokenExchange: tokenExchangeFacebookGETQuery,
 			httpClient:    client,
 		}

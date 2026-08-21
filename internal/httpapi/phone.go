@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
-	"time"
 
 	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
 	"github.com/DoMinhHHung/beebox/internal/audit"
@@ -102,7 +101,6 @@ func (h *phoneHTTP) handlePhoneIssue(w http.ResponseWriter, r *http.Request, req
 		return
 	}
 	if issuer == nil {
-		// SMS-disabled mode stops here before any phone/account/challenge lookup.
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "SMS authentication is unavailable.", requestID)
 		return
 	}
@@ -115,8 +113,6 @@ func (h *phoneHTTP) handlePhoneIssue(w http.ResponseWriter, r *http.Request, req
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Authentication is temporarily unavailable.", requestID)
 		return
 	}
-	// Eligible delivery, protected account state, cooldown/window suppression,
-	// and provider failure deliberately converge on the same accepted response.
 	writeJSON(w, http.StatusAccepted, statusEnvelope{Status: "accepted"})
 }
 
@@ -151,7 +147,7 @@ func (h *phoneHTTP) handlePhoneConfirm(w http.ResponseWriter, r *http.Request, r
 		}
 		return
 	}
-	writePhoneTokenPair(w, r, pair, app.PublicID)
+	writeAuthenticationTokenPair(w, r, pair, app.PublicID)
 }
 
 func (h *phoneHTTP) authorizePhoneApplication(w http.ResponseWriter, r *http.Request, requestID string) (applicationinstance.Instance, bool) {
@@ -204,15 +200,5 @@ func (h *phoneHTTP) handlePhonePreflight(w http.ResponseWriter, r *http.Request,
 }
 
 func writePhoneTokenPair(w http.ResponseWriter, r *http.Request, pair session.TokenPair, appPublicID applicationinstance.PublicID) {
-	response := tokenResponse{AccessToken: pair.AccessToken, TokenType: "Bearer", ExpiresIn: pair.ExpiresIn, SessionID: pair.SessionID}
-	if r.Header.Get("Origin") != "" {
-		http.SetCookie(w, &http.Cookie{
-			Name: refreshCookieName(appPublicID), Value: pair.RefreshToken, Path: "/",
-			Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode,
-			MaxAge: int(session.AbsoluteLifetime / time.Second),
-		})
-	} else {
-		response.RefreshToken = pair.RefreshToken
-	}
-	writeJSON(w, http.StatusOK, response)
+	writeAuthenticationTokenPair(w, r, pair, appPublicID)
 }

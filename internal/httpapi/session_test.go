@@ -2,10 +2,12 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
 	"github.com/DoMinhHHung/beebox/internal/audit"
@@ -64,6 +66,45 @@ func TestBrowserSignInReturnsAppSpecificHostRefreshCookie(t *testing.T) {
 	}
 	if strings.Contains(res.Body.String(), "refresh-secret") {
 		t.Fatal("browser token response exposed refresh credential in JSON")
+	}
+	var body tokenResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Status != "authenticated" || body.Session == nil || body.Session.ID != sessions.signInPair.SessionID || body.AccessToken != sessions.signInPair.AccessToken {
+		t.Fatalf("authenticated result=%+v", body)
+	}
+}
+
+func TestPendingMFAResultContainsNoSessionAuthority(t *testing.T) {
+	expiresAt := time.Unix(1_700_000_300, 0).UTC()
+	pair := session.TokenPair{
+		AccessToken:  "must-not-leak-access",
+		RefreshToken: "must-not-leak-refresh",
+		ExpiresIn:    300,
+		SessionID:    "ses_21234567-89ab-4cde-8fab-0123456789ab",
+		PendingMFA: &session.PendingMFA{
+			Token:            "mfp_21234567-89ab-4cde-8fab-0123456789ab.secret",
+			ExpiresAt:        expiresAt,
+			AvailableMethods: []string{"totp"},
+		},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/sign-ins", nil)
+	res := httptest.NewRecorder()
+	writeAuthenticationTokenPair(res, req, pair, testSessionAppPublicID)
+
+	var body tokenResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Status != "mfa_required" || body.PendingMFAToken != pair.PendingMFA.Token || body.ExpiresAt == nil || !body.ExpiresAt.Equal(expiresAt) || len(body.AvailableMethods) != 1 || body.AvailableMethods[0] != "totp" {
+		t.Fatalf("pending MFA result=%+v", body)
+	}
+	if body.Session != nil || body.AccessToken != "" || body.RefreshToken != "" || body.SessionID != "" || body.TokenType != "" || body.ExpiresIn != 0 {
+		t.Fatalf("pending MFA result leaked authority=%+v", body)
+	}
+	if len(res.Result().Cookies()) != 0 {
+		t.Fatalf("pending MFA result set cookies=%v", res.Result().Cookies())
 	}
 }
 

@@ -11,22 +11,31 @@ const DefaultBatchSize = 500
 var ErrInvalidBatchSize = errors.New("invalid cleanup batch size")
 
 type Result struct {
-	RateLimits              int64
-	Idempotency             int64
-	EmailChallenges         int64
-	EmailOTPChallenges      int64
-	PasswordResetChallenges int64
-	PhoneSignupChallenges   int64
-	PhoneOTPChallenges      int64
-	SocialAuthAttempts      int64
-	SocialLinkAttempts      int64
-	SocialCompletionGrants  int64
+	RateLimits                  int64
+	Idempotency                 int64
+	EmailChallenges             int64
+	EmailOTPChallenges          int64
+	EmailLinkChallenges         int64
+	PasswordResetChallenges     int64
+	PhoneSignupChallenges       int64
+	PhoneOTPChallenges          int64
+	PhoneIdentifierVerification int64
+	SocialAuthAttempts          int64
+	SocialLinkAttempts          int64
+	SocialCompletionGrants      int64
+	PasskeyAttempts             int64
+	TOTPEnrollments             int64
+	PendingMFA                  int64
+	RecoveryCodeSets            int64
+	SensitiveAdmission          int64
 }
 
 // CleanupSecurityState removes only operational rows whose security lifetime
 // has ended. Each table is bounded by batchSize. Audit events, sessions, phone
-// identifiers, external identities, and refresh credentials are deliberately
-// outside this primitive.
+// identifiers, external identities, passkey credentials, TOTP credentials, and
+// refresh credentials are deliberately outside this primitive. Correctness never
+// depends on this cleanup: proof paths still enforce expiry and one-time
+// consumption themselves.
 func CleanupSecurityState(ctx context.Context, db *sql.DB, batchSize int) (Result, error) {
 	if db == nil || batchSize <= 0 || batchSize > 10_000 {
 		return Result{}, ErrInvalidBatchSize
@@ -64,6 +73,12 @@ func CleanupSecurityState(ctx context.Context, db *sql.DB, batchSize int) (Resul
 			ORDER BY expires_at
 			LIMIT $1
 		) DELETE FROM email_otp_signin_challenges p USING doomed d WHERE p.ctid = d.ctid`},
+		{&result.EmailLinkChallenges, `WITH doomed AS (
+			SELECT ctid FROM email_signin_links
+			WHERE consumed_at IS NOT NULL OR expires_at <= CURRENT_TIMESTAMP
+			ORDER BY expires_at
+			LIMIT $1
+		) DELETE FROM email_signin_links p USING doomed d WHERE p.ctid = d.ctid`},
 		{&result.PasswordResetChallenges, `WITH doomed AS (
 			SELECT ctid FROM password_reset_challenges
 			WHERE consumed_at IS NOT NULL OR expires_at <= CURRENT_TIMESTAMP
@@ -82,6 +97,12 @@ func CleanupSecurityState(ctx context.Context, db *sql.DB, batchSize int) (Resul
 			ORDER BY expires_at
 			LIMIT $1
 		) DELETE FROM phone_otp_signin_challenges p USING doomed d WHERE p.ctid = d.ctid`},
+		{&result.PhoneIdentifierVerification, `WITH doomed AS (
+			SELECT ctid FROM phone_identifier_verification_challenges
+			WHERE consumed_at IS NOT NULL OR expires_at <= CURRENT_TIMESTAMP
+			ORDER BY expires_at
+			LIMIT $1
+		) DELETE FROM phone_identifier_verification_challenges p USING doomed d WHERE p.ctid = d.ctid`},
 		{&result.SocialAuthAttempts, `WITH doomed AS (
 			SELECT ctid FROM social_auth_attempts
 			WHERE consumed_at IS NOT NULL OR expires_at <= CURRENT_TIMESTAMP
@@ -100,6 +121,37 @@ func CleanupSecurityState(ctx context.Context, db *sql.DB, batchSize int) (Resul
 			ORDER BY expires_at
 			LIMIT $1
 		) DELETE FROM social_auth_completion_grants p USING doomed d WHERE p.ctid = d.ctid`},
+		{&result.PasskeyAttempts, `WITH doomed AS (
+			SELECT ctid FROM passkey_attempts
+			WHERE consumed_at IS NOT NULL OR expires_at <= CURRENT_TIMESTAMP
+			ORDER BY expires_at
+			LIMIT $1
+		) DELETE FROM passkey_attempts p USING doomed d WHERE p.ctid = d.ctid`},
+		{&result.TOTPEnrollments, `WITH doomed AS (
+			SELECT ctid FROM totp_enrollments
+			WHERE consumed_at IS NOT NULL OR expires_at <= CURRENT_TIMESTAMP
+			ORDER BY expires_at
+			LIMIT $1
+		) DELETE FROM totp_enrollments p USING doomed d WHERE p.ctid = d.ctid`},
+		{&result.PendingMFA, `WITH doomed AS (
+			SELECT ctid FROM pending_mfa_authentications
+			WHERE consumed_at IS NOT NULL OR expires_at <= CURRENT_TIMESTAMP
+			ORDER BY expires_at
+			LIMIT $1
+		) DELETE FROM pending_mfa_authentications p USING doomed d WHERE p.ctid = d.ctid`},
+		{&result.RecoveryCodeSets, `WITH doomed AS (
+			SELECT s.ctid FROM recovery_code_sets s
+			WHERE s.invalidated_at IS NOT NULL
+			  AND NOT EXISTS(SELECT 1 FROM totp_enrollments e WHERE e.replacement_recovery_set_id=s.id)
+			ORDER BY s.invalidated_at
+			LIMIT $1
+		) DELETE FROM recovery_code_sets p USING doomed d WHERE p.ctid = d.ctid`},
+		{&result.SensitiveAdmission, `WITH doomed AS (
+			SELECT ctid FROM sensitive_operation_admission
+			WHERE expires_at <= CURRENT_TIMESTAMP
+			ORDER BY expires_at
+			LIMIT $1
+		) DELETE FROM sensitive_operation_admission p USING doomed d WHERE p.ctid = d.ctid`},
 	}
 	for _, cleanup := range queries {
 		if err := ctx.Err(); err != nil {

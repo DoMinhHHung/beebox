@@ -12,14 +12,20 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// Store persists internal password credentials through the process-owned
-// PostgreSQL pool. It does not own another connection pool.
+// Store persists authentication state through the process-owned PostgreSQL pool.
+// Runtime availability is a process snapshot used only for last-method checks;
+// it never replaces PostgreSQL ownership/correctness state.
 type Store struct {
-	pool *database.Pool
+	pool         *database.Pool
+	availability authentication.SocialMethodAvailability
 }
 
-func New(pool *database.Pool) *Store {
-	return &Store{pool: pool}
+func New(pool *database.Pool) *Store { return &Store{pool: pool} }
+
+func (s *Store) SetMethodAvailability(availability authentication.SocialMethodAvailability) {
+	if s != nil {
+		s.availability = availability
+	}
 }
 
 func (s *Store) CreatePasswordCredential(

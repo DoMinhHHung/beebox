@@ -34,3 +34,12 @@ type EmailOTPAdmission interface {
 	AllowEmailOTPIssue(context.Context, applicationinstance.InternalID, [32]byte) error
 	AllowEmailOTPConfirm(context.Context, applicationinstance.InternalID, [32]byte) error
 }
+
+// EmailLinkAdmission protects one-time email-link issue and confirmation before
+// identifier- or challenge-scoped persistence. Implementations admit the fixed
+// global subject first so attacker-controlled identifiers cannot create an
+// unbounded limiter-cardinality path.
+type EmailLinkAdmission interface {
+	AllowEmailLinkIssue(context.Context, applicationinstance.InternalID, [32]byte) error
+	AllowEmailLinkConfirm(context.Context, applicationinstance.InternalID, [32]byte) error
+}

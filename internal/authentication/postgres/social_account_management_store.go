@@ -151,6 +151,14 @@ func (s *Store) UnlinkSocialAccount(ctx context.Context, current authentication.
 }
 
 func usableAuthenticationPathRemains(ctx context.Context, tx *sql.Tx, current authentication.SocialAccountSession, targetID int64, availability authentication.SocialMethodAvailability) (bool, error) {
+	var passkeys int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM passkey_credentials WHERE application_instance_id=$1 AND user_id=$2`, int64(current.ApplicationInstanceID), int64(current.UserID)).Scan(&passkeys); err != nil {
+		return false, authentication.ErrSocialAccountPersistence
+	}
+	if passkeys > 0 {
+		return true, nil
+	}
+
 	var verifiedEmails, passwordCredentials, verifiedPhones int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM email_identifiers WHERE application_instance_id=$1 AND user_id=$2 AND verified_at IS NOT NULL`, int64(current.ApplicationInstanceID), int64(current.UserID)).Scan(&verifiedEmails); err != nil {
 		return false, authentication.ErrSocialAccountPersistence

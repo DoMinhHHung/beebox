@@ -47,11 +47,16 @@ type Store interface {
 	RotateRefresh(context.Context, applicationinstance.InternalID, [32]byte, [32]byte, time.Time, time.Time, audit.CorrelationID) (CredentialRecord, string, error)
 }
 
+type PrimaryAssuranceStore interface {
+	FinalizePrimarySession(context.Context, applicationinstance.InternalID, identity.InternalID, int64, string, [32]byte, time.Time, time.Time, authentication.PendingMFAWrite, audit.CorrelationID) (authentication.PrimaryAssuranceResult, error)
+}
+
 type TokenPair struct {
 	AccessToken  string
 	RefreshToken string
 	ExpiresIn    int64
 	SessionID    string
+	PendingMFA   *PendingMFA
 }
 
 type Service struct {
@@ -101,10 +106,10 @@ func (s *Service) SignIn(ctx context.Context, appID applicationinstance.Internal
 		}
 		return TokenPair{}, ErrInvalidCredentials
 	}
-	return s.issueNewSession(ctx, appID, record, correlationID)
+	return s.issueNewSession(ctx, appID, record, authentication.PrimaryMethodPassword, "password", correlationID)
 }
 
-func (s *Service) issueNewSession(ctx context.Context, appID applicationinstance.InternalID, record CredentialRecord, correlationID audit.CorrelationID) (TokenPair, error) {
+func (s *Service) issueNewSession(ctx context.Context, appID applicationinstance.InternalID, record CredentialRecord, method, primaryContext string, correlationID audit.CorrelationID) (TokenPair, error) {
 	sessionID, err := NewPublicID()
 	if err != nil {
 		return TokenPair{}, ErrSessionUnavailable
@@ -114,7 +119,22 @@ func (s *Service) issueNewSession(ctx context.Context, appID applicationinstance
 		return TokenPair{}, ErrSessionUnavailable
 	}
 	now := s.now().UTC()
-	if err := s.store.CreateSession(ctx, appID, record.UserInternalID, record.CredentialGeneration, sessionID, refreshHash, now.Add(InactivityLifetime), now.Add(AbsoluteLifetime), correlationID); err != nil {
+	pending, pendingToken, err := preparePendingMFA(method, primaryContext, now)
+	if err != nil {
+		return TokenPair{}, ErrSessionUnavailable
+	}
+	if assuranceStore, ok := s.store.(PrimaryAssuranceStore); ok {
+		result, err := assuranceStore.FinalizePrimarySession(ctx, appID, record.UserInternalID, record.CredentialGeneration, sessionID, refreshHash, now.Add(InactivityLifetime), now.Add(AbsoluteLifetime), pending, correlationID)
+		if err != nil {
+			return TokenPair{}, err
+		}
+		if result.MFARequired {
+			if result.PendingMFAPublicID != pending.PublicID || !result.PendingMFAExpiresAt.Equal(pending.ExpiresAt) {
+				return TokenPair{}, ErrSessionUnavailable
+			}
+			return TokenPair{PendingMFA: &PendingMFA{Token: pendingToken, ExpiresAt: result.PendingMFAExpiresAt.UTC(), AvailableMethods: pendingMFAMethods(result.RecoveryCodeAvailable)}}, nil
+		}
+	} else if err := s.store.CreateSession(ctx, appID, record.UserInternalID, record.CredentialGeneration, sessionID, refreshHash, now.Add(InactivityLifetime), now.Add(AbsoluteLifetime), correlationID); err != nil {
 		return TokenPair{}, err
 	}
 	access, err := s.ring.Sign(record.UserPublicID, record.ApplicationPublicID, sessionID, now)

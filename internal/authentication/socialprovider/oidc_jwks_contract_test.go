@@ -46,12 +46,42 @@ func TestOIDCJWKSRotationAndUnknownKidsAreBounded(t *testing.T) {
 	if err := verify(keyA, "key-a"); err != nil {
 		t.Fatal(err)
 	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("initial JWKS fetches=%d want=1", got)
+	}
+
 	current.Store(&keyB.PublicKey)
 	kid.Store("key-b")
-	if err := verify(keyB, "key-b"); err != nil {
-		t.Fatalf("rotated key was not accepted: %v", err)
+	beforeRotation := calls.Load()
+	const maxRotationSettleAttempts = 32
+	var rotationErr error
+	for attempt := 1; attempt <= maxRotationSettleAttempts; attempt++ {
+		rotationErr = verify(keyB, "key-b")
+		after := calls.Load()
+		if rotationErr == nil {
+			if after <= beforeRotation {
+				t.Fatal("rotated key was accepted without an observable post-rotation JWKS refresh")
+			}
+			if delta := after - beforeRotation; delta != 1 {
+				t.Fatalf("rotation JWKS fetches=%d want=1", delta)
+			}
+			break
+		}
+		if after > beforeRotation {
+			t.Fatalf("post-rotation JWKS refresh did not accept key B: %v", rotationErr)
+		}
+		if attempt == maxRotationSettleAttempts {
+			t.Fatalf("rotated key was not accepted after bounded inflight-settle attempts: %v", rotationErr)
+		}
+		// go-oidc v3.20.0 signals a completed inflight fetch before its owner
+		// reacquires the cache mutex and clears the inflight pointer. Yield only
+		// inside this contract test so a back-to-back rotation cannot reuse the
+		// just-completed key-A result. A permanently broken refresh still fails:
+		// success requires exactly one observable post-rotation JWKS request.
+		time.Sleep(time.Millisecond)
 	}
-	before := calls.Load()
+
+	beforeUnknown := calls.Load()
 	for i := 0; i < 3; i++ {
 		unknown, err := rsa.GenerateKey(rand.Reader, 2048)
 		if err != nil {
@@ -61,7 +91,7 @@ func TestOIDCJWKSRotationAndUnknownKidsAreBounded(t *testing.T) {
 			t.Fatal("unknown kid accepted")
 		}
 	}
-	if delta := calls.Load() - before; delta > 3 {
+	if delta := calls.Load() - beforeUnknown; delta > 3 {
 		t.Fatalf("unknown kid caused unbounded JWKS requests: %d", delta)
 	}
 }

@@ -6,10 +6,13 @@ info:
     BeeBox-owned B2C authentication contract. Phase 1 email/password behavior,
     P2.1 passwordless email OTP, P2.2 phone-first signup plus verified-phone
     SMS OTP primary authentication, P2.3 headless social authentication,
-    P2.4A explicit authenticated social account linking, and P2.4B linked social
-    account listing and unlink are implemented. BeeBox is not an OAuth or OpenID
-    Connect authorization server. Public resource identifiers are opaque locators
-    and never establish authorization by themselves.
+    P2.4A explicit authenticated social account linking, P2.4B linked social
+    account listing/unlink, P2.5 passkey/WebAuthn primary authentication,
+    P2.6 TOTP MFA, P2.7 recovery codes, P2.8 purpose-bound reverification,
+    P2.9 current-user session self-service, P2.10 identifier/profile self-service,
+    and P2.11 secure email-link authentication are implemented. BeeBox is not an
+    OAuth or OpenID Connect authorization server. Public resource identifiers
+    are opaque locators and never establish authorization by themselves.
 servers:
   - url: /
 paths:
@@ -155,7 +158,9 @@ paths:
         Invalid credentials are anti-enumerating. Browser requests with an allowed
         Origin receive the refresh credential only in an application-specific
         Secure HttpOnly SameSite=Strict __Host- cookie. Non-browser callers receive
-        the refresh credential in JSON.
+        the refresh credential in JSON. Success is a status-discriminated result:
+        active TOTP returns only pending-MFA authority, while users without active
+        TOTP receive the authenticated session/token result.
       security: [{publishableKey: []}]
       requestBody:
         required: true
@@ -164,7 +169,7 @@ paths:
             schema: {$ref: '#/components/schemas/SignInRequest'}
       responses:
         '200':
-          description: Session and fresh access credential.
+          description: Tagged authenticated or MFA-required result after valid password proof.
           headers:
             Cache-Control: {$ref: '#/components/headers/NoStore'}
             X-Request-ID: {$ref: '#/components/headers/RequestID'}
@@ -213,7 +218,8 @@ paths:
         Browser requests with an allowed Origin receive refresh state only in the
         application-specific Secure HttpOnly SameSite=Strict __Host- cookie;
         non-browser callers receive the refresh credential in JSON. Email OTP is a
-        primary authentication method and does not override future required MFA.
+        primary authentication method. Active TOTP returns the MFA-required result and
+        no ordinary session/access/refresh authority is created before MFA completion.
       security: [{publishableKey: []}]
       requestBody:
         required: true
@@ -222,7 +228,7 @@ paths:
             schema: {$ref: '#/components/schemas/EmailOTPConfirmRequest'}
       responses:
         '200':
-          description: Ordinary BeeBox session and fresh access credential after one-time OTP consumption.
+          description: Tagged authenticated or MFA-required result after one-time OTP consumption.
           headers:
             Cache-Control: {$ref: '#/components/headers/NoStore'}
             X-Request-ID: {$ref: '#/components/headers/RequestID'}
@@ -269,8 +275,8 @@ paths:
         Confirmation is one-time and replay-safe. Unknown/unverified phones and
         absent, wrong, expired, consumed, attempt-limited, stale/replaced, or
         cross-application challenge state is collapsed into invalid_credentials.
-        Phone OTP is a primary authentication method; it does not bypass future
-        additional assurance requirements and is not ranked permanently above or
+        Phone OTP is a primary authentication method; active TOTP returns the
+        MFA-required result without session/access/refresh authority and is not ranked permanently above or
         below password or email OTP. Browser/non-browser refresh transport is the
         same ordinary BeeBox session transport used by other primary methods.
       security: [{publishableKey: []}]
@@ -281,7 +287,7 @@ paths:
             schema: {$ref: '#/components/schemas/PhoneConfirmRequest'}
       responses:
         '200':
-          description: Ordinary BeeBox session after successful one-time phone OTP consumption.
+          description: Tagged authenticated or MFA-required result after successful one-time phone OTP consumption.
           headers:
             Cache-Control: {$ref: '#/components/headers/NoStore'}
             X-Request-ID: {$ref: '#/components/headers/RequestID'}
@@ -293,6 +299,51 @@ paths:
         '401': {$ref: '#/components/responses/InvalidCredentials'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/reverifications:
+    post:
+      operationId: createReverification
+      summary: Mint one purpose-specific reverification grant for a target session
+      description: >-
+        Requires the resolved publishable application, one exact allowed Origin and two
+        independently verified BeeBox authorities. The Authorization bearer identifies
+        the target session for the later sensitive mutation. proof_access_token identifies
+        an independently authenticated proof session; the proof session may differ from
+        the target session, but both must belong to the same exact application and user.
+        Both target and proof sessions must remain active. Proof freshness comes only from
+        server-trusted authentication evidence and has a ten-minute accepted proof-freshness
+        ceiling; target-session creation time and access/refresh rotation are not mutation
+        authority. When TOTP remains configured, configured TOTP requires TOTP MFA
+        provenance on the proof session; recovery_code provenance cannot mint generic
+        reverification while TOTP remains configured. Success returns a one-time,
+        purpose-bound and target-session-bound opaque grant. Expired, replayed,
+        wrong-purpose or wrong-target grants fail closed, as do revoked target/proof
+        authority and cross-user/cross-application proof. Public failures do not reveal
+        factor or account inventory. Grant and proof secrets are not logged, audited as
+        plaintext or emitted as metric labels.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ReverificationRequest'}
+      responses:
+        '201':
+          description: One-time reverification grant bound to the target session and requested purpose.
+          headers:
+            Cache-Control: {$ref: '#/components/headers/NoStore'}
+            X-Request-ID: {$ref: '#/components/headers/RequestID'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ReverificationGrant'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/ReverificationFailed'}
         '503': {$ref: '#/components/responses/Unavailable'}
 
   /v1/social-auth/attempts:
@@ -336,22 +387,20 @@ paths:
       operationId: createSocialLinkAttempt
       summary: Start explicit linking from an existing authenticated BeeBox session
       description: >-
-        Requires one publishable key, one exact allowed browser Origin, and one ordinary
-        BeeBox bearer access token. BeeBox resolves and persists the exact current
-        application, user, and session; the request cannot choose a user or session.
-        The initiating persisted session must still be active and its created_at must
-        be within the accepted ten-minute recent-authentication window. A fresh access
-        token produced by refreshing that same older session does not reset this
-        freshness evidence; an older session receives reverification_required and the
-        user may authenticate again to obtain a new ordinary session. The provider and
-        exact application-scoped allowlisted redirect are bound into one-time
-        purpose-separated server state. Provider email/profile data has no ownership
-        authority and provider tokens are never returned or retained by this API.
+        Requires one publishable key, one exact allowed browser Origin, the ordinary
+        BeeBox bearer identifying the exact target application/user/session, and a
+        one-time P2.8 reverification grant with purpose social_link. The grant is minted
+        only after independent fresh proof for the same application/user and is consumed
+        before link-attempt creation. The provider and exact application-scoped allowlisted
+        redirect are then bound into one-time purpose-separated server state. Provider
+        email/profile data has no ownership authority and provider tokens are never
+        returned or retained by this API.
       security:
         - publishableKey: []
           bearerAuth: []
       parameters:
         - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
       requestBody:
         required: true
         content:
@@ -411,29 +460,28 @@ paths:
       operationId: unlinkSocialLink
       summary: Unlink one social identity from the current BeeBox user
       description: >-
-        Requires the same exact application, Origin, bearer token, and current persisted
-        session binding as listing plus server-trusted recent authentication. Freshness
-        is derived from persisted session created_at and is accepted only while the
-        current time is less than created_at plus ten minutes; refreshing an access
-        token for that same older session does not renew freshness and returns
-        reverification_required. A syntactically valid link ID that is absent, already
-        removed, owned by another user, or belongs to another application returns the
-        same idempotent 204 response without revealing ownership. A real unlink is
+        Requires the exact application, Origin and target bearer used by listing plus a
+        one-time P2.8 grant with purpose social_unlink. Grant issuance requires fresh
+        independently authenticated proof for the same application/user; target session
+        age does not authorize unlink. A syntactically valid link ID that is absent,
+        already removed, owned by another user, or belongs to another application returns
+        the same idempotent 204 response without revealing ownership. A real unlink is
         rejected with 409 last_authentication_method when no currently usable sign-in or
         recovery path would remain. Password counts only with a verified email; email
-        OTP requires configured delivery and a verified email; phone OTP requires
-        enabled SMS and a verified phone; remaining social identities count only when
-        their provider is configured for the exact application. Unimplemented MFA,
-        passkey, and recovery methods do not count. Existing ordinary BeeBox sessions
-        remain active. A successful unlink may conservatively invalidate pending
-        unexchanged social completion state and same-provider link attempts. BeeBox
-        removes only its ownership association and does not call provider-side OAuth
-        consent or token revocation APIs.
+        OTP requires configured delivery and a verified email; phone OTP requires enabled
+        SMS and a verified phone; remaining social identities count only when their
+        provider is configured for the exact application; and an exact-scope stored
+        passkey counts as a usable primary authentication method. Existing ordinary
+        BeeBox sessions remain active. A successful unlink may conservatively invalidate
+        pending unexchanged social completion state and same-provider link attempts.
+        BeeBox removes only its ownership association and does not call provider-side
+        OAuth consent or token revocation APIs.
       security:
         - publishableKey: []
           bearerAuth: []
       parameters:
         - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
         - {$ref: '#/components/parameters/SocialLinkID'}
       responses:
         '204':
@@ -492,9 +540,9 @@ paths:
         Browser-origin-bound P2.3 exchange. The one-time five-minute completion code is
         useless without the original client PKCE verifier: BeeBox validates S256,
         application scope, expiry, one-time consumption, and current user ownership,
-        then atomically creates the same ordinary BeeBox session and refresh state used
-        by other primary authentication methods. The operation is not safe for blind
-        automatic retry after an ambiguous client response and does not implement MFA,
+        then atomically chooses the tagged authenticated result or a five-minute
+        pending-MFA result when the user has active TOTP. The operation is not safe for
+        blind automatic retry after an ambiguous client response and does not perform
         account linking, provider-token storage, or profile enrichment.
       security: [{publishableKey: []}]
       parameters:
@@ -506,7 +554,7 @@ paths:
             schema: {$ref: '#/components/schemas/SocialAuthExchangeRequest'}
       responses:
         '200':
-          description: Ordinary BeeBox session after one-time social completion consumption.
+          description: Tagged authenticated or MFA-required result after one-time social completion consumption.
           headers:
             Cache-Control: {$ref: '#/components/headers/NoStore'}
             X-Request-ID: {$ref: '#/components/headers/RequestID'}
@@ -518,6 +566,552 @@ paths:
         '401': {$ref: '#/components/responses/InvalidCredentials'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/mfa/totp/enrollments:
+    post:
+      operationId: startTOTPEnrollment
+      summary: Start one TOTP enrollment for the current user
+      description: >-
+        Requires the exact target application/user/session and a one-time P2.8 grant
+        with purpose totp_enroll. The grant is issued only from eligible fresh proof;
+        when TOTP is already configured, that proof must carry TOTP MFA provenance.
+        BeeBox generates a SHA-1, six-digit, 30-second TOTP secret, returns its Base32
+        setup value and otpauth URI exactly once, and persists only an AES-256-GCM
+        envelope bound to purpose, application, user and credential. The enrollment
+        expires within ten minutes and cannot replace an active credential.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
+      responses:
+        '201':
+          description: One-time TOTP setup material.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TOTPEnrollment'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/TOTPForbidden'}
+        '409': {$ref: '#/components/responses/TOTPConflict'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/mfa/totp/enrollments/confirm:
+    post:
+      operationId: confirmTOTPEnrollment
+      summary: Confirm and atomically activate TOTP
+      description: >-
+        Verifies the one-time enrollment under the previous/current/next 30-second
+        timestep window, records the accepted timestep, consumes enrollment state and
+        appends required audit evidence atomically. The Base32 secret is never returned
+        again, logged, audited or emitted as a metric label.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TOTPEnrollmentConfirmRequest'}
+      responses:
+        '200':
+          description: Active TOTP credential metadata.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TOTPCredential'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidTOTPProof'}
+        '403': {$ref: '#/components/responses/TOTPForbidden'}
+        '409': {$ref: '#/components/responses/TOTPConflict'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/mfa/totp:
+    get:
+      operationId: getTOTPState
+      summary: Read minimized current-user TOTP state
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      responses:
+        '200':
+          description: Whether TOTP is active plus its opaque BeeBox credential ID.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TOTPState'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+    delete:
+      operationId: removeTOTP
+      summary: Remove the current user's active TOTP credential
+      description: >-
+        Requires the exact target application/user/session plus one one-time P2.8 grant
+        with purpose totp_remove. Grant issuance requires eligible fresh proof and,
+        while TOTP is configured, TOTP MFA provenance; a recovery-code-authenticated
+        proof cannot mint generic removal authority. Removal is atomic with audit
+        evidence and is denied when it would strand the user without a usable primary
+        authentication method.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
+      responses:
+        '204': {description: TOTP removed or already absent in the exact current scope.}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/TOTPForbidden'}
+        '409': {$ref: '#/components/responses/LastAuthenticationMethod'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/mfa/totp/complete:
+    post:
+      operationId: completeTOTPAuthentication
+      summary: Complete pending primary authentication with TOTP
+      description: >-
+        Accepts the opaque pending-MFA token only in the POST body. The token is five-minute,
+        application/user/primary-proof bound, hash-only at rest, limited to five failed
+        proofs and consumed atomically on success. The previous/current/next timestep is
+        accepted, but one accepted timestep may authorize at most once. No session, access
+        token or refresh token exists before this operation commits successfully.
+      security: [{publishableKey: []}]
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TOTPAuthenticationCompleteRequest'}
+      responses:
+        '200':
+          description: Tagged authenticated result after successful one-time TOTP completion.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TokenResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidTOTPProof'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/mfa/totp/replacements:
+    post:
+      operationId: startTOTPReplacement
+      summary: Start dedicated TOTP replacement recovery
+      description: >-
+        Requires the exact target application/user/session, one one-time P2.8 grant with
+        purpose totp_replace minted from eligible primary proof with required TOTP
+        provenance, and one unused recovery code from the active set. The recovery code
+        is consumed only by this dedicated replacement operation and cannot mint generic
+        reverification. The old TOTP credential and remaining recovery set stay active
+        until the replacement credential is confirmed atomically.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TOTPReplacementRequest'}
+      responses:
+        '201':
+          description: One-time replacement TOTP setup material; the old credential remains active.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TOTPEnrollment'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidRecoveryProof'}
+        '403': {$ref: '#/components/responses/TOTPForbidden'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/mfa/totp/replacements/confirm:
+    post:
+      operationId: confirmTOTPReplacement
+      summary: Confirm dedicated TOTP replacement recovery
+      description: >-
+        Validates the replacement TOTP proof, then atomically replaces the old
+        credential, invalidates the previous recovery set, creates exactly ten new
+        recovery codes and appends audit evidence. A failed or abandoned confirmation
+        leaves the old TOTP credential active.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TOTPEnrollmentConfirmRequest'}
+      responses:
+        '200':
+          description: Replacement credential metadata and the new recovery set shown exactly once.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TOTPCredential'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidTOTPProof'}
+        '403': {$ref: '#/components/responses/TOTPForbidden'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/mfa/recovery-codes:
+    get:
+      operationId: getRecoveryCodeState
+      summary: Read minimized recovery-code availability
+      description: Returns only availability and the number of unused codes; no code is ever returned again.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      responses:
+        '200':
+          description: Minimized recovery-code state.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RecoveryCodeState'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/mfa/recovery-codes/regenerate:
+    post:
+      operationId: regenerateRecoveryCodes
+      summary: Atomically replace the current recovery set
+      description: >-
+        Requires the exact target application/user/session and one one-time P2.8 grant
+        with purpose recovery_regenerate. While TOTP remains configured the grant must
+        have been minted from fresh TOTP-proven proof; recovery-code provenance cannot
+        mint this generic reverification. Successful regeneration atomically invalidates
+        every prior unused code and returns exactly ten independent 26-symbol Crockford
+        Base32 codes once. At most three successful regenerations are admitted per
+        user/session per hour.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
+      responses:
+        '200':
+          description: New recovery codes shown exactly once.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RecoveryCodeSet'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/RecoveryForbidden'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/mfa/recovery-codes/complete:
+    post:
+      operationId: completeRecoveryCodeAuthentication
+      summary: Complete pending MFA with one recovery code
+      description: >-
+        Accepts the pending-MFA token and recovery code only in the POST body. One code
+        can complete one pending authentication once under concurrency. Successful use
+        consumes the code and pending token atomically but does not disable, remove or
+        otherwise alter TOTP and cannot create a generic reverification grant.
+      security: [{publishableKey: []}]
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RecoveryCodeCompleteRequest'}
+      responses:
+        '200':
+          description: Tagged authenticated result after one-time recovery-code consumption.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TokenResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidRecoveryProof'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/passkeys/registration/attempts:
+    post:
+      operationId: beginPasskeyRegistration
+      summary: Start a passkey registration ceremony for the current user
+      description: >-
+        Requires the exact target application/user/session, allowed Origin and one
+        one-time P2.8 grant with purpose passkey_register. BeeBox then creates a one-time
+        ceremony bound to the exact application, user, session, Origin, RP ID and
+        registration purpose. The passkey private key remains authenticator-owned and is
+        never sent to BeeBox. WebAuthn request and response payloads are opaque JSON at
+        the BeeBox contract boundary.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
+      responses:
+        '201':
+          description: Opaque WebAuthn creation options and one-time BeeBox ceremony locator.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PasskeyAttempt'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/PasskeyForbidden'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/passkeys/registration/complete:
+    post:
+      operationId: completePasskeyRegistration
+      summary: Complete a one-time passkey registration ceremony
+      description: >-
+        Consumes the exact application/user/session/Origin-bound registration ceremony,
+        verifies the browser WebAuthn response using the trusted stored RP/origin state,
+        and atomically persists the BeeBox-owned passkey resource plus required audit.
+        Expired, replayed, wrong-application, wrong-Origin, wrong-RP, wrong-challenge,
+        malformed, duplicate, wrong-user-handle or otherwise invalid proof fails closed.
+        Completion is a one-time security mutation and must not be automatically retried
+        after an ambiguous client response.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PasskeyRegistrationCompleteRequest'}
+      responses:
+        '201':
+          description: Registered passkey metadata only; no private key or verifier state is exposed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Passkey'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidPasskeyProof'}
+        '403': {$ref: '#/components/responses/PasskeyForbidden'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/passkeys/authentication/attempts:
+    post:
+      operationId: beginPasskeyAuthentication
+      summary: Start discoverable passkey primary authentication
+      description: >-
+        Resolves the exact application from the publishable key and requires one exact
+        allowed Origin. BeeBox derives the RP ID from that trusted Origin and issues a
+        short-lived one-time authentication ceremony requiring WebAuthn user verification.
+        Passkey is a primary authentication method and does not bypass configured TOTP;
+        active TOTP makes the verified passkey proof enter the same pending-MFA path.
+      security: [{publishableKey: []}]
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      responses:
+        '201':
+          description: Opaque WebAuthn assertion options and one-time BeeBox ceremony locator.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PasskeyAttempt'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/passkeys/authentication/complete:
+    post:
+      operationId: completePasskeyAuthentication
+      summary: Complete passkey primary authentication and issue an ordinary session
+      description: >-
+        Consumes one exact application/Origin/RP-bound one-time ceremony, verifies the
+        authenticator response and required user verification, resolves credential owner
+        only inside that application and RP scope, updates verifier-owned credential state,
+        atomically chooses either pending TOTP assurance or the ordinary BeeBox
+        session/refresh verifier and appends required audit coherently. Replay, expiry,
+        cross-application substitution, wrong owner, wrong challenge, wrong Origin/RP or
+        malformed authenticator responses fail closed.
+      security: [{publishableKey: []}]
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PasskeyAuthenticationCompleteRequest'}
+      responses:
+        '200':
+          description: Tagged authenticated or MFA-required result after valid passkey primary proof.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TokenResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidPasskeyProof'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/passkeys:
+    get:
+      operationId: listPasskeys
+      summary: List passkeys owned by the current application user
+      description: >-
+        Requires exact application, allowed Origin and current user/session authority.
+        The bounded response exposes only opaque pky_ resource ID, optional bounded name
+        and creation time. Credential IDs, public-key material, counters, internal IDs,
+        user handles and verifier state are not exposed.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      responses:
+        '200':
+          description: Bounded passkey list for the current application/user.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PasskeyList'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/passkeys/{passkey_id}:
+    delete:
+      operationId: removePasskey
+      summary: Remove one owned passkey
+      description: >-
+        Requires exact target application/user/session ownership and one one-time P2.8
+        grant with purpose passkey_remove. A pky_ locator never grants authority.
+        Removal is rejected with last_authentication_method when no other usable
+        authentication path would remain; an exact-scope remaining passkey may count as
+        a primary method. Removal plus audit is atomic. P2.5 does not classify a passkey
+        as an MFA factor and does not bypass configured MFA.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
+        - {$ref: '#/components/parameters/PasskeyID'}
+      responses:
+        '204':
+          description: Owned passkey removed; a valid but absent/out-of-scope locator remains non-authoritative.
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/PasskeyForbidden'}
+        '409': {$ref: '#/components/responses/LastAuthenticationMethod'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/sessions:
+    get:
+      operationId: listSessions
+      summary: List bounded sessions for the current application user
+      description: >-
+        Returns only sessions belonging to the current application and current authenticated user;
+        application and user scope are derived from the publishable credential plus the persisted
+        current bearer session. Results use deterministic newest-first ordering by server lifecycle
+        facts and an opaque cursor. The response exposes no internal database ID, refresh verifier,
+        MFA provenance, raw IP, user-agent, location, device fingerprint or private audit state.
+        The current marker is computed by comparing each row with the server-resolved current session.
+        BeeBox endpoints that consult persisted session state observe revocation immediately. Offline
+        consumers that validate only an already-issued access JWT cannot observe database revocation;
+        that JWT can remain cryptographically acceptable until its short five-minute expiry.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/SessionListLimit'}
+        - {$ref: '#/components/parameters/SessionListCursor'}
+      responses:
+        '200':
+          description: Bounded newest-first page of the current user's application-scoped sessions.
+          headers:
+            Cache-Control: {$ref: '#/components/headers/NoStore'}
+            X-Request-ID: {$ref: '#/components/headers/RequestID'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SelfServiceSessionPage'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/sessions/{session_id}/revoke:
+    post:
+      operationId: revokeOwnSession
+      summary: Revoke one session owned by the current application user
+      description: >-
+        Requires the current target bearer and one one-time P2.8 grant with purpose
+        session_revoke. The selected session ID is a locator, never authority. BeeBox
+        checks the selected row against the exact server-derived current application and
+        user inside the revocation transaction. A syntactically valid absent, already
+        revoked, cross-user or cross-application locator has the same idempotent public
+        success class and does not reveal ownership. Selecting the current session is
+        allowed; its browser refresh cookie is cleared after the revocation commits.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
+        - {$ref: '#/components/parameters/SessionID'}
+      responses:
+        '204':
+          description: Owned session revoked, already revoked/absent, or outside the current application/user scope without ownership disclosure.
+          headers:
+            Cache-Control: {$ref: '#/components/headers/NoStore'}
+            X-Request-ID: {$ref: '#/components/headers/RequestID'}
+            Set-Cookie: {schema: {type: string}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/ReverificationFailed'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/sessions/revoke-others:
+    post:
+      operationId: revokeOtherSessions
+      summary: Revoke every other session owned by the current application user
+      description: >-
+        Requires a one-time P2.8 grant with purpose session_revoke_others. BeeBox
+        atomically revokes all currently revocable sessions for the exact current
+        application and user except the server-resolved current target session. The
+        current session remains active after success. One bounded audit event commits in
+        the same PostgreSQL transaction as the bulk revocation.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
+      responses:
+        '200': {$ref: '#/components/responses/OKStatus'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/ReverificationFailed'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/sessions/sign-out-everywhere:
+    post:
+      operationId: signOutEverywhere
+      summary: Revoke all sessions owned by the current application user
+      description: >-
+        Requires a one-time P2.8 grant with purpose sign_out_everywhere. BeeBox
+        atomically revokes every currently revocable session for the exact current
+        application and user, including the current session, and clears current browser
+        refresh-cookie authority after commit. Persisted BeeBox session checks and refresh
+        rotation observe revocation immediately; offline verification of an already-issued
+        short-lived access JWT remains bounded by its five-minute token lifetime.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
+      responses:
+        '200': {$ref: '#/components/responses/OKStatus'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/ReverificationFailed'}
         '503': {$ref: '#/components/responses/Unavailable'}
 
   /v1/sessions/refresh:
@@ -657,6 +1251,477 @@ paths:
         '422': {$ref: '#/components/responses/InvalidInput'}
         '503': {$ref: '#/components/responses/Unavailable'}
 
+  /v1/identifiers/emails:
+    get:
+      operationId: listEmailIdentifiers
+      summary: List bounded email identifiers owned by the current application user
+      description: >-
+        Requires exact application, allowed Origin and current persisted user/session authority.
+        Results use deterministic opaque cursor pagination with default 20 and maximum 100.
+        Public eml_ IDs are locators only and never authorize cross-user or cross-application access.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
+        - {name: cursor, in: query, required: false, schema: {type: string, minLength: 1, maxLength: 512}, description: Opaque email-identifier cursor; it conveys no authority.}
+      responses:
+        '200':
+          description: Bounded page of owned email identifiers.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    maxItems: 100
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [id, email, verified, primary, created_at]
+                      properties:
+                        id: {type: string, pattern: '^eml_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}
+                        email: {type: string, format: email}
+                        verified: {type: boolean}
+                        primary: {type: boolean}
+                        created_at: {type: string, format: date-time}
+                  next_cursor: {type: string, minLength: 1, maxLength: 512}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+    post:
+      operationId: addEmailIdentifier
+      summary: Add one email identifier to the current user
+      description: >-
+        Requires exact application/user/target-session authority plus a one-time P2.8
+        identifier_add reverification grant. Email equality is not account-linking authority
+        and cannot merge, adopt or transfer another principal.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email]
+              properties:
+                email: {type: string, format: email}
+      responses:
+        '201': {description: Unverified email identifier created in the exact current scope.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/ReverificationFailed'}
+        '409': {description: Identifier is unavailable in the accepted exact scope.}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/identifiers/phones:
+    get:
+      operationId: listPhoneIdentifiers
+      summary: List bounded phone identifiers owned by the current application user
+      description: >-
+        Uses the same exact application/user/session authorization and bounded cursor behavior as email identifiers.
+        Unverified same-number claims do not reserve a number application-wide; only verified ownership is globally unique inside one application.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
+        - {name: cursor, in: query, required: false, schema: {type: string, minLength: 1, maxLength: 512}, description: Opaque phone-identifier cursor; it conveys no authority.}
+      responses:
+        '200':
+          description: Bounded page of owned phone identifiers.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    maxItems: 100
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [id, phone, verified, primary, created_at]
+                      properties:
+                        id: {type: string, pattern: '^phn_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}
+                        phone: {type: string, pattern: '^\+[1-9][0-9]{1,14}$'}
+                        verified: {type: boolean}
+                        primary: {type: boolean}
+                        created_at: {type: string, format: date-time}
+                  next_cursor: {type: string, minLength: 1, maxLength: 512}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+    post:
+      operationId: addPhoneIdentifier
+      summary: Add one phone identifier to the current user
+      description: >-
+        Requires the one-time identifier_add reverification purpose. Phone equality is never
+        account-linking authority. Verification is required before a phone can become primary;
+        PostgreSQL is the final arbiter for verified ownership under concurrency.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [phone]
+              properties:
+                phone: {type: string, pattern: '^\+[1-9][0-9]{1,14}$'}
+      responses:
+        '201': {description: Unverified phone identifier created in the exact current scope.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/ReverificationFailed'}
+        '409': {description: Identifier is unavailable in the accepted exact scope.}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/identifiers/emails/{identifier_id}:
+    delete:
+      operationId: removeEmailIdentifier
+      summary: Remove one owned email identifier
+      description: >-
+        Requires identifier_remove reverification. A syntactically valid absent/out-of-scope locator
+        is non-authoritative and removal remains non-enumerating. The mutation is rejected when it
+        would remove the last usable authentication method; deterministic verified-primary promotion
+        and required audit evidence are part of the same correctness transaction.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
+        - {name: identifier_id, in: path, required: true, schema: {type: string, pattern: '^eml_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}}
+      responses:
+        '204': {description: Identifier removed or not owned in the exact current scope without ownership disclosure.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/ReverificationFailed'}
+        '409': {$ref: '#/components/responses/LastAuthenticationMethod'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/identifiers/phones/{identifier_id}:
+    delete:
+      operationId: removePhoneIdentifier
+      summary: Remove one owned phone identifier
+      description: >-
+        Requires identifier_remove reverification and exact current application/user ownership.
+        Locator possession never authorizes deletion; last-method and primary-promotion behavior is
+        transactionally enforced exactly like email removal.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
+        - {name: identifier_id, in: path, required: true, schema: {type: string, pattern: '^phn_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}}
+      responses:
+        '204': {description: Identifier removed or not owned in the exact current scope without ownership disclosure.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/ReverificationFailed'}
+        '409': {$ref: '#/components/responses/LastAuthenticationMethod'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/identifiers/emails/{identifier_id}/verification:
+    post:
+      operationId: requestManagedEmailVerification
+      summary: Request possession verification for one owned email identifier
+      description: >-
+        The identifier locator is resolved only inside the exact current application/user scope.
+        Challenge admission, cooldown, expiry and failure budget are server-side; no cross-user
+        identifier inventory is disclosed.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {name: identifier_id, in: path, required: true, schema: {type: string, pattern: '^eml_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}}
+      responses:
+        '202': {description: Verification request accepted for the exact owned identifier.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/identifiers/emails/{identifier_id}/verification/confirm:
+    post:
+      operationId: confirmManagedEmailVerification
+      summary: Confirm possession of one owned email identifier
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {name: identifier_id, in: path, required: true, schema: {type: string, pattern: '^eml_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [code]
+              properties:
+                code: {type: string, pattern: '^[0-9]{6}$'}
+      responses:
+        '200': {description: Owned email identifier metadata after successful verification.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/identifiers/phones/{identifier_id}/verification:
+    post:
+      operationId: requestManagedPhoneVerification
+      summary: Request SMS possession verification for one owned phone identifier
+      description: >-
+        SMS delivery is optional and bounded. Unverified same-number claims do not reserve
+        application-wide ownership; final verified ownership is arbitrated atomically by PostgreSQL.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {name: identifier_id, in: path, required: true, schema: {type: string, pattern: '^phn_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}}
+      responses:
+        '202': {description: Verification request accepted for the exact owned identifier.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/identifiers/phones/{identifier_id}/verification/confirm:
+    post:
+      operationId: confirmManagedPhoneVerification
+      summary: Confirm possession and verified ownership of one phone identifier
+      description: >-
+        Confirmation is replay/failure-budget protected and scoped to the exact current user.
+        Competing same-application verification converges to at most one verified owner.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {name: identifier_id, in: path, required: true, schema: {type: string, pattern: '^phn_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [code]
+              properties:
+                code: {type: string, pattern: '^[0-9]{6}$'}
+      responses:
+        '200': {description: Owned phone identifier metadata after successful verification.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '409': {description: The verified phone identifier is already owned by another user in this application.}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/identifiers/emails/{identifier_id}/primary:
+    post:
+      operationId: setPrimaryEmailIdentifier
+      summary: Set one verified owned email identifier as primary
+      description: >-
+        Requires a one-time identifier_primary reverification grant. Only a verified identifier
+        owned by the exact current application/user can become primary; required audit evidence
+        commits in the same transaction.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
+        - {name: identifier_id, in: path, required: true, schema: {type: string, pattern: '^eml_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}}
+      responses:
+        '200': {$ref: '#/components/responses/OKStatus'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/ReverificationFailed'}
+        '409': {description: Identifier is unverified or unavailable in the exact current scope.}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/identifiers/phones/{identifier_id}/primary:
+    post:
+      operationId: setPrimaryPhoneIdentifier
+      summary: Set one verified owned phone identifier as primary
+      description: Uses the exact same identifier_primary reverification, ownership and transactional-audit boundary as email primary selection.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
+        - {name: identifier_id, in: path, required: true, schema: {type: string, pattern: '^phn_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}}
+      responses:
+        '200': {$ref: '#/components/responses/OKStatus'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/ReverificationFailed'}
+        '409': {description: Identifier is unverified or unavailable in the exact current scope.}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/profile:
+    get:
+      operationId: getCurrentProfile
+      summary: Read the minimized profile of the current application user
+      description: Only display_name, given_name, family_name and locale are part of P2.10 profile self-service.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      responses:
+        '200':
+          description: Current minimized profile.
+          content:
+            application/json:
+              schema: &ProfileSchema
+                type: object
+                additionalProperties: false
+                required: [display_name, given_name, family_name, locale]
+                properties:
+                  display_name: {type: [string, 'null'], maxLength: 100}
+                  given_name: {type: [string, 'null'], maxLength: 100}
+                  family_name: {type: [string, 'null'], maxLength: 100}
+                  locale: {type: [string, 'null'], maxLength: 35}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+    patch:
+      operationId: patchCurrentProfile
+      summary: Patch the minimized profile of the current application user
+      description: >-
+        Accepts only display_name, given_name, family_name and locale. Names are normalized
+        and bounded; locale is parsed/canonicalized. Arbitrary metadata, device/location data
+        and executable/custom hosted content are not profile fields.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                display_name: {type: [string, 'null'], maxLength: 100}
+                given_name: {type: [string, 'null'], maxLength: 100}
+                family_name: {type: [string, 'null'], maxLength: 100}
+                locale: {type: [string, 'null'], maxLength: 35}
+      responses:
+        '200':
+          description: Updated minimized profile.
+          content:
+            application/json:
+              schema: *ProfileSchema
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/sign-ins/email-link:
+    post:
+      operationId: requestEmailLinkSignIn
+      summary: Request a secure one-time email sign-in link
+      description: >-
+        For syntactically valid email input the response is intentionally generic across
+        eligible delivery and protected account-dependent states. Each challenge uses a
+        random 32-byte secret, ten-minute expiry, one-minute resend cooldown and maximum
+        three issues per 15-minute window. BeeBox stores only a domain-separated verifier
+        bound to the exact application, challenge and allowlisted completion destination.
+        The delivered hosted URL carries the secret only in its fragment so a normal
+        mail-scanner GET does not transmit or consume authentication authority.
+      security: [{publishableKey: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, completion_url]
+              properties:
+                email: {type: string, format: email}
+                completion_url: {type: string, format: uri, maxLength: 2048, description: Exact application-scoped allowlisted final destination.}
+      responses:
+        '202': {$ref: '#/components/responses/Accepted'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/InvalidInput'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/sign-ins/email-link/confirm:
+    post:
+      operationId: confirmEmailLinkSignIn
+      summary: Redeem one secure email-link secret
+      description: >-
+        Confirmation is one-time, replay/failure-budget protected and application/destination
+        bound. Active TOTP returns only the tagged MFA-required result and creates no ordinary
+        session/access/refresh authority before MFA completion. A successful but ambiguous
+        client response must not be blindly retried. The secret is accepted only in this POST
+        body, never from a GET or query parameter.
+      security: [{publishableKey: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [challenge_id, secret]
+              properties:
+                challenge_id: {type: string, pattern: '^eln_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}
+                secret: {type: string, minLength: 43, maxLength: 43, pattern: '^[A-Za-z0-9_-]{43}$', writeOnly: true}
+      responses:
+        '200':
+          description: Tagged authenticated or MFA-required result after one-time email-link consumption.
+          headers:
+            Cache-Control: {$ref: '#/components/headers/NoStore'}
+            X-Request-ID: {$ref: '#/components/headers/RequestID'}
+            Set-Cookie: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TokenResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidCredentials'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
 components:
   securitySchemes:
     publishableKey:
@@ -687,6 +1752,18 @@ components:
       required: true
       schema: {type: string, format: uri}
       description: Browser origin that must be exactly allowed for the resolved application. Social authentication and social-link initiation additionally require it to equal redirect_url origin.
+    ReverificationGrantHeader:
+      name: X-BeeBox-Reverification
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 84
+        maxLength: 84
+      description: >-
+        Opaque one-time P2.8 grant. It must match the Authorization target session and
+        exact protected-operation purpose; replay, expiry or substitution fails closed.
+        Never place the grant in a URL, log, metric label or persistent browser storage.
     SocialProviderPath:
       name: provider
       in: path
@@ -713,6 +1790,26 @@ components:
       required: false
       schema: {type: string, minLength: 1, maxLength: 512}
       description: Opaque pagination state for stable created_at plus public-ID ordering; it conveys no authority.
+    SessionListLimit:
+      name: limit
+      in: query
+      required: false
+      schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      description: Maximum number of current-user sessions returned in one bounded newest-first page.
+    SessionListCursor:
+      name: cursor
+      in: query
+      required: false
+      schema: {type: string, minLength: 1, maxLength: 512}
+      description: Opaque cursor for deterministic created_at plus public-session-ID ordering; it conveys no authority and must not be decoded by clients.
+    PasskeyID:
+      name: passkey_id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^pky_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+      description: Opaque BeeBox passkey resource locator; possession is never authorization.
     SessionID:
       name: session_id
       in: path
@@ -812,6 +1909,41 @@ components:
       properties:
         email: {type: string, format: email}
         password: {type: string}
+    ReverificationPurpose:
+      type: string
+      enum: [totp_enroll, totp_remove, totp_replace, recovery_regenerate, passkey_register, passkey_remove, social_link, social_unlink, session_revoke, session_revoke_others, sign_out_everywhere, identifier_add, identifier_remove, identifier_primary]
+      description: >-
+        BeeBox-owned operation vocabulary accepted by P2.8. Session self-service purposes
+        are published by P2.9 and identifier mutation purposes are published by P2.10.
+    ReverificationRequest:
+      type: object
+      additionalProperties: false
+      required: [purpose, proof_access_token]
+      properties:
+        purpose: {$ref: '#/components/schemas/ReverificationPurpose'}
+        proof_access_token:
+          type: string
+          minLength: 1
+          writeOnly: true
+          description: >-
+            Independently authenticated BeeBox proof-session access token. It may name a
+            different session from Authorization but must resolve to the same exact
+            application/user and satisfy current fresh-proof/MFA-provenance requirements.
+    ReverificationGrant:
+      type: object
+      additionalProperties: false
+      required: [reverification_token, expires_at]
+      properties:
+        reverification_token:
+          type: string
+          minLength: 84
+          maxLength: 84
+          writeOnly: true
+          description: Opaque one-time purpose/target-session-bound grant; BeeBox persists only verifier material.
+        expires_at:
+          type: string
+          format: date-time
+          description: Server-selected expiry, never later than the accepted ten-minute proof window or either bound session's authority lifetime.
     SocialProvider:
       type: string
       enum: [google, apple, microsoft, github, gitlab, facebook, slack, discord, linkedin, x, tiktok]
@@ -866,7 +1998,7 @@ components:
           type: integer
           minimum: 1
           maximum: 600
-          description: Actual bounded lifetime in seconds, capped by both the link-attempt TTL and the initiating session recent-authentication deadline.
+          description: Actual bounded lifetime in seconds for the one-time server-bound social-link attempt.
     LinkedSocialAccount:
       type: object
       additionalProperties: false
@@ -907,6 +2039,182 @@ components:
           maxLength: 128
           pattern: '^[A-Za-z0-9._~-]+$'
           description: Original RFC 7636 verifier retained by the client and never sent to the social provider.
+    TOTPEnrollment:
+      type: object
+      additionalProperties: false
+      required: [enrollment_id, secret, otpauth_uri, expires_in]
+      properties:
+        enrollment_id:
+          type: string
+          pattern: '^mfe_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+        secret:
+          type: string
+          pattern: '^[A-Z2-7]+$'
+          writeOnly: true
+          description: One-time Base32 setup secret. BeeBox never returns it after enrollment starts.
+        otpauth_uri:
+          type: string
+          format: uri
+          writeOnly: true
+          description: One-time repository-owned TOTP provisioning URI containing the setup secret.
+        expires_in: {type: integer, minimum: 1, maximum: 600}
+    TOTPEnrollmentConfirmRequest:
+      type: object
+      additionalProperties: false
+      required: [enrollment_id, code]
+      properties:
+        enrollment_id:
+          type: string
+          pattern: '^mfe_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+        code: {type: string, pattern: '^[0-9]{6}$'}
+    TOTPReplacementRequest:
+      type: object
+      additionalProperties: false
+      required: [recovery_code]
+      properties:
+        recovery_code:
+          type: string
+          minLength: 26
+          maxLength: 30
+          description: One 26-symbol Crockford Base32 recovery code, optionally in the documented hyphen grouping.
+    TOTPAuthenticationCompleteRequest:
+      type: object
+      additionalProperties: false
+      required: [pending_mfa_token, code]
+      properties:
+        pending_mfa_token:
+          type: string
+          minLength: 84
+          maxLength: 84
+          description: Opaque five-minute pending-MFA authority accepted only in this POST body.
+        code: {type: string, pattern: '^[0-9]{6}$'}
+    TOTPCredential:
+      type: object
+      additionalProperties: false
+      required: [id, created_at, recovery_codes]
+      properties:
+        id:
+          type: string
+          pattern: '^mfc_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+        created_at: {type: string, format: date-time}
+        recovery_codes:
+          type: array
+          minItems: 10
+          maxItems: 10
+          uniqueItems: true
+          writeOnly: true
+          items: {$ref: '#/components/schemas/RecoveryCode'}
+          description: Present exactly once after activation or replacement confirmation.
+    TOTPState:
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: {type: boolean}
+        credential_id:
+          type: string
+          pattern: '^mfc_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+    RecoveryCode:
+      type: string
+      minLength: 26
+      maxLength: 30
+      description: Exactly 26 random Crockford Base32 symbols (130 bits), optionally grouped with four expected hyphens.
+    RecoveryCodeSet:
+      type: object
+      additionalProperties: false
+      required: [recovery_codes]
+      properties:
+        recovery_codes:
+          type: array
+          minItems: 10
+          maxItems: 10
+          uniqueItems: true
+          writeOnly: true
+          items: {$ref: '#/components/schemas/RecoveryCode'}
+    RecoveryCodeState:
+      type: object
+      additionalProperties: false
+      required: [available, remaining]
+      properties:
+        available: {type: boolean}
+        remaining: {type: integer, minimum: 0, maximum: 10}
+    RecoveryCodeCompleteRequest:
+      type: object
+      additionalProperties: false
+      required: [pending_mfa_token, code]
+      properties:
+        pending_mfa_token:
+          type: string
+          minLength: 84
+          maxLength: 84
+        code: {$ref: '#/components/schemas/RecoveryCode'}
+    PasskeyAttempt:
+      type: object
+      additionalProperties: false
+      required: [attempt_id, public_key, expires_in]
+      properties:
+        attempt_id:
+          type: string
+          pattern: '^pka_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+          description: One-time opaque BeeBox ceremony locator; it conveys no authority outside its stored scope.
+        public_key:
+          type: object
+          additionalProperties: true
+          description: Opaque browser WebAuthn creation or assertion options. BeeBox does not expose Go library types as public schema.
+        expires_in:
+          type: integer
+          minimum: 1
+          maximum: 300
+    PasskeyRegistrationCompleteRequest:
+      type: object
+      additionalProperties: false
+      required: [attempt_id, credential]
+      properties:
+        attempt_id:
+          type: string
+          pattern: '^pka_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+        name:
+          type: string
+          maxLength: 64
+          description: Optional bounded user-visible label; not authentication authority.
+        credential:
+          type: object
+          additionalProperties: true
+          description: Opaque browser WebAuthn registration response JSON consumed by BeeBox's maintained verifier.
+    PasskeyAuthenticationCompleteRequest:
+      type: object
+      additionalProperties: false
+      required: [attempt_id, credential]
+      properties:
+        attempt_id:
+          type: string
+          pattern: '^pka_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+        credential:
+          type: object
+          additionalProperties: true
+          description: Opaque browser WebAuthn assertion response JSON consumed by BeeBox's maintained verifier.
+    Passkey:
+      type: object
+      additionalProperties: false
+      required: [id, created_at]
+      properties:
+        id:
+          type: string
+          pattern: '^pky_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+          description: Opaque BeeBox-owned passkey resource locator.
+        name:
+          type: string
+          maxLength: 64
+        created_at: {type: string, format: date-time}
+    PasskeyList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items: {$ref: '#/components/schemas/Passkey'}
     RefreshRequest:
       type: object
       additionalProperties: false
@@ -916,11 +2224,21 @@ components:
           type: string
           minLength: 43
           description: One-time opaque refresh credential. The server persists only verifier material.
-    TokenResponse:
+    AuthenticationSession:
       type: object
       additionalProperties: false
-      required: [access_token, token_type, expires_in, session_id]
+      required: [id]
       properties:
+        id:
+          type: string
+          pattern: '^ses_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+    AuthenticatedAuthenticationResult:
+      type: object
+      additionalProperties: false
+      required: [status, session, access_token, token_type, expires_in, session_id]
+      properties:
+        status: {type: string, const: authenticated}
+        session: {$ref: '#/components/schemas/AuthenticationSession'}
         access_token:
           type: string
           description: Ed25519/EdDSA JWT with required iss, sub, aud, sid, exp, nbf, iat and jti claims.
@@ -932,6 +2250,36 @@ components:
         refresh_token:
           type: string
           description: Present only in non-browser mode. Browser mode uses the application-specific __Host- refresh cookie.
+    MFARequiredAuthenticationResult:
+      type: object
+      additionalProperties: false
+      required: [status, pending_mfa_token, expires_at, available_methods]
+      properties:
+        status: {type: string, const: mfa_required}
+        pending_mfa_token:
+          type: string
+          minLength: 84
+          maxLength: 84
+          description: Opaque five-minute token; only a domain-separated SHA-256 verifier is persisted.
+        expires_at: {type: string, format: date-time}
+        available_methods:
+          type: array
+          minItems: 1
+          maxItems: 2
+          uniqueItems: true
+          items:
+            type: string
+            enum: [totp, recovery_code]
+          description: Exact methods currently usable for this pending transaction.
+    TokenResponse:
+      oneOf:
+        - {$ref: '#/components/schemas/AuthenticatedAuthenticationResult'}
+        - {$ref: '#/components/schemas/MFARequiredAuthenticationResult'}
+      discriminator:
+        propertyName: status
+        mapping:
+          authenticated: '#/components/schemas/AuthenticatedAuthenticationResult'
+          mfa_required: '#/components/schemas/MFARequiredAuthenticationResult'
     Session:
       type: object
       additionalProperties: false
@@ -946,6 +2294,37 @@ components:
         created_at: {type: string, format: date-time}
         expires_at: {type: string, format: date-time}
         revoked: {type: boolean}
+    SelfServiceSession:
+      type: object
+      additionalProperties: false
+      required: [id, created_at, last_seen_at, idle_expires_at, expires_at, revoked, current]
+      properties:
+        id:
+          type: string
+          pattern: '^ses_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+          description: Opaque session locator; it never grants authority.
+        created_at: {type: string, format: date-time}
+        last_seen_at: {type: string, format: date-time}
+        idle_expires_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+        revoked: {type: boolean}
+        current:
+          type: boolean
+          description: Server-derived comparison with the current bearer session; never client-supplied.
+    SelfServiceSessionPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items: {$ref: '#/components/schemas/SelfServiceSession'}
+        next_cursor:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: Opaque cursor omitted when no later page exists.
     PasswordResetConfirmRequest:
       type: object
       additionalProperties: false
@@ -1022,23 +2401,66 @@ components:
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
+    ReverificationFailed:
+      description: >-
+        Reverification proof or grant is invalid, expired, replayed, wrong-purpose,
+        wrong-target, revoked, cross-scope or lacks required TOTP provenance. Protected
+        account/factor inventory and the specific failed binding are intentionally not exposed.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    InvalidPasskeyProof:
+      description: Passkey ceremony or authenticator proof is invalid, expired, replayed or outside the trusted application/origin/RP/credential ownership scope without exposing verifier detail.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    InvalidTOTPProof:
+      description: TOTP enrollment or pending-MFA proof is invalid, expired, exhausted, replayed, cross-application or already consumed without exposing protected state.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    TOTPForbidden:
+      description: TOTP management returns origin_not_allowed for a disallowed Origin or reverification_required when the required purpose/target-bound one-time P2.8 grant is absent, invalid, expired, replayed or ineligible.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    TOTPConflict:
+      description: TOTP enrollment is rejected because one active logical credential already exists for the exact application/user.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    InvalidRecoveryProof:
+      description: Recovery proof is invalid, expired, exhausted, replayed, cross-application or already consumed without exposing protected state.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    RecoveryForbidden:
+      description: Recovery management requires the exact target application/user/session and the matching one-time P2.8 reverification grant; protected factor inventory remains undisclosed.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    PasskeyForbidden:
+      description: Passkey management returns origin_not_allowed for disallowed Origin or reverification_required when the matching purpose/target-bound one-time P2.8 grant is absent, invalid, expired or replayed.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
     SocialLinkUnauthorized:
-      description: Social-link initiation returns invalid_application for an invalid application credential or invalid_session for an invalid, revoked, expired, cross-application, or otherwise non-current BeeBox session.
+      description: Social-link initiation returns invalid_application for an invalid application credential or invalid_session for an invalid, revoked, expired, cross-application, or otherwise non-current BeeBox target session.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
     SocialLinkForbidden:
-      description: Social-link initiation returns origin_not_allowed for a disallowed Origin or reverification_required when the persisted initiating session is outside the accepted ten-minute recent-authentication window.
+      description: Social-link initiation returns origin_not_allowed for a disallowed Origin or reverification_required when the social_link purpose/target-bound one-time P2.8 grant is missing or invalid.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
     SocialAccountForbidden:
-      description: Social-account management returns origin_not_allowed for a disallowed Origin or reverification_required when unlink uses a persisted session outside the accepted ten-minute recent-authentication window. Listing does not require recent authentication.
+      description: Social-account management returns origin_not_allowed for a disallowed Origin or reverification_required when unlink lacks a valid social_unlink purpose/target-bound one-time P2.8 grant. Listing does not require recent authentication.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
     LastAuthenticationMethod:
-      description: Unlink is rejected with code last_authentication_method because at least one currently usable authentication method must remain; detailed method inventory is intentionally not exposed.
+      description: Unlink, passkey removal or identifier removal is rejected with code last_authentication_method because at least one currently usable authentication method must remain; detailed method inventory is intentionally not exposed.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}

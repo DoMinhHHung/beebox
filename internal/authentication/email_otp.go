@@ -63,12 +63,17 @@ type EmailOTPFinalize struct {
 	RefreshVerifier       [32]byte
 	IdleExpiresAt         time.Time
 	ExpiresAt             time.Time
+	PendingMFA            PendingMFAWrite
 	CorrelationID         audit.CorrelationID
 }
 
 type EmailOTPFinalizeResult struct {
-	UserPublicID        string
-	ApplicationPublicID string
+	UserPublicID          string
+	ApplicationPublicID   string
+	MFARequired           bool
+	PendingMFAPublicID    string
+	PendingMFAExpiresAt   time.Time
+	RecoveryCodeAvailable bool
 }
 
 type EmailOTPPersistence interface {

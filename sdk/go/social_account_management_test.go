@@ -66,7 +66,7 @@ func TestUnlinkSocialLinkSendsOneDeleteAndNoProviderMaterial(t *testing.T) {
 		if r.Method != http.MethodDelete || r.URL.Path != "/v1/social-links/"+id {
 			t.Fatalf("request=%s %s", r.Method, r.URL.Path)
 		}
-		if r.Header.Get("Authorization") != "Bearer access-token" || r.Header.Get("Origin") != "https://app.example.test" {
+		if r.Header.Get("Authorization") != "Bearer access-token" || r.Header.Get("Origin") != "https://app.example.test" || r.Header.Get(ReverificationHeader) != "reverify-unlink" {
 			t.Fatalf("headers=%v", r.Header)
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -76,7 +76,7 @@ func TestUnlinkSocialLinkSendsOneDeleteAndNoProviderMaterial(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := client.UnlinkSocialLink(context.Background(), "access-token", "https://app.example.test", id); err != nil {
+	if err := client.UnlinkSocialLink(context.Background(), "access-token", "https://app.example.test", "reverify-unlink", id); err != nil {
 		t.Fatal(err)
 	}
 	if calls.Load() != 1 {

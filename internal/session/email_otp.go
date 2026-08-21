@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"strconv"
 	"time"
 
 	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
@@ -13,9 +14,8 @@ import (
 )
 
 // EmailOTPService turns an email-OTP primary proof into the ordinary BeeBox
-// session transport used by password sign-in. It deliberately does not model
-// future MFA policy; ADR 0005 remains the authority when additional assurance
-// exists.
+// session transport unless the exact user has an active additional-assurance
+// factor, in which case persistence atomically returns pending MFA instead.
 type EmailOTPService struct {
 	persistence authentication.EmailOTPPersistence
 	ring        *KeyRing
@@ -51,8 +51,6 @@ func (s *EmailOTPService) Confirm(ctx context.Context, appID applicationinstance
 			return TokenPair{}, ctxErr
 		}
 		if errors.Is(err, authentication.ErrEmailOTPInvalid) || errors.Is(err, authentication.ErrEmailOTPStale) {
-			// Match the expensive verification class for unknown, unverified,
-			// consumed and absent challenges without persisting attacker input.
 			if _, dummyErr := authentication.HashVerificationCodeContext(ctx, code); errors.Is(dummyErr, authentication.ErrKDFAdmissionLimited) {
 				return TokenPair{}, ErrSignInRateLimited
 			} else if errors.Is(dummyErr, context.Canceled) || errors.Is(dummyErr, context.DeadlineExceeded) {
@@ -82,7 +80,7 @@ func (s *EmailOTPService) Confirm(ctx context.Context, appID applicationinstance
 		Matched:               matched,
 		CorrelationID:         correlationID,
 	}
-	var refresh string
+	var refresh, pendingToken string
 	var issuedAt time.Time
 	if matched {
 		finalize.SessionPublicID, err = NewPublicID()
@@ -96,6 +94,10 @@ func (s *EmailOTPService) Confirm(ctx context.Context, appID applicationinstance
 		issuedAt = s.now().UTC()
 		finalize.IdleExpiresAt = issuedAt.Add(InactivityLifetime)
 		finalize.ExpiresAt = issuedAt.Add(AbsoluteLifetime)
+		finalize.PendingMFA, pendingToken, err = preparePendingMFA(authentication.PrimaryMethodEmailOTP, "email_otp:"+strconv.FormatInt(snapshot.ChallengeGeneration, 10), issuedAt)
+		if err != nil {
+			return TokenPair{}, ErrSessionUnavailable
+		}
 	}
 	result, err := s.persistence.FinalizeEmailOTP(ctx, finalize)
 	if err != nil {
@@ -109,6 +111,12 @@ func (s *EmailOTPService) Confirm(ctx context.Context, appID applicationinstance
 	}
 	if !matched {
 		return TokenPair{}, ErrInvalidCredentials
+	}
+	if result.MFARequired {
+		if result.PendingMFAPublicID != finalize.PendingMFA.PublicID || !result.PendingMFAExpiresAt.Equal(finalize.PendingMFA.ExpiresAt) {
+			return TokenPair{}, ErrSessionUnavailable
+		}
+		return TokenPair{PendingMFA: &PendingMFA{Token: pendingToken, ExpiresAt: result.PendingMFAExpiresAt.UTC(), AvailableMethods: pendingMFAMethods(result.RecoveryCodeAvailable)}}, nil
 	}
 	access, err := s.ring.Sign(result.UserPublicID, result.ApplicationPublicID, finalize.SessionPublicID, issuedAt)
 	if err != nil {

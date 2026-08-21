@@ -263,6 +263,10 @@ func TestEmailIdentifierDatabaseFailureUsesStableSafeError(t *testing.T) {
 		db.Close()
 		t.Fatalf("drop email_verification_challenges error = %v", err)
 	}
+	if _, err := db.ExecContext(ctx, "DROP TABLE email_signin_links"); err != nil {
+		db.Close()
+		t.Fatalf("drop email_signin_links error = %v", err)
+	}
 	if _, err := db.ExecContext(ctx, "DROP TABLE email_identifiers"); err != nil {
 		db.Close()
 		t.Fatalf("drop email_identifiers error = %v", err)

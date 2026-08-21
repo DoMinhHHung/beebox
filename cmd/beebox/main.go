@@ -17,9 +17,12 @@ import (
 	applicationpostgres "github.com/DoMinhHHung/beebox/internal/applicationinstance/postgres"
 	"github.com/DoMinhHHung/beebox/internal/authentication"
 	"github.com/DoMinhHHung/beebox/internal/authentication/metricsdelivery"
+	"github.com/DoMinhHHung/beebox/internal/authentication/passkeywebauthn"
 	authpostgres "github.com/DoMinhHHung/beebox/internal/authentication/postgres"
 	"github.com/DoMinhHHung/beebox/internal/authentication/smtpdelivery"
 	"github.com/DoMinhHHung/beebox/internal/authentication/socialprovider"
+	"github.com/DoMinhHHung/beebox/internal/authentication/totpsecret"
+	"github.com/DoMinhHHung/beebox/internal/authentication/totpstandard"
 	"github.com/DoMinhHHung/beebox/internal/httpapi"
 	identitypostgres "github.com/DoMinhHHung/beebox/internal/identity/postgres"
 	"github.com/DoMinhHHung/beebox/internal/metrics"
@@ -109,20 +112,35 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 	integrationStore := applicationpostgres.NewIntegrationStore(concretePool)
 	integrationService := applicationinstance.NewIntegrationService(integrationStore)
 	authStore := authpostgres.New(concretePool)
+	secretKeyring, err := loadTOTPSecretEncryption(lookup, authStore)
+	if err != nil {
+		return nil, err
+	}
 	verificationCore := authentication.NewEmailVerificationService(authStore, delivery)
 	verification := authentication.NewPublicVerificationService(identitypostgres.New(concretePool), authStore, verificationCore)
 	signup := authentication.NewPublicSignupService(authStore, delivery)
 	reset := authentication.NewPasswordResetService(authStore, delivery)
 	emailOTP := authentication.NewEmailOTPService(authStore, delivery)
+	var emailLink *authentication.EmailLinkService
+	hostedOrigin := ""
+	if rawHostedOrigin, configured := lookup("BEEBOX_HOSTED_AUTH_ORIGIN"); configured && rawHostedOrigin != "" {
+		hostedOrigin, err = applicationinstance.CanonicalizeOrigin(rawHostedOrigin)
+		if err != nil {
+			return nil, errors.New("load hosted authentication origin")
+		}
+		emailLink = authentication.NewEmailLinkService(authStore, integrationStore, delivery, hostedOrigin)
+	}
 	base := httpapi.New(health, integrationService, integrationStore, signup, verification)
 	base = httpapi.WithPasswordReset(base, integrationService, integrationStore, reset)
 
 	var phoneSignupIssuer httpapi.PhoneIssueService
 	var phoneSigninIssuer httpapi.PhoneIssueService
+	var phoneIdentifierDelivery authentication.PhoneIdentifierVerificationDelivery
 	if smsEnabled {
 		phoneDelivery := metricsdelivery.NewPhone(smsSender, recorder)
 		phoneSignupIssuer = authentication.NewPhoneSignupService(authStore, phoneDelivery)
 		phoneSigninIssuer = authentication.NewPhoneOTPService(authStore, phoneDelivery)
+		phoneIdentifierDelivery = phoneDelivery
 	}
 
 	ring, err := session.KeyRingFromLookup(session.LookupEnv(lookup))
@@ -131,6 +149,7 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 			return nil, errors.New("social authentication requires access token signing configuration")
 		}
 		base = httpapi.WithEmailOTP(base, integrationService, integrationStore, nil, nil)
+		base = httpapi.WithEmailLinks(base, integrationService, integrationStore, nil, nil)
 		base = httpapi.WithPhoneSMS(base, integrationService, integrationStore, nil, nil, nil, nil)
 		return httpapi.WithMetrics(base, recorder), nil
 	}
@@ -140,25 +159,50 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 	sessionStore := sessionpostgres.New(concretePool)
 	sessionService := session.NewService(sessionStore, sessionStore, ring)
 	emailOTPSession := session.NewEmailOTPService(authStore, ring)
+	emailLinkSession := session.NewEmailLinkService(authStore, ring)
 	phoneSignupSession := session.NewPhoneSignupService(authStore, ring)
 	phoneOTPSession := session.NewPhoneOTPService(authStore, ring)
 	base = httpapi.WithSessions(base, integrationService, integrationStore, sessionService, ring)
 	base = httpapi.WithEmailOTP(base, integrationService, integrationStore, emailOTP, emailOTPSession)
+	base = httpapi.WithEmailLinks(base, integrationService, integrationStore, emailLink, emailLinkSession)
 	base = httpapi.WithPhoneSMS(base, integrationService, integrationStore, phoneSignupIssuer, phoneSignupSession, phoneSigninIssuer, phoneOTPSession)
+
+	var socialCore *authentication.SocialService
+	var socialCompletion *session.SocialCompletionService
 	if socialRegistry.Enabled() {
-		socialCore := authentication.NewSocialService(authStore, integrationStore, authStore, socialRegistry, socialProtector)
-		socialCompletion := session.NewSocialCompletionService(authStore, authStore, ring)
+		socialCore = authentication.NewSocialService(authStore, integrationStore, authStore, socialRegistry, socialProtector)
+		socialCompletion = session.NewSocialCompletionService(authStore, authStore, ring)
 		base = httpapi.WithSocialAuth(base, integrationService, integrationStore, socialCore, socialCompletion)
 		socialLinkCore := authentication.NewSocialLinkService(authStore, integrationStore, authStore, socialRegistry, socialProtector)
 		base = httpapi.WithSocialLinks(base, integrationService, integrationStore, sessionService, socialLinkCore)
 	}
-	managementCore := authentication.NewSocialAccountService(authStore, authentication.SocialMethodAvailability{
+	availability := authentication.SocialMethodAvailability{
 		EmailOTP: smtpdelivery.Configured(sender),
 		PhoneOTP: smsEnabled,
 		Social:   socialRegistry,
-	})
+	}
+	authStore.SetMethodAvailability(availability)
+	passkeyCore := authentication.NewPasskeyService(authStore, passkeywebauthn.New())
+	passkeyCompletion := session.NewPasskeyService(passkeyCore, ring)
+	base = httpapi.WithPasskeys(base, integrationService, integrationStore, sessionService, passkeyCore, passkeyCompletion)
+	secretAdapter := totpsecret.New(secretKeyring)
+	totpCore := authentication.NewTOTPService(authStore, totpstandard.New(), secretAdapter, secretAdapter)
+	totpCompletion := session.NewTOTPAuthenticationService(totpCore, ring)
+	base = httpapi.WithTOTP(base, integrationService, integrationStore, sessionService, totpCore, totpCompletion)
+	recoveryCore := authentication.NewRecoveryCodeService(authStore)
+	recoveryCompletion := session.NewRecoveryAuthenticationService(recoveryCore, ring)
+	base = httpapi.WithRecoveryCodes(base, integrationService, integrationStore, sessionService, recoveryCore, recoveryCompletion)
+	managementCore := authentication.NewSocialAccountService(authStore, availability)
 	base = httpapi.WithSocialAccountManagement(base, integrationService, integrationStore, sessionService, managementCore)
 	base = httpapi.WithSessionManagement(base, integrationService, integrationService, sessionService)
+	accountCore := authentication.NewAccountManagementService(authStore, verificationCore, phoneIdentifierDelivery)
+	base = httpapi.WithAccountManagement(base, integrationService, integrationStore, sessionService, accountCore)
+	reverificationCore := authentication.NewReverificationService(authStore)
+	base = httpapi.WithReverification(base, integrationService, integrationStore, sessionService, reverificationCore)
+	base = httpapi.WithHostedAuth(
+		base, hostedOrigin, integrationService, integrationStore, emailLinkSession, authStore,
+		totpCompletion, recoveryCompletion, authStore, socialCore, socialCompletion, socialProtector,
+	)
 	return httpapi.WithMetrics(base, recorder), nil
 }
 

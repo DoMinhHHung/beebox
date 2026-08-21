@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
-	"time"
 
 	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
 	"github.com/DoMinhHHung/beebox/internal/audit"
@@ -103,8 +102,6 @@ func (h *emailOTPHTTP) handleEmailOTPIssue(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Authentication is temporarily unavailable.", requestID)
 		return
 	}
-	// Eligible delivery, unknown/unverified state, cooldown/window suppression,
-	// and account-dependent delivery failure intentionally converge here.
 	writeJSON(w, http.StatusAccepted, statusEnvelope{Status: "accepted"})
 }
 
@@ -139,7 +136,7 @@ func (h *emailOTPHTTP) handleEmailOTPConfirm(w http.ResponseWriter, r *http.Requ
 		}
 		return
 	}
-	writeEmailOTPTokenPair(w, r, pair, app.PublicID)
+	writeAuthenticationTokenPair(w, r, pair, app.PublicID)
 }
 
 func (h *emailOTPHTTP) authorizeEmailOTPApplication(w http.ResponseWriter, r *http.Request, requestID string) (applicationinstance.Instance, bool) {
@@ -192,24 +189,5 @@ func (h *emailOTPHTTP) handleEmailOTPPreflight(w http.ResponseWriter, r *http.Re
 }
 
 func writeEmailOTPTokenPair(w http.ResponseWriter, r *http.Request, pair session.TokenPair, appPublicID applicationinstance.PublicID) {
-	response := tokenResponse{
-		AccessToken: pair.AccessToken,
-		TokenType:   "Bearer",
-		ExpiresIn:   pair.ExpiresIn,
-		SessionID:   pair.SessionID,
-	}
-	if r.Header.Get("Origin") != "" {
-		http.SetCookie(w, &http.Cookie{
-			Name:     refreshCookieName(appPublicID),
-			Value:    pair.RefreshToken,
-			Path:     "/",
-			Secure:   true,
-			HttpOnly: true,
-			SameSite: http.SameSiteStrictMode,
-			MaxAge:   int(session.AbsoluteLifetime / time.Second),
-		})
-	} else {
-		response.RefreshToken = pair.RefreshToken
-	}
-	writeJSON(w, http.StatusOK, response)
+	writeAuthenticationTokenPair(w, r, pair, appPublicID)
 }

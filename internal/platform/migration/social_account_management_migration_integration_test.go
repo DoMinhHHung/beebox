@@ -6,10 +6,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
-	"io/fs"
 	"regexp"
 	"testing"
-	"testing/fstest"
 	"time"
 
 	applicationpostgres "github.com/DoMinhHHung/beebox/internal/applicationinstance/postgres"
@@ -20,25 +18,8 @@ func TestSocialAccountManagementMigrationUpgradesVersion16(t *testing.T) {
 	pool := openPool(t, isolatedDatabaseURL(t, "beebox_social_account_management_migration"))
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	sources, err := fs.Sub(embeddedSQL, "sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	entries, err := fs.ReadDir(sources, ".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	version16 := fstest.MapFS{}
-	for _, entry := range entries {
-		if entry.Name() == "00017_social_account_management.sql" {
-			continue
-		}
-		data, err := fs.ReadFile(sources, entry.Name())
-		if err != nil {
-			t.Fatal(err)
-		}
-		version16[entry.Name()] = &fstest.MapFile{Data: data}
-	}
+	version16 := migrationSourcesThrough(t, 16)
+	version17 := migrationSourcesThrough(t, 17)
 	if err := upWithSources(ctx, pool.OpenSQLDB(), version16); err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +31,7 @@ func TestSocialAccountManagementMigrationUpgradesVersion16(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `INSERT INTO external_identities(application_instance_id,user_id,provider,provider_subject) VALUES($1,$2,'github','existing')`, int64(app.InternalID), int64(user.InternalID)); err != nil {
 		t.Fatal(err)
 	}
-	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
+	if err := upWithSources(ctx, pool.OpenSQLDB(), version17); err != nil {
 		t.Fatalf("upgrade to 17: %v", err)
 	}
 	assertMigrationState(t, ctx, pool, 17)

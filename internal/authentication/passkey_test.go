@@ -1,0 +1,158 @@
+package authentication
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
+	"github.com/DoMinhHHung/beebox/internal/audit"
+	"github.com/DoMinhHHung/beebox/internal/identity"
+)
+
+const (
+	testPasskeyAppPublic  = applicationinstance.PublicID("app_123e4567-e89b-42d3-a456-426614174000")
+	testPasskeyUserPublic = identity.PublicID("usr_123e4567-e89b-42d3-a456-426614174001")
+)
+
+type passkeyPersistenceStub struct {
+	credentials  []PasskeyCredential
+	attemptWrite PasskeyAttemptWrite
+	attempt      PasskeyAttempt
+	createdID    string
+	loadUser     PasskeyProtocolUser
+	removeErr    error
+}
+
+func (p *passkeyPersistenceStub) ListPasskeyCredentials(context.Context, applicationinstance.InternalID, identity.InternalID) ([]PasskeyCredential, error) {
+	return append([]PasskeyCredential(nil), p.credentials...), nil
+}
+func (p *passkeyPersistenceStub) CreatePasskeyAttempt(_ context.Context, write PasskeyAttemptWrite) (string, error) {
+	p.attemptWrite = write
+	if p.createdID == "" {
+		p.createdID = "pka_123e4567-e89b-42d3-a456-426614174002"
+	}
+	return p.createdID, nil
+}
+func (p *passkeyPersistenceStub) ConsumePasskeyAttempt(context.Context, applicationinstance.InternalID, string, string, string) (PasskeyAttempt, error) {
+	return p.attempt, nil
+}
+func (p *passkeyPersistenceStub) CreatePasskeyCredential(_ context.Context, _ PasskeyAttempt, credential PasskeyCredential, _ audit.CorrelationID) (PasskeyCredential, error) {
+	credential.PublicID = "pky_123e4567-e89b-42d3-a456-426614174003"
+	credential.CreatedAt = time.Unix(100, 0).UTC()
+	return credential, nil
+}
+func (p *passkeyPersistenceStub) LoadPasskeyUserByHandle(context.Context, applicationinstance.InternalID, string, []byte, []byte) (PasskeyProtocolUser, error) {
+	return p.loadUser, nil
+}
+func (p *passkeyPersistenceStub) FinalizePasskeyAuthentication(context.Context, PasskeyAuthFinalize) (PasskeyAuthResult, error) {
+	return PasskeyAuthResult{UserPublicID: testPasskeyUserPublic, ApplicationPublicID: testPasskeyAppPublic}, nil
+}
+func (p *passkeyPersistenceStub) RemovePasskeyCredential(context.Context, PasskeySession, string, audit.CorrelationID) error {
+	return p.removeErr
+}
+
+type passkeyProtocolStub struct {
+	challenge string
+	finishErr error
+}
+
+func (p passkeyProtocolStub) BeginRegistration(PasskeyProtocolUser, string, string) (json.RawMessage, json.RawMessage, string, error) {
+	return json.RawMessage(`{"rp":{"id":"app.example"}}`), json.RawMessage(`{"challenge":"stored"}`), p.challenge, nil
+}
+func (p passkeyProtocolStub) FinishRegistration(PasskeyProtocolUser, string, string, json.RawMessage, json.RawMessage) (PasskeyCredential, error) {
+	if p.finishErr != nil {
+		return PasskeyCredential{}, p.finishErr
+	}
+	return PasskeyCredential{RPID: "app.example", CredentialID: []byte("credential"), CredentialJSON: json.RawMessage(`{"id":"credential"}`)}, nil
+}
+func (p passkeyProtocolStub) BeginAuthentication(string, string) (json.RawMessage, json.RawMessage, string, error) {
+	return json.RawMessage(`{"rpId":"app.example"}`), json.RawMessage(`{"challenge":"stored"}`), p.challenge, nil
+}
+func (p passkeyProtocolStub) FinishAuthentication(ctx context.Context, _ string, _ string, _ json.RawMessage, _ json.RawMessage, loader func(context.Context, []byte, []byte) (PasskeyProtocolUser, error)) (PasskeyProtocolUser, PasskeyCredential, error) {
+	if p.finishErr != nil {
+		return PasskeyProtocolUser{}, PasskeyCredential{}, p.finishErr
+	}
+	user, err := loader(ctx, []byte("credential"), []byte(testPasskeyUserPublic))
+	if err != nil {
+		return PasskeyProtocolUser{}, PasskeyCredential{}, err
+	}
+	return user, PasskeyCredential{RPID: "app.example", CredentialID: []byte("credential"), CredentialJSON: json.RawMessage(`{"id":"credential"}`)}, nil
+}
+
+func freshPasskeySession(now time.Time) PasskeySession {
+	return PasskeySession{ApplicationInstanceID: 1, ApplicationPublicID: testPasskeyAppPublic, UserID: 2, UserPublicID: testPasskeyUserPublic, SessionPublicID: "ses_123e4567-e89b-42d3-a456-426614174004", CreatedAt: now.Add(-time.Minute), IdleExpiresAt: now.Add(time.Hour), ExpiresAt: now.Add(24 * time.Hour)}
+}
+
+func TestPasskeyBeginRegistrationBindsAndHashesChallenge(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	rawChallenge := []byte("0123456789abcdef0123456789abcdef")
+	store := &passkeyPersistenceStub{}
+	service := NewPasskeyService(store, passkeyProtocolStub{challenge: base64.RawURLEncoding.EncodeToString(rawChallenge)})
+	service.now = func() time.Time { return now }
+	current := freshPasskeySession(now)
+	ctx := testReverificationContext(current.ApplicationInstanceID, current.UserID, current.SessionPublicID, ReverificationPurposePasskeyRegister)
+	result, err := service.BeginRegistration(ctx, current, "https://app.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.AttemptID == "" || result.ExpiresIn <= 0 || result.ExpiresIn > int64(PasskeyAttemptTTL/time.Second) {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if store.attemptWrite.ChallengeHash != sha256.Sum256(rawChallenge) {
+		t.Fatal("challenge hash was not persisted")
+	}
+	if store.attemptWrite.ApplicationInstanceID != 1 || store.attemptWrite.UserID != 2 || store.attemptWrite.SessionPublicID == "" || store.attemptWrite.Origin != "https://app.example" || store.attemptWrite.RPID != "app.example" || store.attemptWrite.Purpose != "registration" {
+		t.Fatalf("attempt binding mismatch: %+v", store.attemptWrite)
+	}
+}
+
+func TestPasskeyRegistrationRequiresScopedReverification(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	store := &passkeyPersistenceStub{}
+	service := NewPasskeyService(store, passkeyProtocolStub{challenge: base64.RawURLEncoding.EncodeToString([]byte("0123456789abcdef"))})
+	service.now = func() time.Time { return now }
+	current := freshPasskeySession(now)
+	current.CreatedAt = now.Add(-24 * time.Hour)
+	_, err := service.BeginRegistration(context.Background(), current, "https://app.example")
+	if !errors.Is(err, ErrPasskeyReverificationRequired) {
+		t.Fatalf("missing reverification got %v", err)
+	}
+	if store.attemptWrite.Purpose != "" {
+		t.Fatal("unauthorized session created an attempt")
+	}
+	ctx := testReverificationContext(current.ApplicationInstanceID, current.UserID, current.SessionPublicID, ReverificationPurposePasskeyRegister)
+	if _, err := service.BeginRegistration(ctx, current, "https://app.example"); err != nil {
+		t.Fatalf("old active session with trusted reverification got %v", err)
+	}
+}
+
+func TestPasskeyRejectsNonCanonicalOriginShape(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	service := NewPasskeyService(&passkeyPersistenceStub{}, passkeyProtocolStub{challenge: base64.RawURLEncoding.EncodeToString([]byte("0123456789abcdef"))})
+	service.now = func() time.Time { return now }
+	current := freshPasskeySession(now)
+	ctx := testReverificationContext(current.ApplicationInstanceID, current.UserID, current.SessionPublicID, ReverificationPurposePasskeyRegister)
+	for _, origin := range []string{"https://app.example/path", "https://user@app.example", "app.example", "https://app.example?x=1"} {
+		if _, err := service.BeginRegistration(ctx, current, origin); !errors.Is(err, ErrPasskeyInvalidRequest) {
+			t.Fatalf("origin %q: got %v", origin, err)
+		}
+	}
+}
+
+func TestPasskeyRemovePreservesLastMethodError(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	store := &passkeyPersistenceStub{removeErr: ErrLastAuthenticationMethod}
+	service := NewPasskeyService(store, passkeyProtocolStub{})
+	service.now = func() time.Time { return now }
+	current := freshPasskeySession(now)
+	ctx := testReverificationContext(current.ApplicationInstanceID, current.UserID, current.SessionPublicID, ReverificationPurposePasskeyRemove)
+	err := service.Remove(ctx, current, "pky_123e4567-e89b-42d3-a456-426614174003", audit.CorrelationID{1})
+	if !errors.Is(err, ErrLastAuthenticationMethod) {
+		t.Fatalf("got %v", err)
+	}
+}

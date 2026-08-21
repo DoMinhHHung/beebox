@@ -4,9 +4,7 @@ package migration
 
 import (
 	"context"
-	"io/fs"
 	"testing"
-	"testing/fstest"
 	"time"
 )
 
@@ -16,33 +14,14 @@ func TestPhoneSMSMigrationUpgradesExisting00013SchemaAndPreservesLimiterVocabula
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	sources, err := fs.Sub(embeddedSQL, "sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	throughThirteen := fstest.MapFS{}
-	entries, err := fs.ReadDir(sources, ".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, entry := range entries {
-		if entry.Name() == "00014_phone_sms.sql" || entry.Name() == "00015_social_oauth.sql" || entry.Name() == "00016_social_account_linking.sql" || entry.Name() == "00017_social_account_management.sql" {
-			continue
-		}
-		content, err := fs.ReadFile(sources, entry.Name())
-		if err != nil {
-			t.Fatal(err)
-		}
-		throughThirteen[entry.Name()] = &fstest.MapFile{Data: content}
-	}
-	if err := upWithSources(ctx, pool.OpenSQLDB(), throughThirteen); err != nil {
+	if err := upWithSources(ctx, pool.OpenSQLDB(), migrationSourcesThrough(t, 13)); err != nil {
 		t.Fatalf("migrate through 00013 error = %v", err)
 	}
 	assertMigrationState(t, ctx, pool, 13)
 	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
 		t.Fatalf("upgrade through current schema error = %v", err)
 	}
-	assertMigrationState(t, ctx, pool, 17)
+	assertMigrationState(t, ctx, pool, 24)
 
 	db := pool.OpenSQLDB()
 	defer db.Close()
@@ -82,7 +61,7 @@ func TestPhoneSMSMigrationFreshSchemaOwnershipUniquenessAndChallengeConstraints(
 	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
 		t.Fatal(err)
 	}
-	assertMigrationState(t, ctx, pool, 17)
+	assertMigrationState(t, ctx, pool, 24)
 	db := pool.OpenSQLDB()
 	defer db.Close()
 

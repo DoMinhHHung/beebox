@@ -64,16 +64,16 @@ func (s *Store) CreateSocialLinkAttempt(ctx context.Context, write authenticatio
 			application_instance_id,user_id,session_id,provider,canonical_redirect_url,purpose,
 			state_hash,recent_auth_at,oidc_nonce_hash,provider_pkce_ciphertext,created_at,expires_at
 		)
-		SELECT s.application_instance_id,s.user_id,s.id,$4,$5,'social_link',$6,s.created_at,$7,$8,$9,$10
+		SELECT s.application_instance_id,s.user_id,s.id,$4,$5,'social_link',$6,$11,$7,$8,$9,$10
 		FROM sessions s
 		WHERE s.application_instance_id=$1
 		  AND s.user_id=$2
 		  AND s.public_id=$3
-		  AND s.created_at=$11
 		  AND s.revoked_at IS NULL
 		  AND s.idle_expires_at>$9
 		  AND s.expires_at>$9
-		  AND $9 < s.created_at + INTERVAL '10 minutes'`,
+		  AND $11 <= $9
+		  AND $11 > $9 - INTERVAL '10 minutes'`,
 		int64(write.ApplicationInstanceID), int64(write.UserID), write.SessionPublicID,
 		string(write.Provider), write.CanonicalRedirectURL, write.StateHash[:], nonce,
 		nullableBytes(write.ProviderPKCECiphertext), write.CreatedAt.UTC(), write.ExpiresAt.UTC(), write.RecentAuthAt.UTC(),
@@ -185,9 +185,7 @@ func (s *Store) FinalizeSocialLink(ctx context.Context, final authentication.Soc
 		}
 		return classifySocialLinkError(ctx, err)
 	}
-	managementDigest := authentication.SocialLinkManagementLockKey(
-		applicationinstance.InternalID(preAppID), identity.InternalID(preUserID), authentication.Provider(preProvider),
-	)
+	managementDigest := authentication.SocialLinkManagementLockKey(applicationinstance.InternalID(preAppID), identity.InternalID(preUserID), authentication.Provider(preProvider))
 	managementKey := int64(binary.BigEndian.Uint64(managementDigest[:8]))
 	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, managementKey); err != nil {
 		return classifySocialLinkError(ctx, err)
@@ -218,21 +216,21 @@ func (s *Store) FinalizeSocialLink(ctx context.Context, final authentication.Soc
 	}
 
 	var sessionAppID, sessionUserID int64
-	var sessionCreatedAt, idleExpiresAt, sessionExpiresAt time.Time
+	var idleExpiresAt, sessionExpiresAt time.Time
 	var revokedAt sql.NullTime
 	err = tx.QueryRowContext(ctx, `
-		SELECT application_instance_id,user_id,created_at,idle_expires_at,expires_at,revoked_at
+		SELECT application_instance_id,user_id,idle_expires_at,expires_at,revoked_at
 		FROM sessions
 		WHERE id=$1
 		FOR UPDATE`, sessionID,
-	).Scan(&sessionAppID, &sessionUserID, &sessionCreatedAt, &idleExpiresAt, &sessionExpiresAt, &revokedAt)
+	).Scan(&sessionAppID, &sessionUserID, &idleExpiresAt, &sessionExpiresAt, &revokedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return commitSocialLinkDenial(ctx, tx, appID, userID, final.AttemptID, final.CorrelationID)
 	}
 	if err != nil {
 		return classifySocialLinkError(ctx, err)
 	}
-	if sessionAppID != appID || sessionUserID != userID || revokedAt.Valid || !sessionCreatedAt.UTC().Equal(recentAuthAt.UTC()) || !now.Before(idleExpiresAt.UTC()) || !now.Before(sessionExpiresAt.UTC()) || !now.Before(sessionCreatedAt.UTC().Add(authentication.SocialLinkFreshness)) {
+	if sessionAppID != appID || sessionUserID != userID || revokedAt.Valid || !now.Before(idleExpiresAt.UTC()) || !now.Before(sessionExpiresAt.UTC()) {
 		return commitSocialLinkDenial(ctx, tx, appID, userID, final.AttemptID, final.CorrelationID)
 	}
 
@@ -245,8 +243,7 @@ func (s *Store) FinalizeSocialLink(ctx context.Context, final authentication.Soc
 	err = tx.QueryRowContext(ctx, `
 		SELECT id,user_id
 		FROM external_identities
-		WHERE application_instance_id=$1 AND provider=$2 AND provider_subject=$3`,
-		appID, provider, final.ProviderSubject,
+		WHERE application_instance_id=$1 AND provider=$2 AND provider_subject=$3`, appID, provider, final.ProviderSubject,
 	).Scan(&externalIdentityID, &ownerUserID)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):

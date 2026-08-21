@@ -12,7 +12,7 @@ import (
 	"github.com/DoMinhHHung/beebox/internal/identity"
 )
 
-func TestSocialLinkRequiresFreshExactSessionAndBindsStatePurpose(t *testing.T) {
+func TestSocialLinkRequiresScopedReverificationAndBindsStatePurpose(t *testing.T) {
 	t.Parallel()
 	appPublicID, err := applicationinstance.NewPublicID()
 	if err != nil {
@@ -28,34 +28,33 @@ func TestSocialLinkRequiresFreshExactSessionAndBindsStatePurpose(t *testing.T) {
 		ApplicationInstanceID: app.InternalID,
 		UserID:                identity.InternalID(44),
 		PublicID:              "ses_11111111-1111-4111-8111-111111111111",
-		CreatedAt:             now.Add(-5 * time.Minute),
+		CreatedAt:             now.Add(-24 * time.Hour),
 		IdleExpiresAt:         now.Add(30 * time.Minute),
 		ExpiresAt:             now.Add(time.Hour),
 	}
-	result, err := service.CreateLinkAttempt(context.Background(), app, current, ProviderGitHub, "https://app.example.test/link-complete")
+	ctx := testReverificationContext(current.ApplicationInstanceID, current.UserID, current.PublicID, ReverificationPurposeSocialLink)
+	result, err := service.CreateLinkAttempt(ctx, app, current, ProviderGitHub, "https://app.example.test/link-complete")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(result.AuthorizationURL, "state="+SocialLinkStatePrefix) {
 		t.Fatalf("authorization URL does not carry link-purpose state: %q", result.AuthorizationURL)
 	}
-	if result.ExpiresIn != 300 {
-		t.Fatalf("expires_in = %d, want 300 from initiating-session freshness deadline", result.ExpiresIn)
+	if result.ExpiresIn != int64(SocialLinkAttemptTTL/time.Second) {
+		t.Fatalf("expires_in = %d, want %d from link-attempt TTL", result.ExpiresIn, int64(SocialLinkAttemptTTL/time.Second))
 	}
-	if store.write.UserID != current.UserID || store.write.SessionPublicID != current.PublicID || !store.write.RecentAuthAt.Equal(current.CreatedAt) {
-		t.Fatalf("attempt did not bind exact initiating principal/session: %#v", store.write)
+	if store.write.UserID != current.UserID || store.write.SessionPublicID != current.PublicID || !store.write.RecentAuthAt.Equal(now) {
+		t.Fatalf("attempt did not bind exact initiating principal/session/reverification: %#v", store.write)
 	}
 
-	stale := current
-	stale.CreatedAt = now.Add(-SocialLinkFreshness)
-	_, err = service.CreateLinkAttempt(context.Background(), app, stale, ProviderGitHub, "https://app.example.test/link-complete")
+	_, err = service.CreateLinkAttempt(context.Background(), app, current, ProviderGitHub, "https://app.example.test/link-complete")
 	if !errors.Is(err, ErrSocialLinkReverificationRequired) {
-		t.Fatalf("stale session error = %v", err)
+		t.Fatalf("missing reverification error = %v", err)
 	}
 
 	otherApp := current
 	otherApp.ApplicationInstanceID = 10
-	_, err = service.CreateLinkAttempt(context.Background(), app, otherApp, ProviderGitHub, "https://app.example.test/link-complete")
+	_, err = service.CreateLinkAttempt(ctx, app, otherApp, ProviderGitHub, "https://app.example.test/link-complete")
 	if !errors.Is(err, ErrSocialLinkInvalidSession) {
 		t.Fatalf("cross-app session error = %v", err)
 	}

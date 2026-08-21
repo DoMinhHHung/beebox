@@ -97,7 +97,14 @@ func TestCredentialFormatsSecretVerificationAndRotation(t *testing.T) {
 	}
 
 	stub.finalized = false
-	bad := secret[:len(secret)-1] + "A"
+	replacement := "A"
+	if secret[len(secret)-1] == 'A' {
+		replacement = "Q"
+	}
+	bad := secret[:len(secret)-1] + replacement
+	if bad == secret {
+		t.Fatal("bad secret fixture did not change secret material")
+	}
 	if _, err := service.AuthenticateSecret(context.Background(), bad); !errors.Is(err, ErrInvalidCredential) {
 		t.Fatalf("bad secret err = %v", err)
 	}
