@@ -6,10 +6,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
-	"io/fs"
 	"regexp"
 	"testing"
-	"testing/fstest"
 	"time"
 
 	applicationpostgres "github.com/DoMinhHHung/beebox/internal/applicationinstance/postgres"
@@ -20,28 +18,8 @@ func TestSocialAccountManagementMigrationUpgradesVersion16(t *testing.T) {
 	pool := openPool(t, isolatedDatabaseURL(t, "beebox_social_account_management_migration"))
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	sources, err := fs.Sub(embeddedSQL, "sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	entries, err := fs.ReadDir(sources, ".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	version16 := fstest.MapFS{}
-	version17 := fstest.MapFS{}
-	for _, entry := range entries {
-		data, err := fs.ReadFile(sources, entry.Name())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if entry.Name() != "00017_social_account_management.sql" && entry.Name() != "00018_passkeys.sql" && entry.Name() != "00019_totp_mfa.sql" && entry.Name() != "00020_recovery_codes.sql" && entry.Name() != "00021_reverification.sql" && entry.Name() != "00022_session_self_service.sql" {
-			version16[entry.Name()] = &fstest.MapFile{Data: data}
-		}
-		if entry.Name() != "00018_passkeys.sql" && entry.Name() != "00019_totp_mfa.sql" && entry.Name() != "00020_recovery_codes.sql" && entry.Name() != "00021_reverification.sql" && entry.Name() != "00022_session_self_service.sql" {
-			version17[entry.Name()] = &fstest.MapFile{Data: data}
-		}
-	}
+	version16 := migrationSourcesThrough(t, 16)
+	version17 := migrationSourcesThrough(t, 17)
 	if err := upWithSources(ctx, pool.OpenSQLDB(), version16); err != nil {
 		t.Fatal(err)
 	}
