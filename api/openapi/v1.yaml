@@ -8,8 +8,9 @@ info:
     SMS OTP primary authentication, P2.3 headless social authentication,
     P2.4A explicit authenticated social account linking, P2.4B linked social
     account listing/unlink, P2.5 passkey/WebAuthn primary authentication,
-    P2.6 TOTP MFA, P2.7 recovery codes, P2.8 purpose-bound reverification and
-    P2.9 current-user session self-service are implemented. BeeBox is not an
+    P2.6 TOTP MFA, P2.7 recovery codes, P2.8 purpose-bound reverification,
+    P2.9 current-user session self-service, P2.10 identifier/profile self-service,
+    and P2.11 secure email-link authentication are implemented. BeeBox is not an
     OAuth or OpenID Connect authorization server. Public resource identifiers
     are opaque locators and never establish authorization by themselves.
 servers:
@@ -1250,6 +1251,477 @@ paths:
         '422': {$ref: '#/components/responses/InvalidInput'}
         '503': {$ref: '#/components/responses/Unavailable'}
 
+  /v1/identifiers/emails:
+    get:
+      operationId: listEmailIdentifiers
+      summary: List bounded email identifiers owned by the current application user
+      description: >-
+        Requires exact application, allowed Origin and current persisted user/session authority.
+        Results use deterministic opaque cursor pagination with default 20 and maximum 100.
+        Public eml_ IDs are locators only and never authorize cross-user or cross-application access.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
+        - {name: cursor, in: query, required: false, schema: {type: string, minLength: 1, maxLength: 512}, description: Opaque email-identifier cursor; it conveys no authority.}
+      responses:
+        '200':
+          description: Bounded page of owned email identifiers.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    maxItems: 100
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [id, email, verified, primary, created_at]
+                      properties:
+                        id: {type: string, pattern: '^eml_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}
+                        email: {type: string, format: email}
+                        verified: {type: boolean}
+                        primary: {type: boolean}
+                        created_at: {type: string, format: date-time}
+                  next_cursor: {type: string, minLength: 1, maxLength: 512}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+    post:
+      operationId: addEmailIdentifier
+      summary: Add one email identifier to the current user
+      description: >-
+        Requires exact application/user/target-session authority plus a one-time P2.8
+        identifier_add reverification grant. Email equality is not account-linking authority
+        and cannot merge, adopt or transfer another principal.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email]
+              properties:
+                email: {type: string, format: email}
+      responses:
+        '201': {description: Unverified email identifier created in the exact current scope.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/ReverificationFailed'}
+        '409': {description: Identifier is unavailable in the accepted exact scope.}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/identifiers/phones:
+    get:
+      operationId: listPhoneIdentifiers
+      summary: List bounded phone identifiers owned by the current application user
+      description: >-
+        Uses the same exact application/user/session authorization and bounded cursor behavior as email identifiers.
+        Unverified same-number claims do not reserve a number application-wide; only verified ownership is globally unique inside one application.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
+        - {name: cursor, in: query, required: false, schema: {type: string, minLength: 1, maxLength: 512}, description: Opaque phone-identifier cursor; it conveys no authority.}
+      responses:
+        '200':
+          description: Bounded page of owned phone identifiers.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    maxItems: 100
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [id, phone, verified, primary, created_at]
+                      properties:
+                        id: {type: string, pattern: '^phn_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}
+                        phone: {type: string, pattern: '^\+[1-9][0-9]{1,14}$'}
+                        verified: {type: boolean}
+                        primary: {type: boolean}
+                        created_at: {type: string, format: date-time}
+                  next_cursor: {type: string, minLength: 1, maxLength: 512}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+    post:
+      operationId: addPhoneIdentifier
+      summary: Add one phone identifier to the current user
+      description: >-
+        Requires the one-time identifier_add reverification purpose. Phone equality is never
+        account-linking authority. Verification is required before a phone can become primary;
+        PostgreSQL is the final arbiter for verified ownership under concurrency.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [phone]
+              properties:
+                phone: {type: string, pattern: '^\+[1-9][0-9]{1,14}$'}
+      responses:
+        '201': {description: Unverified phone identifier created in the exact current scope.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/ReverificationFailed'}
+        '409': {description: Identifier is unavailable in the accepted exact scope.}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/identifiers/emails/{identifier_id}:
+    delete:
+      operationId: removeEmailIdentifier
+      summary: Remove one owned email identifier
+      description: >-
+        Requires identifier_remove reverification. A syntactically valid absent/out-of-scope locator
+        is non-authoritative and removal remains non-enumerating. The mutation is rejected when it
+        would remove the last usable authentication method; deterministic verified-primary promotion
+        and required audit evidence are part of the same correctness transaction.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
+        - {name: identifier_id, in: path, required: true, schema: {type: string, pattern: '^eml_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}}
+      responses:
+        '204': {description: Identifier removed or not owned in the exact current scope without ownership disclosure.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/ReverificationFailed'}
+        '409': {$ref: '#/components/responses/LastAuthenticationMethod'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/identifiers/phones/{identifier_id}:
+    delete:
+      operationId: removePhoneIdentifier
+      summary: Remove one owned phone identifier
+      description: >-
+        Requires identifier_remove reverification and exact current application/user ownership.
+        Locator possession never authorizes deletion; last-method and primary-promotion behavior is
+        transactionally enforced exactly like email removal.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
+        - {name: identifier_id, in: path, required: true, schema: {type: string, pattern: '^phn_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}}
+      responses:
+        '204': {description: Identifier removed or not owned in the exact current scope without ownership disclosure.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/ReverificationFailed'}
+        '409': {$ref: '#/components/responses/LastAuthenticationMethod'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/identifiers/emails/{identifier_id}/verification:
+    post:
+      operationId: requestManagedEmailVerification
+      summary: Request possession verification for one owned email identifier
+      description: >-
+        The identifier locator is resolved only inside the exact current application/user scope.
+        Challenge admission, cooldown, expiry and failure budget are server-side; no cross-user
+        identifier inventory is disclosed.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {name: identifier_id, in: path, required: true, schema: {type: string, pattern: '^eml_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}}
+      responses:
+        '202': {description: Verification request accepted for the exact owned identifier.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/identifiers/emails/{identifier_id}/verification/confirm:
+    post:
+      operationId: confirmManagedEmailVerification
+      summary: Confirm possession of one owned email identifier
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {name: identifier_id, in: path, required: true, schema: {type: string, pattern: '^eml_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [code]
+              properties:
+                code: {type: string, pattern: '^[0-9]{6}$'}
+      responses:
+        '200': {description: Owned email identifier metadata after successful verification.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/identifiers/phones/{identifier_id}/verification:
+    post:
+      operationId: requestManagedPhoneVerification
+      summary: Request SMS possession verification for one owned phone identifier
+      description: >-
+        SMS delivery is optional and bounded. Unverified same-number claims do not reserve
+        application-wide ownership; final verified ownership is arbitrated atomically by PostgreSQL.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {name: identifier_id, in: path, required: true, schema: {type: string, pattern: '^phn_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}}
+      responses:
+        '202': {description: Verification request accepted for the exact owned identifier.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/identifiers/phones/{identifier_id}/verification/confirm:
+    post:
+      operationId: confirmManagedPhoneVerification
+      summary: Confirm possession and verified ownership of one phone identifier
+      description: >-
+        Confirmation is replay/failure-budget protected and scoped to the exact current user.
+        Competing same-application verification converges to at most one verified owner.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {name: identifier_id, in: path, required: true, schema: {type: string, pattern: '^phn_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [code]
+              properties:
+                code: {type: string, pattern: '^[0-9]{6}$'}
+      responses:
+        '200': {description: Owned phone identifier metadata after successful verification.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '409': {description: The verified phone identifier is already owned by another user in this application.}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/identifiers/emails/{identifier_id}/primary:
+    post:
+      operationId: setPrimaryEmailIdentifier
+      summary: Set one verified owned email identifier as primary
+      description: >-
+        Requires a one-time identifier_primary reverification grant. Only a verified identifier
+        owned by the exact current application/user can become primary; required audit evidence
+        commits in the same transaction.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
+        - {name: identifier_id, in: path, required: true, schema: {type: string, pattern: '^eml_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}}
+      responses:
+        '200': {$ref: '#/components/responses/OKStatus'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/ReverificationFailed'}
+        '409': {description: Identifier is unverified or unavailable in the exact current scope.}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/identifiers/phones/{identifier_id}/primary:
+    post:
+      operationId: setPrimaryPhoneIdentifier
+      summary: Set one verified owned phone identifier as primary
+      description: Uses the exact same identifier_primary reverification, ownership and transactional-audit boundary as email primary selection.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+        - {$ref: '#/components/parameters/ReverificationGrantHeader'}
+        - {name: identifier_id, in: path, required: true, schema: {type: string, pattern: '^phn_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}}
+      responses:
+        '200': {$ref: '#/components/responses/OKStatus'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/ReverificationFailed'}
+        '409': {description: Identifier is unverified or unavailable in the exact current scope.}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/profile:
+    get:
+      operationId: getCurrentProfile
+      summary: Read the minimized profile of the current application user
+      description: Only display_name, given_name, family_name and locale are part of P2.10 profile self-service.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      responses:
+        '200':
+          description: Current minimized profile.
+          content:
+            application/json:
+              schema: &ProfileSchema
+                type: object
+                additionalProperties: false
+                required: [display_name, given_name, family_name, locale]
+                properties:
+                  display_name: {type: [string, 'null'], maxLength: 100}
+                  given_name: {type: [string, 'null'], maxLength: 100}
+                  family_name: {type: [string, 'null'], maxLength: 100}
+                  locale: {type: [string, 'null'], maxLength: 35}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+    patch:
+      operationId: patchCurrentProfile
+      summary: Patch the minimized profile of the current application user
+      description: >-
+        Accepts only display_name, given_name, family_name and locale. Names are normalized
+        and bounded; locale is parsed/canonicalized. Arbitrary metadata, device/location data
+        and executable/custom hosted content are not profile fields.
+      security:
+        - publishableKey: []
+          bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/BrowserOrigin'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                display_name: {type: [string, 'null'], maxLength: 100}
+                given_name: {type: [string, 'null'], maxLength: 100}
+                family_name: {type: [string, 'null'], maxLength: 100}
+                locale: {type: [string, 'null'], maxLength: 35}
+      responses:
+        '200':
+          description: Updated minimized profile.
+          content:
+            application/json:
+              schema: *ProfileSchema
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidSession'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/sign-ins/email-link:
+    post:
+      operationId: requestEmailLinkSignIn
+      summary: Request a secure one-time email sign-in link
+      description: >-
+        For syntactically valid email input the response is intentionally generic across
+        eligible delivery and protected account-dependent states. Each challenge uses a
+        random 32-byte secret, ten-minute expiry, one-minute resend cooldown and maximum
+        three issues per 15-minute window. BeeBox stores only a domain-separated verifier
+        bound to the exact application, challenge and allowlisted completion destination.
+        The delivered hosted URL carries the secret only in its fragment so a normal
+        mail-scanner GET does not transmit or consume authentication authority.
+      security: [{publishableKey: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, completion_url]
+              properties:
+                email: {type: string, format: email}
+                completion_url: {type: string, format: uri, maxLength: 2048, description: Exact application-scoped allowlisted final destination.}
+      responses:
+        '202': {$ref: '#/components/responses/Accepted'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/InvalidInput'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
+  /v1/sign-ins/email-link/confirm:
+    post:
+      operationId: confirmEmailLinkSignIn
+      summary: Redeem one secure email-link secret
+      description: >-
+        Confirmation is one-time, replay/failure-budget protected and application/destination
+        bound. Active TOTP returns only the tagged MFA-required result and creates no ordinary
+        session/access/refresh authority before MFA completion. A successful but ambiguous
+        client response must not be blindly retried. The secret is accepted only in this POST
+        body, never from a GET or query parameter.
+      security: [{publishableKey: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [challenge_id, secret]
+              properties:
+                challenge_id: {type: string, pattern: '^eln_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}
+                secret: {type: string, minLength: 43, maxLength: 43, pattern: '^[A-Za-z0-9_-]{43}$', writeOnly: true}
+      responses:
+        '200':
+          description: Tagged authenticated or MFA-required result after one-time email-link consumption.
+          headers:
+            Cache-Control: {$ref: '#/components/headers/NoStore'}
+            X-Request-ID: {$ref: '#/components/headers/RequestID'}
+            Set-Cookie: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TokenResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/InvalidCredentials'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+
 components:
   securitySchemes:
     publishableKey:
@@ -1442,8 +1914,7 @@ components:
       enum: [totp_enroll, totp_remove, totp_replace, recovery_regenerate, passkey_register, passkey_remove, social_link, social_unlink, session_revoke, session_revoke_others, sign_out_everywhere, identifier_add, identifier_remove, identifier_primary]
       description: >-
         BeeBox-owned operation vocabulary accepted by P2.8. Session self-service purposes
-        are published by P2.9; identifier mutation purposes remain reserved until their
-        corresponding additive public routes are implemented.
+        are published by P2.9 and identifier mutation purposes are published by P2.10.
     ReverificationRequest:
       type: object
       additionalProperties: false
@@ -1989,7 +2460,7 @@ components:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
     LastAuthenticationMethod:
-      description: Unlink or passkey removal is rejected with code last_authentication_method because at least one currently usable authentication method must remain; detailed method inventory is intentionally not exposed.
+      description: Unlink, passkey removal or identifier removal is rejected with code last_authentication_method because at least one currently usable authentication method must remain; detailed method inventory is intentionally not exposed.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ErrorResponse'}
