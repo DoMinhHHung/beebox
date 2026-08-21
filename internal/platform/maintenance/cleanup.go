@@ -11,22 +11,22 @@ const DefaultBatchSize = 500
 var ErrInvalidBatchSize = errors.New("invalid cleanup batch size")
 
 type Result struct {
-	RateLimits                        int64
-	Idempotency                       int64
-	EmailChallenges                   int64
-	EmailOTPChallenges                int64
-	PasswordResetChallenges           int64
-	PhoneSignupChallenges             int64
-	PhoneOTPChallenges                int64
-	PhoneIdentifierVerification       int64
-	SocialAuthAttempts                int64
-	SocialLinkAttempts                int64
-	SocialCompletionGrants            int64
-	PasskeyAttempts                   int64
-	TOTPEnrollments                   int64
-	PendingMFA                        int64
-	RecoveryCodeSets                  int64
-	SensitiveAdmission                int64
+	RateLimits                  int64
+	Idempotency                 int64
+	EmailChallenges             int64
+	EmailOTPChallenges          int64
+	PasswordResetChallenges     int64
+	PhoneSignupChallenges       int64
+	PhoneOTPChallenges          int64
+	PhoneIdentifierVerification int64
+	SocialAuthAttempts          int64
+	SocialLinkAttempts          int64
+	SocialCompletionGrants      int64
+	PasskeyAttempts             int64
+	TOTPEnrollments             int64
+	PendingMFA                  int64
+	RecoveryCodeSets            int64
+	SensitiveAdmission          int64
 }
 
 // CleanupSecurityState removes only operational rows whose security lifetime
