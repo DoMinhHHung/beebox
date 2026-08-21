@@ -4,9 +4,7 @@ package migration
 
 import (
 	"context"
-	"io/fs"
 	"testing"
-	"testing/fstest"
 	"time"
 )
 
@@ -15,26 +13,7 @@ func TestRecoveryCodesUpgradeFromExactP2PointSixPredecessor(t *testing.T) {
 	pool := openPool(t, databaseURL)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	sources, err := fs.Sub(embeddedSQL, "sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	entries, err := fs.ReadDir(sources, ".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	predecessor := fstest.MapFS{}
-	for _, entry := range entries {
-		if entry.Name() == "00020_recovery_codes.sql" || entry.Name() == "00021_reverification.sql" || entry.Name() == "00022_session_self_service.sql" {
-			continue
-		}
-		data, err := fs.ReadFile(sources, entry.Name())
-		if err != nil {
-			t.Fatal(err)
-		}
-		predecessor[entry.Name()] = &fstest.MapFile{Data: data}
-	}
-	if err := upWithSources(ctx, pool.OpenSQLDB(), predecessor); err != nil {
+	if err := upWithSources(ctx, pool.OpenSQLDB(), migrationSourcesThrough(t, 19)); err != nil {
 		t.Fatal(err)
 	}
 	assertMigrationState(t, ctx, pool, 19)
@@ -59,7 +38,7 @@ func TestRecoveryCodesUpgradeFromExactP2PointSixPredecessor(t *testing.T) {
 	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
 		t.Fatal(err)
 	}
-	assertMigrationState(t, ctx, pool, 22)
+	assertMigrationState(t, ctx, pool, 23)
 	var setsTable, codesTable, admissionTable *string
 	if err := db.QueryRowContext(ctx, `SELECT to_regclass('recovery_code_sets')::text,to_regclass('recovery_codes')::text,to_regclass('sensitive_operation_admission')::text`).Scan(&setsTable, &codesTable, &admissionTable); err != nil {
 		t.Fatal(err)
