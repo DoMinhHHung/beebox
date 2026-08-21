@@ -81,9 +81,9 @@ func (f emailLinkFixture) finalize(t *testing.T, matched bool, sessionID string)
 	}
 	now := time.Now().UTC()
 	return authentication.EmailLinkFinalize{
-		ApplicationInstanceID: authenticationAppID(f.appID),
-		EmailIdentifierID:     authenticationEmailID(f.emailID),
-		UserID:                authenticationUserID(f.userID),
+		ApplicationInstanceID: emailLinkAppID(f.appID),
+		EmailIdentifierID:     emailLinkEmailID(f.emailID),
+		UserID:                emailLinkUserID(f.userID),
 		ChallengePublicID:     f.challenge,
 		ChallengeGeneration:   f.generation,
 		CompletionURL:         f.completion,
@@ -169,7 +169,7 @@ func TestEmailLinkFailureBudgetAndCrossApplicationIsolation(t *testing.T) {
 			t.Fatalf("failure %d error=%v", i+1, err)
 		}
 	}
-	if _, err := f.store.LoadEmailLink(f.ctx, authenticationAppID(f.appID), f.challenge); !errors.Is(err, authentication.ErrEmailLinkInvalid) {
+	if _, err := f.store.LoadEmailLink(f.ctx, emailLinkAppID(f.appID), f.challenge); !errors.Is(err, authentication.ErrEmailLinkInvalid) {
 		t.Fatalf("exhausted link load error=%v", err)
 	}
 	db := f.store.pool.OpenSQLDB()
@@ -234,14 +234,14 @@ func TestEmailLinkWithActiveTOTPCreatesPendingMFAWithoutSession(t *testing.T) {
 	}
 }
 
-func authenticationAppID(id int64) applicationinstance.InternalID {
+func emailLinkAppID(id int64) applicationinstance.InternalID {
 	return applicationinstance.InternalID(id)
 }
 
-func authenticationUserID(id int64) identity.InternalID {
+func emailLinkUserID(id int64) identity.InternalID {
 	return identity.InternalID(id)
 }
 
-func authenticationEmailID(id int64) identity.EmailIdentifierInternalID {
+func emailLinkEmailID(id int64) identity.EmailIdentifierInternalID {
 	return identity.EmailIdentifierInternalID(id)
 }
