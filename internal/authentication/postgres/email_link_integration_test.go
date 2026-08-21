@@ -9,9 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
 	applicationpostgres "github.com/DoMinhHHung/beebox/internal/applicationinstance/postgres"
 	"github.com/DoMinhHHung/beebox/internal/audit"
 	"github.com/DoMinhHHung/beebox/internal/authentication"
+	"github.com/DoMinhHHung/beebox/internal/identity"
 	identitypostgres "github.com/DoMinhHHung/beebox/internal/identity/postgres"
 )
 
@@ -104,15 +106,19 @@ func (f emailLinkFixture) finalize(t *testing.T, matched bool, sessionID string)
 
 func TestEmailLinkConcurrentConsumeCreatesAtMostOneSession(t *testing.T) {
 	f := newEmailLinkFixture(t, "email_link_consume_race", "eln_123e4567-e89b-42d3-a456-426614174201")
+	finals := []authentication.EmailLinkFinalize{
+		f.finalize(t, true, "ses_123e4567-e89b-42d3-a456-426614174202"),
+		f.finalize(t, true, "ses_123e4567-e89b-42d3-a456-426614174203"),
+	}
 	start := make(chan struct{})
 	results := make(chan error, 2)
 	var wg sync.WaitGroup
-	for i := 0; i < 2; i++ {
+	for _, final := range finals {
+		final := final
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			<-start
-			final := f.finalize(t, true, "ses_123e4567-e89b-42d3-a456-426614174202")
 			_, err := f.store.FinalizeEmailLink(context.Background(), final)
 			results <- err
 		}()
@@ -149,7 +155,7 @@ func TestEmailLinkConcurrentConsumeCreatesAtMostOneSession(t *testing.T) {
 }
 
 func TestEmailLinkFailureBudgetAndCrossApplicationIsolation(t *testing.T) {
-	f := newEmailLinkFixture(t, "email_link_failure_budget", "eln_123e4567-e89b-42d3-a456-426614174203")
+	f := newEmailLinkFixture(t, "email_link_failure_budget", "eln_123e4567-e89b-42d3-a456-426614174204")
 	otherApp, err := applicationpostgres.New(f.store.pool).Create(f.ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -178,13 +184,13 @@ func TestEmailLinkFailureBudgetAndCrossApplicationIsolation(t *testing.T) {
 }
 
 func TestEmailLinkAuditFailureRollsBackConsumptionAndSession(t *testing.T) {
-	f := newEmailLinkFixture(t, "email_link_audit_rollback", "eln_123e4567-e89b-42d3-a456-426614174204")
+	f := newEmailLinkFixture(t, "email_link_audit_rollback", "eln_123e4567-e89b-42d3-a456-426614174205")
 	db := f.store.pool.OpenSQLDB()
 	defer db.Close()
 	if _, err := db.ExecContext(f.ctx, `ALTER TABLE audit_events ADD CONSTRAINT audit_events_test_reject_email_link CHECK (source <> 'internal_email_link')`); err != nil {
 		t.Fatal(err)
 	}
-	_, err := f.store.FinalizeEmailLink(f.ctx, f.finalize(t, true, "ses_123e4567-e89b-42d3-a456-426614174205"))
+	_, err := f.store.FinalizeEmailLink(f.ctx, f.finalize(t, true, "ses_123e4567-e89b-42d3-a456-426614174206"))
 	if !errors.Is(err, authentication.ErrEmailLinkPersistence) {
 		t.Fatalf("finalize error=%v", err)
 	}
@@ -201,7 +207,7 @@ func TestEmailLinkAuditFailureRollsBackConsumptionAndSession(t *testing.T) {
 }
 
 func TestEmailLinkWithActiveTOTPCreatesPendingMFAWithoutSession(t *testing.T) {
-	f := newEmailLinkFixture(t, "email_link_totp_gate", "eln_123e4567-e89b-42d3-a456-426614174206")
+	f := newEmailLinkFixture(t, "email_link_totp_gate", "eln_123e4567-e89b-42d3-a456-426614174207")
 	db := f.store.pool.OpenSQLDB()
 	defer db.Close()
 	if _, err := db.ExecContext(f.ctx, `
@@ -228,12 +234,14 @@ func TestEmailLinkWithActiveTOTPCreatesPendingMFAWithoutSession(t *testing.T) {
 	}
 }
 
-// Narrow conversion helpers keep fixtures explicit without leaking SQL ints into
-// production APIs.
 func authenticationAppID(id int64) applicationinstance.InternalID {
 	return applicationinstance.InternalID(id)
 }
-func authenticationUserID(id int64) identity.InternalID { return identity.InternalID(id) }
+
+func authenticationUserID(id int64) identity.InternalID {
+	return identity.InternalID(id)
+}
+
 func authenticationEmailID(id int64) identity.EmailIdentifierInternalID {
 	return identity.EmailIdentifierInternalID(id)
 }
