@@ -6,9 +6,7 @@ import (
 	"context"
 	cryptosha256 "crypto/sha256"
 	"database/sql"
-	"io/fs"
 	"testing"
-	"testing/fstest"
 	"time"
 
 	applicationpostgres "github.com/DoMinhHHung/beebox/internal/applicationinstance/postgres"
@@ -22,28 +20,8 @@ func TestSocialLinkMigrationUpgradesVersion15AndEnforcesBindings(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	sources, err := fs.Sub(embeddedSQL, "sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	entries, err := fs.ReadDir(sources, ".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	version15 := fstest.MapFS{}
-	version16 := fstest.MapFS{}
-	for _, entry := range entries {
-		data, err := fs.ReadFile(sources, entry.Name())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if entry.Name() != "00016_social_account_linking.sql" && entry.Name() != "00017_social_account_management.sql" && entry.Name() != "00018_passkeys.sql" && entry.Name() != "00019_totp_mfa.sql" && entry.Name() != "00020_recovery_codes.sql" && entry.Name() != "00021_reverification.sql" && entry.Name() != "00022_session_self_service.sql" {
-			version15[entry.Name()] = &fstest.MapFile{Data: data}
-		}
-		if entry.Name() != "00017_social_account_management.sql" && entry.Name() != "00018_passkeys.sql" && entry.Name() != "00019_totp_mfa.sql" && entry.Name() != "00020_recovery_codes.sql" && entry.Name() != "00021_reverification.sql" && entry.Name() != "00022_session_self_service.sql" {
-			version16[entry.Name()] = &fstest.MapFile{Data: data}
-		}
-	}
+	version15 := migrationSourcesThrough(t, 15)
+	version16 := migrationSourcesThrough(t, 16)
 	if err := upWithSources(ctx, pool.OpenSQLDB(), version15); err != nil {
 		t.Fatalf("apply version 15 schema: %v", err)
 	}
