@@ -68,7 +68,7 @@ func TestEmailLinkMigrationUpgradesExactVersion23AndEnforcesScope(t *testing.T) 
 		"email_link_issue_global", "email_link_issue_identifier", "email_link_confirm_global", "email_link_confirm_identifier",
 	}
 	for i, operation := range operations {
-		if _, err := db.ExecContext(ctx, `INSERT INTO public_auth_rate_limits(application_instance_id,operation,subject_hash,window_started_at,request_count,expires_at) VALUES($1,$2,digest($3,'sha256'),CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP+INTERVAL '1 minute')`, appA, operation, operation); err != nil {
+		if _, err := db.ExecContext(ctx, `INSERT INTO public_auth_rate_limits(application_instance_id,operation,subject_hash,window_started_at,request_count,expires_at) VALUES($1,$2,decode(repeat('cd',32),'hex'),CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP+INTERVAL '1 minute')`, appA, operation); err != nil {
 			t.Fatalf("rate-limit operation[%d] %q rejected after 23 -> 24 upgrade: %v", i, operation, err)
 		}
 	}
