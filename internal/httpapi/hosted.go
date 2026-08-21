@@ -128,7 +128,7 @@ func (h *hostedHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/auth" || r.URL.Path == "/auth/" || r.URL.Path == "/auth/email-link" || r.URL.Path == "/auth/social/callback":
 		h.servePage(w, r)
 	case r.URL.Path == "/auth/app.js":
-		h.serveAsset(w, r, "text/javascript; charset=utf-8", hostedJS)
+		h.serveAsset(w, r, "text/javascript; charset=utf-8", hostedJSV2)
 	case r.URL.Path == "/auth/app.css":
 		h.serveAsset(w, r, "text/css; charset=utf-8", hostedCSS)
 	case r.URL.Path == "/auth/api/email-link/confirm":
@@ -342,8 +342,12 @@ func (h *hostedHTTP) startSocial(w http.ResponseWriter, r *http.Request, request
 		return
 	}
 	var input hostedSocialStartRequest
-	if decodeJSON(w, r, &input) != nil || h.socialAttempts == nil || h.socialProtector == nil {
+	if decodeJSON(w, r, &input) != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "The hosted social request is invalid.", requestID)
+		return
+	}
+	if h.socialAttempts == nil || h.socialProtector == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Social authentication is temporarily unavailable.", requestID)
 		return
 	}
 	provider := authentication.Provider(input.Provider)
@@ -394,8 +398,12 @@ func (h *hostedHTTP) exchangeSocial(w http.ResponseWriter, r *http.Request, requ
 		return
 	}
 	var input hostedSocialExchangeRequest
-	if decodeJSON(w, r, &input) != nil || input.Code == "" || h.socialExchange == nil {
+	if decodeJSON(w, r, &input) != nil || input.Code == "" {
 		writeError(w, http.StatusBadRequest, "invalid_request", "The hosted social request is invalid.", requestID)
+		return
+	}
+	if h.socialExchange == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Social authentication is temporarily unavailable.", requestID)
 		return
 	}
 	context, ok := h.hostedSocialContext(w, r, requestID)
