@@ -121,6 +121,14 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 	signup := authentication.NewPublicSignupService(authStore, delivery)
 	reset := authentication.NewPasswordResetService(authStore, delivery)
 	emailOTP := authentication.NewEmailOTPService(authStore, delivery)
+	var emailLink *authentication.EmailLinkService
+	if rawHostedOrigin, configured := lookup("BEEBOX_HOSTED_AUTH_ORIGIN"); configured && rawHostedOrigin != "" {
+		hostedOrigin, err := applicationinstance.CanonicalizeOrigin(rawHostedOrigin)
+		if err != nil {
+			return nil, errors.New("load hosted authentication origin")
+		}
+		emailLink = authentication.NewEmailLinkService(authStore, integrationStore, delivery, hostedOrigin)
+	}
 	base := httpapi.New(health, integrationService, integrationStore, signup, verification)
 	base = httpapi.WithPasswordReset(base, integrationService, integrationStore, reset)
 
@@ -140,6 +148,7 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 			return nil, errors.New("social authentication requires access token signing configuration")
 		}
 		base = httpapi.WithEmailOTP(base, integrationService, integrationStore, nil, nil)
+		base = httpapi.WithEmailLinks(base, integrationService, integrationStore, nil, nil)
 		base = httpapi.WithPhoneSMS(base, integrationService, integrationStore, nil, nil, nil, nil)
 		return httpapi.WithMetrics(base, recorder), nil
 	}
@@ -149,10 +158,12 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 	sessionStore := sessionpostgres.New(concretePool)
 	sessionService := session.NewService(sessionStore, sessionStore, ring)
 	emailOTPSession := session.NewEmailOTPService(authStore, ring)
+	emailLinkSession := session.NewEmailLinkService(authStore, ring)
 	phoneSignupSession := session.NewPhoneSignupService(authStore, ring)
 	phoneOTPSession := session.NewPhoneOTPService(authStore, ring)
 	base = httpapi.WithSessions(base, integrationService, integrationStore, sessionService, ring)
 	base = httpapi.WithEmailOTP(base, integrationService, integrationStore, emailOTP, emailOTPSession)
+	base = httpapi.WithEmailLinks(base, integrationService, integrationStore, emailLink, emailLinkSession)
 	base = httpapi.WithPhoneSMS(base, integrationService, integrationStore, phoneSignupIssuer, phoneSignupSession, phoneSigninIssuer, phoneOTPSession)
 	if socialRegistry.Enabled() {
 		socialCore := authentication.NewSocialService(authStore, integrationStore, authStore, socialRegistry, socialProtector)
