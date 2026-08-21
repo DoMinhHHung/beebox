@@ -8,11 +8,12 @@ import (
 const PendingMFATTL = 5 * time.Minute
 
 const (
-	PrimaryMethodPassword = "password"
-	PrimaryMethodEmailOTP = "email_otp"
-	PrimaryMethodPhoneOTP = "phone_otp"
-	PrimaryMethodSocial   = "social"
-	PrimaryMethodPasskey  = "passkey"
+	PrimaryMethodPassword  = "password"
+	PrimaryMethodEmailOTP  = "email_otp"
+	PrimaryMethodEmailLink = "email_link"
+	PrimaryMethodPhoneOTP  = "phone_otp"
+	PrimaryMethodSocial    = "social"
+	PrimaryMethodPasskey   = "passkey"
 )
 
 var (
@@ -43,7 +44,7 @@ func (w PendingMFAWrite) Valid() bool {
 
 func validPrimaryMethod(method string) bool {
 	switch method {
-	case PrimaryMethodPassword, PrimaryMethodEmailOTP, PrimaryMethodPhoneOTP, PrimaryMethodSocial, PrimaryMethodPasskey:
+	case PrimaryMethodPassword, PrimaryMethodEmailOTP, PrimaryMethodEmailLink, PrimaryMethodPhoneOTP, PrimaryMethodSocial, PrimaryMethodPasskey:
 		return true
 	default:
 		return false
