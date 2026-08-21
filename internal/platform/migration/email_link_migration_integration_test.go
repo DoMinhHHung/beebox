@@ -56,10 +56,20 @@ func TestEmailLinkMigrationUpgradesExactVersion23AndEnforcesScope(t *testing.T) 
 	if _, err := db.ExecContext(ctx, `UPDATE email_signin_links SET application_instance_id=$1 WHERE application_instance_id=$2 AND email_identifier_id=$3`, appB, appA, emailA); err == nil {
 		t.Fatal("cross-application challenge ownership unexpectedly accepted")
 	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO pending_mfa_authentications(public_id,token_hash,application_instance_id,user_id,primary_method,primary_context,required_factor,expires_at)
+		VALUES('mfp_123e4567-e89b-42d3-a456-426614175303',decode(repeat('ef',32),'hex'),$1,$2,'email_link','eln_123e4567-e89b-42d3-a456-426614175301','totp',CURRENT_TIMESTAMP+INTERVAL '5 minutes')`, appA, userA); err != nil {
+		t.Fatalf("email-link pending MFA method rejected after 23 -> 24 upgrade: %v", err)
+	}
 
-	for _, operation := range []string{"email_link_issue_global", "email_link_issue_identifier", "email_link_confirm_global", "email_link_confirm_identifier"} {
-		if _, err := db.ExecContext(ctx, `INSERT INTO public_auth_rate_limits(application_instance_id,operation,subject_hash,window_started_at,request_count,expires_at) VALUES($1,$2,decode(repeat('cd',32),'hex'),CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP+INTERVAL '1 minute')`, appA, operation); err != nil {
-			t.Fatalf("email-link limiter operation %q rejected: %v", operation, err)
+	operations := []string{
+		"social_attempt_global", "social_attempt_application_provider", "social_exchange_global", "social_exchange_application",
+		"social_link_attempt_global", "social_link_attempt_user_provider",
+		"email_link_issue_global", "email_link_issue_identifier", "email_link_confirm_global", "email_link_confirm_identifier",
+	}
+	for i, operation := range operations {
+		if _, err := db.ExecContext(ctx, `INSERT INTO public_auth_rate_limits(application_instance_id,operation,subject_hash,window_started_at,request_count,expires_at) VALUES($1,$2,digest($3,'sha256'),CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP+INTERVAL '1 minute')`, appA, operation, operation); err != nil {
+			t.Fatalf("rate-limit operation[%d] %q rejected after 23 -> 24 upgrade: %v", i, operation, err)
 		}
 	}
 }
