@@ -15,6 +15,7 @@ type Result struct {
 	Idempotency                 int64
 	EmailChallenges             int64
 	EmailOTPChallenges          int64
+	EmailLinkChallenges         int64
 	PasswordResetChallenges     int64
 	PhoneSignupChallenges       int64
 	PhoneOTPChallenges          int64
@@ -72,6 +73,12 @@ func CleanupSecurityState(ctx context.Context, db *sql.DB, batchSize int) (Resul
 			ORDER BY expires_at
 			LIMIT $1
 		) DELETE FROM email_otp_signin_challenges p USING doomed d WHERE p.ctid = d.ctid`},
+		{&result.EmailLinkChallenges, `WITH doomed AS (
+			SELECT ctid FROM email_signin_links
+			WHERE consumed_at IS NOT NULL OR expires_at <= CURRENT_TIMESTAMP
+			ORDER BY expires_at
+			LIMIT $1
+		) DELETE FROM email_signin_links p USING doomed d WHERE p.ctid = d.ctid`},
 		{&result.PasswordResetChallenges, `WITH doomed AS (
 			SELECT ctid FROM password_reset_challenges
 			WHERE consumed_at IS NOT NULL OR expires_at <= CURRENT_TIMESTAMP
