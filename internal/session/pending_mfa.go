@@ -1,12 +1,14 @@
 package session
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"strings"
 	"time"
 
+	"github.com/DoMinhHHung/beebox/internal/applicationinstance"
 	"github.com/DoMinhHHung/beebox/internal/authentication"
 	"github.com/DoMinhHHung/beebox/internal/platform/publicid"
 )
@@ -15,6 +17,37 @@ type PendingMFA struct {
 	Token            string
 	ExpiresAt        time.Time
 	AvailableMethods []string
+}
+
+type PendingMFAContext struct {
+	ApplicationInstanceID applicationinstance.InternalID
+	PrimaryMethod         string
+	PrimaryContext        string
+}
+
+type PendingMFAContextLoader interface {
+	LoadPendingMFAContext(context.Context, string, [32]byte) (PendingMFAContext, error)
+}
+
+func ResolvePendingMFAContext(ctx context.Context, loader PendingMFAContextLoader, token string) (PendingMFAContext, error) {
+	if loader == nil || token == "" {
+		return PendingMFAContext{}, ErrInvalidCredentials
+	}
+	publicID, tokenHash, ok := parsePendingMFAToken(token)
+	if !ok {
+		return PendingMFAContext{}, ErrInvalidCredentials
+	}
+	out, err := loader.LoadPendingMFAContext(ctx, publicID, tokenHash)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return PendingMFAContext{}, ctxErr
+		}
+		return PendingMFAContext{}, ErrInvalidCredentials
+	}
+	if !out.ApplicationInstanceID.Valid() || out.PrimaryMethod == "" || out.PrimaryContext == "" {
+		return PendingMFAContext{}, ErrInvalidCredentials
+	}
+	return out, nil
 }
 
 func pendingMFAMethods(recoveryCodeAvailable bool) []string {
