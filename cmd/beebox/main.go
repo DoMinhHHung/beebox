@@ -166,9 +166,12 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 	base = httpapi.WithEmailOTP(base, integrationService, integrationStore, emailOTP, emailOTPSession)
 	base = httpapi.WithEmailLinks(base, integrationService, integrationStore, emailLink, emailLinkSession)
 	base = httpapi.WithPhoneSMS(base, integrationService, integrationStore, phoneSignupIssuer, phoneSignupSession, phoneSigninIssuer, phoneOTPSession)
+
+	var socialCore *authentication.SocialService
+	var socialCompletion *session.SocialCompletionService
 	if socialRegistry.Enabled() {
-		socialCore := authentication.NewSocialService(authStore, integrationStore, authStore, socialRegistry, socialProtector)
-		socialCompletion := session.NewSocialCompletionService(authStore, authStore, ring)
+		socialCore = authentication.NewSocialService(authStore, integrationStore, authStore, socialRegistry, socialProtector)
+		socialCompletion = session.NewSocialCompletionService(authStore, authStore, ring)
 		base = httpapi.WithSocialAuth(base, integrationService, integrationStore, socialCore, socialCompletion)
 		socialLinkCore := authentication.NewSocialLinkService(authStore, integrationStore, authStore, socialRegistry, socialProtector)
 		base = httpapi.WithSocialLinks(base, integrationService, integrationStore, sessionService, socialLinkCore)
@@ -196,7 +199,10 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 	base = httpapi.WithAccountManagement(base, integrationService, integrationStore, sessionService, accountCore)
 	reverificationCore := authentication.NewReverificationService(authStore)
 	base = httpapi.WithReverification(base, integrationService, integrationStore, sessionService, reverificationCore)
-	base = httpapi.WithHostedAuth(base, hostedOrigin, integrationService, integrationStore, emailLinkSession, authStore, totpCompletion, recoveryCompletion, authStore)
+	base = httpapi.WithHostedAuth(
+		base, hostedOrigin, integrationService, integrationStore, emailLinkSession, authStore,
+		totpCompletion, recoveryCompletion, authStore, socialCore, socialCompletion, socialProtector,
+	)
 	return httpapi.WithMetrics(base, recorder), nil
 }
 
