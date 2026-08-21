@@ -38,6 +38,8 @@ type TOTPAuthenticationFinalize struct {
 type TOTPAuthenticationResult struct {
 	UserPublicID        identity.PublicID
 	ApplicationPublicID applicationinstance.PublicID
+	PrimaryMethod       string
+	PrimaryContext      string
 }
 
 type TOTPAuthenticationPersistence interface {
@@ -95,5 +97,7 @@ func (s *TOTPService) CompletePendingAuthentication(
 	if err != nil {
 		return TOTPAuthenticationResult{}, mapTOTPError(ctx, err)
 	}
+	result.PrimaryMethod = snapshot.PrimaryMethod
+	result.PrimaryContext = snapshot.PrimaryContext
 	return result, nil
 }
