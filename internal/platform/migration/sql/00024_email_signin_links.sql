@@ -42,6 +42,13 @@ CREATE TABLE email_signin_links (
 CREATE INDEX email_signin_links_expiry_idx
     ON email_signin_links(expires_at, application_instance_id, email_identifier_id);
 
+ALTER TABLE pending_mfa_authentications
+    DROP CONSTRAINT pending_mfa_authentications_primary_method_check;
+ALTER TABLE pending_mfa_authentications
+    ADD CONSTRAINT pending_mfa_authentications_primary_method_check CHECK (
+        primary_method IN ('password','email_otp','email_link','phone_otp','social','passkey')
+    );
+
 ALTER TABLE public_auth_rate_limits
     DROP CONSTRAINT public_auth_rate_limits_operation_check;
 ALTER TABLE public_auth_rate_limits
