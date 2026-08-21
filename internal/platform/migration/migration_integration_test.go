@@ -32,11 +32,11 @@ func TestMigrationFirstApplyAndRerunAreIdempotent(t *testing.T) {
 	if err := firstAdapter.PingContext(ctx); err == nil || err.Error() != "sql: database is closed" {
 		t.Fatalf("first adapter remained open after Up: %v", err)
 	}
-	assertMigrationState(t, ctx, pool, 22)
+	assertMigrationState(t, ctx, pool, 23)
 	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
 		t.Fatalf("second Up() error = %v", err)
 	}
-	assertMigrationState(t, ctx, pool, 22)
+	assertMigrationState(t, ctx, pool, 23)
 	assertSchemaTables(t, ctx, pool)
 }
 
@@ -67,7 +67,7 @@ func TestConcurrentMigrationRunnersSerializeAndConverge(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	assertMigrationState(t, ctx, firstPool, 22)
+	assertMigrationState(t, ctx, firstPool, 23)
 	assertSchemaTables(t, ctx, firstPool)
 }
 
@@ -268,6 +268,7 @@ func assertSchemaTables(t *testing.T, ctx context.Context, pool *database.Pool) 
 		"password_credentials",
 		"password_reset_challenges",
 		"pending_mfa_authentications",
+		"phone_identifier_verification_challenges",
 		"phone_identifiers",
 		"phone_otp_signin_challenges",
 		"phone_signup_challenges",
