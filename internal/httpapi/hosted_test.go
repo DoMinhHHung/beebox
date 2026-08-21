@@ -257,7 +257,7 @@ func TestHostedSocialRoundTripKeepsPKCEAndDestinationServerProtected(t *testing.
 	}
 	redirects := hostedTestRedirects{allowed: map[string]bool{
 		"https://auth.example/auth/social/callback": true,
-		"https://app.example/complete":             true,
+		"https://app.example/complete":              true,
 	}}
 	attempts := &hostedTestSocialAttempts{}
 	exchange := &hostedTestSocialExchange{pair: session.TokenPair{
