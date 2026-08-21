@@ -137,7 +137,8 @@ func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 		"00020_recovery_codes.sql":                {Data: []byte(validMigration)},
 		"00021_reverification.sql":                {Data: []byte(validMigration)},
 		"00022_session_self_service.sql":          {Data: []byte(validMigration)},
-		"00023_failure_probe.sql": {Data: []byte(
+		"00023_identity_profile_self_service.sql": {Data: []byte(validMigration)},
+		"00024_failure_probe.sql": {Data: []byte(
 			"-- +goose Up\n" +
 				"-- " + secretMarker + "\n" +
 				"CREATE TABLE migration_failure_probe (id bigint PRIMARY KEY);\n" +
@@ -160,12 +161,12 @@ func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 	if probeTable.Valid {
 		t.Fatalf("failing migration left probe table %q", probeTable.String)
 	}
-	var versionTwentyThreeCount int
-	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM goose_db_version WHERE version_id = 23 AND is_applied").Scan(&versionTwentyThreeCount); err != nil {
-		t.Fatalf("query version 23 error = %v", err)
+	var versionTwentyFourCount int
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM goose_db_version WHERE version_id = 24 AND is_applied").Scan(&versionTwentyFourCount); err != nil {
+		t.Fatalf("query version 24 error = %v", err)
 	}
-	if versionTwentyThreeCount != 0 {
-		t.Fatalf("applied version 23 rows = %d, want 0", versionTwentyThreeCount)
+	if versionTwentyFourCount != 0 {
+		t.Fatalf("applied version 24 rows = %d, want 0", versionTwentyFourCount)
 	}
 }
 
