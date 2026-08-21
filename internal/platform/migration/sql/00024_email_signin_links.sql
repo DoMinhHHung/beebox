@@ -59,5 +59,7 @@ ALTER TABLE public_auth_rate_limits
         'email_otp_issue_global','email_otp_issue_identifier','email_otp_confirm_global','email_otp_confirm_identifier',
         'phone_signup_issue_global','phone_signup_issue_identifier','phone_signup_confirm_global','phone_signup_confirm_identifier',
         'phone_otp_issue_global','phone_otp_issue_identifier','phone_otp_confirm_global','phone_otp_confirm_identifier',
+        'social_attempt_global','social_attempt_application_provider','social_exchange_global','social_exchange_application',
+        'social_link_attempt_global','social_link_attempt_user_provider',
         'email_link_issue_global','email_link_issue_identifier','email_link_confirm_global','email_link_confirm_identifier'
     ));
