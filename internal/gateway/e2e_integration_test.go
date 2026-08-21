@@ -90,6 +90,9 @@ func TestGatewayIdentityPostgreSQLCriticalJourney(t *testing.T) {
 	}
 	integrationStore := applicationpostgres.NewIntegrationStore(pool)
 	integrations := applicationinstance.NewIntegrationService(integrationStore)
+	if _, err := integrations.AddAllowedOrigin(ctx, appA.InternalID, "http://public.example.test"); err != nil {
+		t.Fatal(err)
+	}
 	_, publishableA, err := integrations.CreateCredential(ctx, appA.InternalID, applicationinstance.CredentialKindPublishable)
 	if err != nil {
 		t.Fatal(err)
@@ -203,6 +206,7 @@ func gatewayRequest(t *testing.T, handler http.Handler, publishable, method, pat
 	}
 	if publishable != "" {
 		req.Header.Set(httpapi.PublishableKeyHeader, publishable)
+		req.Header.Set("Origin", "http://public.example.test")
 	}
 	for key, value := range headers {
 		req.Header.Set(key, value)
