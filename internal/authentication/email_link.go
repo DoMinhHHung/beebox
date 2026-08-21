@@ -99,9 +99,9 @@ type EmailLinkPersistence interface {
 }
 
 type EmailLinkService struct {
-	persistence EmailLinkPersistence
-	redirects   EmailLinkRedirectPolicy
-	delivery    EmailLinkDelivery
+	persistence  EmailLinkPersistence
+	redirects    EmailLinkRedirectPolicy
+	delivery     EmailLinkDelivery
 	hostedOrigin string
 }
 
