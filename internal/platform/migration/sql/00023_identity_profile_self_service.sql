@@ -97,6 +97,7 @@ CREATE INDEX phone_identifiers_application_user_created_public_idx
 -- so explicit primary switching is not intercepted. Under concurrent first
 -- verification, the partial primary unique indexes serialize the winner and a
 -- losing transaction rolls back without exposing a verified primary-less row.
+-- +goose StatementBegin
 CREATE FUNCTION beebox_assign_first_email_primary() RETURNS trigger
 LANGUAGE plpgsql
 AS $$
@@ -116,6 +117,7 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+-- +goose StatementEnd
 
 CREATE TRIGGER email_identifiers_first_primary_insert
     BEFORE INSERT ON email_identifiers
@@ -124,6 +126,7 @@ CREATE TRIGGER email_identifiers_first_primary_verify
     BEFORE UPDATE OF verified_at ON email_identifiers
     FOR EACH ROW EXECUTE FUNCTION beebox_assign_first_email_primary();
 
+-- +goose StatementBegin
 CREATE FUNCTION beebox_assign_first_phone_primary() RETURNS trigger
 LANGUAGE plpgsql
 AS $$
@@ -143,6 +146,7 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+-- +goose StatementEnd
 
 CREATE TRIGGER phone_identifiers_first_primary_insert
     BEFORE INSERT ON phone_identifiers
