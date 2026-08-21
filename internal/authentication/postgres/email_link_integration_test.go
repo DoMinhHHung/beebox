@@ -187,7 +187,7 @@ func TestEmailLinkAuditFailureRollsBackConsumptionAndSession(t *testing.T) {
 	f := newEmailLinkFixture(t, "email_link_audit_rollback", "eln_123e4567-e89b-42d3-a456-426614174205")
 	db := f.store.pool.OpenSQLDB()
 	defer db.Close()
-	if _, err := db.ExecContext(f.ctx, `ALTER TABLE audit_events ADD CONSTRAINT audit_events_test_reject_email_link CHECK (source <> 'internal_email_link')`); err != nil {
+	if _, err := db.ExecContext(f.ctx, `ALTER TABLE audit_events ADD CONSTRAINT audit_events_test_reject_email_link CHECK (source <> 'internal_email_link') NOT VALID`); err != nil {
 		t.Fatal(err)
 	}
 	_, err := f.store.FinalizeEmailLink(f.ctx, f.finalize(t, true, "ses_123e4567-e89b-42d3-a456-426614174206"))
