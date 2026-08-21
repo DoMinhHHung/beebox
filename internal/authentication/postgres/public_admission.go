@@ -99,6 +99,14 @@ func (s *Store) AllowPhoneOTPConfirm(ctx context.Context, appID applicationinsta
 	return s.allowPublicPair(ctx, appID, "phone_otp_confirm_global", [32]byte{20}, 100, time.Minute, "phone_otp_confirm_identifier", fingerprint, 5, 15*time.Minute, authentication.ErrPhoneOTPPersistence)
 }
 
+func (s *Store) AllowEmailLinkIssue(ctx context.Context, appID applicationinstance.InternalID, fingerprint [32]byte) error {
+	return s.allowPublicPair(ctx, appID, "email_link_issue_global", [32]byte{21}, 100, time.Minute, "email_link_issue_identifier", fingerprint, 10, 15*time.Minute, authentication.ErrEmailLinkPersistence)
+}
+
+func (s *Store) AllowEmailLinkConfirm(ctx context.Context, appID applicationinstance.InternalID, fingerprint [32]byte) error {
+	return s.allowPublicPair(ctx, appID, "email_link_confirm_global", [32]byte{22}, 100, time.Minute, "email_link_confirm_identifier", fingerprint, 10, 15*time.Minute, authentication.ErrEmailLinkPersistence)
+}
+
 func (s *Store) allowPublicPair(ctx context.Context, appID applicationinstance.InternalID, globalOp string, globalHash [32]byte, globalLimit int, globalWindow time.Duration, identifierOp string, identifierHash [32]byte, identifierLimit int, identifierWindow time.Duration, persistenceErr error) error {
 	if s == nil || s.pool == nil || !appID.Valid() {
 		return persistenceErr
