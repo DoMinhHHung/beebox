@@ -5,10 +5,8 @@ package migration
 import (
 	"context"
 	"crypto/sha256"
-	"io/fs"
 	"regexp"
 	"testing"
-	"testing/fstest"
 	"time"
 
 	applicationpostgres "github.com/DoMinhHHung/beebox/internal/applicationinstance/postgres"
@@ -20,33 +18,14 @@ func TestPasskeyMigrationUpgradesVersion17(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	sources, err := fs.Sub(embeddedSQL, "sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	entries, err := fs.ReadDir(sources, ".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	version17 := fstest.MapFS{}
-	for _, entry := range entries {
-		if entry.Name() == "00018_passkeys.sql" || entry.Name() == "00019_totp_mfa.sql" || entry.Name() == "00020_recovery_codes.sql" || entry.Name() == "00021_reverification.sql" || entry.Name() == "00022_session_self_service.sql" {
-			continue
-		}
-		data, err := fs.ReadFile(sources, entry.Name())
-		if err != nil {
-			t.Fatal(err)
-		}
-		version17[entry.Name()] = &fstest.MapFile{Data: data}
-	}
-	if err := upWithSources(ctx, pool.OpenSQLDB(), version17); err != nil {
+	if err := upWithSources(ctx, pool.OpenSQLDB(), migrationSourcesThrough(t, 17)); err != nil {
 		t.Fatal(err)
 	}
 	assertMigrationState(t, ctx, pool, 17)
 	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
 		t.Fatalf("upgrade through current schema: %v", err)
 	}
-	assertMigrationState(t, ctx, pool, 22)
+	assertMigrationState(t, ctx, pool, 23)
 
 	app, err := applicationpostgres.New(pool).Create(ctx)
 	if err != nil {
