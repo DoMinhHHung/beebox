@@ -63,6 +63,18 @@ func TestOrganizationAuthorizationMutationsRollbackWhenRequiredAuditFails(t *tes
 	}
 	assertAuthorizationDecision(t, f, f.appA.InternalID, f.userA.PublicID, f.orgA.ID, "audit", "read", organization.DecisionAllow)
 
+	// Membership removal now explicitly deletes the subordinate assignment before
+	// deleting the membership. If its required membership audit fails, both
+	// deletes must roll back together so the previous authority remains intact.
+	if err := f.membership.RemoveMembership(f.ctx, badActor, f.membershipA.ID); !errors.Is(err, organization.ErrPersistence) {
+		t.Fatalf("membership removal audit failure error=%v", err)
+	}
+	if _, err := f.membership.GetMembership(f.ctx, f.appA.InternalID, f.membershipA.ID); err != nil {
+		t.Fatalf("membership removal audit failure did not roll membership back: %v", err)
+	}
+	assertAssignmentCount(t, f, f.membershipA.ID, 1)
+	assertAuthorizationDecision(t, f, f.appA.InternalID, f.userA.PublicID, f.orgA.ID, "audit", "read", organization.DecisionAllow)
+
 	assertAuthorizationAudit(t, f, grantContext, audit.ActionOrganizationRolePermissionGranted, audit.ResourceCategoryOrganizationRolePermission, string(role.ID), "", string(permission.ID), nil)
 	setContext := mutationContext(t, f.appA.InternalID, f.actorA)
 	if err := f.authorization.SetMembershipRole(f.ctx, setContext, f.membershipA2.ID, otherRole.ID); err != nil {
