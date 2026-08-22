@@ -41,7 +41,14 @@ Gateway does **not** connect to the product database, run migrations, verify pas
 
 Identity keeps these behaviors together because their correctness paths share security-sensitive PostgreSQL transactions and concurrency/replay invariants. It also owns the existing migration chain. Identity must remain private/internal in deployment, but it still enforces authn/authz/tenant/Origin/CSRF/redirect rules itself; Gateway network position is never authorization evidence.
 
-Identity accepts Gateway correlation only when the dedicated internal HMAC proof verifies in constant time. Missing/invalid proof or a direct caller's valid-looking `X-Request-ID` causes Identity to generate its own fresh correlation. One inbound HTTP request uses one correlation from request context across the Phase 1/2 wrapper composition.
+At its outer HTTP boundary Identity separates two observability concepts:
+
+- the **public/wire request ID**, used only for response `X-Request-ID` and canonical `error.request_id`;
+- the **trusted audit correlation**, passed into audit-sensitive application behavior.
+
+With matching Gateway/Identity correlation keys, valid HMAC provenance makes both values the Gateway-generated ID `G`. During a complete, well-formed mixed-key Gateway envelope, Identity retains `G` only as the non-authoritative public diagnostic ID while minting a fresh audit correlation `I`. The client therefore still sees `X-Request-ID: G` and `error.request_id: G`, but Identity audit evidence uses `I != G`. A direct or malformed Identity request mints fresh local public and audit values; a client `X-Request-ID` alone never selects audit correlation.
+
+Neither public diagnostic ID nor trusted audit correlation can affect authentication, tenant selection, sessions, MFA or authorization. Phase 1/2 wrapper composition consumes the trusted audit correlation from request context while public error production consumes the separate public/wire ID.
 
 `cmd/beebox` is retained only as a schema-compatible migration/rollback compatibility path during this transition. New public topology uses Gateway + Identity.
 
@@ -70,8 +77,9 @@ BeeBox does not claim principal merge, cross-application identity transfer, Ente
 - Identifier equality never implicitly links/adopts/transfers principals.
 - PostgreSQL constraints/transactions remain the current correctness authority for ownership, uniqueness, replay, admission and security-state mutation.
 - Gateway has no product DB authority and direct Identity exposure must not be used to bypass the public edge.
-- Public request IDs are always edge-generated; client request/correlation headers are never trusted as audit authority.
+- Public request IDs are always edge-generated at Gateway; client request/correlation headers are never trusted as audit authority.
 - Internal Gateway -> Identity correlation uses a dedicated 32-byte HMAC key and never substitutes for application/session/MFA/Origin/CSRF/tenant/authorization checks.
+- Mixed-key provenance may intentionally split public request ID `G` from trusted audit correlation `I`; the public diagnostic ID remains non-authoritative.
 - Active TOTP blocks ordinary session/access/refresh issuance until MFA completes.
 - Sensitive mutations use explicit reverification where required.
 - Browser refresh credentials remain in hardened app-specific `__Host-` cookies and are not duplicated into JSON.
@@ -99,6 +107,8 @@ Stable edge codes are:
 - 504 `upstream_timeout`
 
 Safe messages never expose internal hostnames, upstream URLs, Go network errors, credentials or timeout implementation detail. `error.request_id` matches the single public `X-Request-ID` header.
+
+Identity canonical errors also use the public/wire request ID, not trusted audit correlation. That keeps public header/body equality intact during a mixed-key window without requiring Gateway to parse or rewrite arbitrary upstream JSON.
 
 Current Phase 1/2 request bodies are bounded API payloads, not streaming uploads. Gateway rejects a known oversized `Content-Length` immediately and otherwise pre-reads at most `MaxBodyBytes + 1` before dispatch. Unknown/chunked bodies over the limit never reach Identity; accepted bodies are proxied byte-for-byte. A future genuine streaming/upload API requires a separate contract instead of bypassing this behavior.
 
@@ -147,7 +157,7 @@ Earlier ADRs 0001-0007 and Phase 2 threat models remain authoritative for the be
 
 ## Local microservice quickstart
 
-The reference Compose topology contains `gateway`, `identity`, PostgreSQL 17 and Mailpit. Only Gateway (`localhost:8080`) and Mailpit UI (`localhost:8025`) are host-published. Identity and PostgreSQL are private to the Compose networks, and Gateway shares no network with PostgreSQL.
+The reference Compose topology contains `gateway`, `identity`, PostgreSQL 17 and Mailpit. Host publications are Gateway (`localhost:8080`), Mailpit UI (`http://localhost:8025`), and Mailpit SMTP **on loopback only** (`127.0.0.1:1025`) for host-run Identity development. Identity and PostgreSQL themselves are private to the Compose networks, and Gateway shares no network with PostgreSQL.
 
 The Compose file includes one fixed **local-only development** `BEEBOX_INTERNAL_CORRELATION_KEY` shared by Gateway and Identity so the topology is reproducible. Do not use that value in production. Production must use independently generated high-entropy 32-byte key material encoded as unpadded base64url and managed as a secret.
 
@@ -197,14 +207,24 @@ Save the emitted application/publishable/secret credentials outside source contr
 
 ### Local email capture
 
-Mailpit UI is published on `http://localhost:8025`, but containerized Identity is intentionally not configured to send plaintext SMTP to `mailpit:1025`: BeeBox's `insecure_localhost` SMTP mode is loopback-only by design.
+Mailpit exposes two development endpoints on the host:
 
-For local email-flow testing either:
+- UI: `http://localhost:8025`;
+- SMTP for **host-run Identity only**: `127.0.0.1:1025`.
 
-1. run Identity on the host with `BEEBOX_SMTP_ADDR=127.0.0.1:1025`, `BEEBOX_SMTP_FROM=beebox@example.test`, `BEEBOX_SMTP_TLS_MODE=insecure_localhost`; or
-2. configure Identity with a TLS/STARTTLS-capable SMTP endpoint.
+The SMTP mapping is explicitly bound to `127.0.0.1`, not `0.0.0.0`, so the reference Compose topology does not expose plaintext development SMTP to LAN/public interfaces.
 
-Do not weaken the SMTP trust rule just for container convenience.
+For a host-run Identity email-flow test:
+
+```sh
+export BEEBOX_SMTP_ADDR='127.0.0.1:1025'
+export BEEBOX_SMTP_FROM='beebox@example.test'
+export BEEBOX_SMTP_TLS_MODE='insecure_localhost'
+```
+
+Containerized Identity must **not** use `insecure_localhost` against `mailpit:1025`; that destination is not loopback and the SMTP adapter's loopback-only trust rule intentionally rejects it. Use a TLS/STARTTLS-capable SMTP endpoint for containerized Identity instead. Do not weaken the SMTP trust rule for Compose convenience.
+
+Mailpit is a local development aid only and is not a production dependency.
 
 ## Running processes without Compose
 
@@ -238,7 +258,7 @@ go run ./cmd/beebox-gateway
 Required:
 
 - `BEEBOX_IDENTITY_UPSTREAM_URL` — absolute `http`/`https` Identity base URL without userinfo/query/fragment/base path.
-- `BEEBOX_INTERNAL_CORRELATION_KEY` — dedicated raw 32-byte high-entropy key encoded as unpadded base64url; the serving Identity process must use the same value.
+- `BEEBOX_INTERNAL_CORRELATION_KEY` — dedicated raw 32-byte high-entropy key encoded as unpadded base64url; the serving Identity process should normally use the same value.
 
 Optional validated bounds:
 
@@ -260,7 +280,7 @@ Gateway rejects configurations where read timeout is below read-header timeout o
 
 Identity uses the existing BeeBox database/provider/signing/encryption settings. `BEEBOX_IDENTITY_HTTP_ADDR` defaults to `127.0.0.1:8081`. Existing `BEEBOX_HTTP_ADDR` is preserved for compatibility.
 
-Serving Identity also requires the same valid `BEEBOX_INTERNAL_CORRELATION_KEY` as its Gateway peer so it can authenticate correlation provenance. This key is not product authorization authority and is never reused as another BeeBox security primitive.
+Serving Identity also requires a valid `BEEBOX_INTERNAL_CORRELATION_KEY` so it can authenticate Gateway audit-correlation provenance. Normal operation uses the same key as the serving Gateway. This key is not product authorization authority and is never reused as another BeeBox security primitive.
 
 Serve mode does not auto-migrate. Migrations are explicitly run by Identity and historical merged migration files are not rewritten. ADR 0008 itself needs no schema migration.
 
@@ -303,9 +323,11 @@ Rotation is additive; retain historical keys while persisted ciphertext referenc
 
 ## Internal correlation-key rotation
 
-`BEEBOX_INTERNAL_CORRELATION_KEY` rotation is coordinated between Gateway and Identity. Deploy the matching new key to both sides of the hop. During any mixed-key window Identity must reject the invalid supplied proof and mint a fresh local correlation; never add a fallback that trusts unsigned/shape-only request IDs just to preserve trace continuity.
+`BEEBOX_INTERNAL_CORRELATION_KEY` rotation is coordinated between Gateway and Identity. Deploy matching new key material to both sides of the hop.
 
-The HMAC authenticates only correlation metadata. Deployments that cross an untrusted internal network still need an appropriate transport-security design; the correlation MAC is not a substitute for TLS/mTLS where required.
+During a brief mixed-key window, Identity must reject the Gateway HMAC as trusted audit provenance. For a complete canonical Gateway envelope, the Gateway-generated public diagnostic ID `G` remains stable in the wire response while Identity generates fresh trusted audit correlation `I`. Public `X-Request-ID` and canonical `error.request_id` both remain `G`; audit evidence uses `I != G`. This intentionally splits trace/audit continuity until operators restore matching keys. Never add a fallback that promotes unsigned/shape-only request IDs to audit authority.
+
+The HMAC authenticates only trusted audit-correlation provenance. Deployments that cross an untrusted internal network still need an appropriate transport-security design; the correlation MAC is not a substitute for TLS/mTLS where required.
 
 ## Rollout and rollback
 
@@ -324,13 +346,15 @@ go vet ./...
 govulncheck ./...
 go test ./api/openapi
 go test ./sdk/go
+go test ./internal/requestcorrelation -count=1
+go test ./internal/httpapi -count=1
 go test ./internal/gateway -count=1
 go test ./...
 go test -race ./...
 ```
 
-CI also runs repeated social-provider contract/race tests, the full PostgreSQL 17 integration suite including `./internal/gateway`, `docker compose config`, topology ownership assertions and independent Docker builds for both service targets.
+CI also runs repeated social-provider contract/race tests, the full PostgreSQL 17 integration suite including `./internal/gateway`, `docker compose config --format json`, topology ownership assertions, Mailpit loopback SMTP normalized-port assertions, an actual host TCP reachability probe for `127.0.0.1:1025`, and independent Docker builds for both service targets.
 
-Gateway-focused tests cover canonical SDK-decodable 413/502/504, client request-ID/internal-header spoof rejection, authenticated Gateway -> Identity correlation, direct-Identity invalid-proof fallback, exactly-one public request ID, actual-server timeout/deadline behavior, committed-mutation ambiguity without retry, unknown/chunked body bounds, exact-limit preservation and cancellation/cleanup.
+Gateway-focused tests cover canonical SDK-decodable 413/502/504, client request-ID/internal-header spoof rejection, matching-key authenticated Gateway -> Identity correlation, mixed-key public-ID/audit-correlation divergence with canonical Identity error header/body equality, direct-Identity malformed/invalid-proof fallback, exactly-one public request ID, actual-server timeout/deadline behavior, committed-mutation ambiguity without retry, unknown/chunked body bounds, exact-limit preservation and cancellation/cleanup.
 
 Phase 1/2 security coverage remains required after the service split; architecture does not justify deleting or weakening old tests.
