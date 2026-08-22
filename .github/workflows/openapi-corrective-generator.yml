@@ -1,0 +1,137 @@
+name: OpenAPI corrective generator
+
+on:
+  push:
+    branches:
+      - refactor/microservices-phase3-baseline
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: refactor/microservices-phase3-baseline
+          fetch-depth: 0
+
+      - name: Apply Gateway edge responses
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('api/openapi/v1.yaml')
+          text = path.read_text(encoding='utf-8')
+          lines = text.splitlines()
+          out = []
+          current_path = ''
+          edge_refs = [
+              "        '413': {$ref: '#/components/responses/RequestTooLarge'}",
+              "        '502': {$ref: '#/components/responses/UpstreamUnavailable'}",
+              "        '504': {$ref: '#/components/responses/UpstreamTimeout'}",
+          ]
+          for index, line in enumerate(lines):
+              if line.startswith('  /') and line.endswith(':'):
+                  current_path = line.strip()[:-1]
+              elif line == 'components:':
+                  current_path = ''
+              out.append(line)
+              if current_path.startswith('/v1/') and line == '      responses:':
+                  following = '\n'.join(lines[index + 1:index + 12])
+                  for edge in edge_refs:
+                      if edge.strip() not in following:
+                          out.append(edge)
+          text = '\n'.join(out) + '\n'
+
+          if 'GatewayRequestTooLargeErrorResponse:' not in text:
+              schemas = '\n'.join([
+                  '    GatewayRequestTooLargeErrorResponse:',
+                  '      type: object',
+                  '      additionalProperties: false',
+                  '      required: [error]',
+                  '      properties:',
+                  '        error:',
+                  '          type: object',
+                  '          additionalProperties: false',
+                  '          required: [code, message, request_id]',
+                  '          properties:',
+                  '            code: {type: string, const: request_too_large}',
+                  '            message: {type: string}',
+                  "            request_id: {type: string, pattern: '^[0-9a-f]{32}$'}",
+                  '    GatewayUpstreamUnavailableErrorResponse:',
+                  '      type: object',
+                  '      additionalProperties: false',
+                  '      required: [error]',
+                  '      properties:',
+                  '        error:',
+                  '          type: object',
+                  '          additionalProperties: false',
+                  '          required: [code, message, request_id]',
+                  '          properties:',
+                  '            code: {type: string, const: upstream_unavailable}',
+                  '            message: {type: string}',
+                  "            request_id: {type: string, pattern: '^[0-9a-f]{32}$'}",
+                  '    GatewayUpstreamTimeoutErrorResponse:',
+                  '      type: object',
+                  '      additionalProperties: false',
+                  '      required: [error]',
+                  '      properties:',
+                  '        error:',
+                  '          type: object',
+                  '          additionalProperties: false',
+                  '          required: [code, message, request_id]',
+                  '          properties:',
+                  '            code: {type: string, const: upstream_timeout}',
+                  '            message: {type: string}',
+                  "            request_id: {type: string, pattern: '^[0-9a-f]{32}$'}",
+              ]) + '\n'
+              text = text.replace('  responses:\n', schemas + '  responses:\n', 1)
+
+          if '    RequestTooLarge:\n' not in text:
+              responses = '\n'.join([
+                  '    RequestTooLarge:',
+                  '      description: >-',
+                  '        Gateway rejected the bounded API request before dispatch because its body exceeded the configured limit. The canonical BeeBox error code is request_too_large.',
+                  '      headers:',
+                  "        X-Request-ID: {$ref: '#/components/headers/RequestID'}",
+                  '      content:',
+                  '        application/json:',
+                  "          schema: {$ref: '#/components/schemas/GatewayRequestTooLargeErrorResponse'}",
+                  '    UpstreamUnavailable:',
+                  '      description: >-',
+                  '        Gateway could not obtain a response from Identity. Internal hostnames, upstream URLs and network implementation details are never exposed. The canonical BeeBox error code is upstream_unavailable.',
+                  '      headers:',
+                  "        X-Request-ID: {$ref: '#/components/headers/RequestID'}",
+                  '      content:',
+                  '        application/json:',
+                  "          schema: {$ref: '#/components/schemas/GatewayUpstreamUnavailableErrorResponse'}",
+                  '    UpstreamTimeout:',
+                  '      description: >-',
+                  '        Gateway did not receive the upstream response before its bounded request timeout. The canonical BeeBox error code is upstream_timeout. For POST, PUT, PATCH or DELETE after dispatch, OUTCOME MAY BE UNKNOWN because Identity may already have committed. Do not blindly replay a non-idempotent mutation; when the operation supports an idempotency key, reuse the same idempotency key, otherwise reconcile authoritative state before deciding whether to retry.',
+                  '      headers:',
+                  "        X-Request-ID: {$ref: '#/components/headers/RequestID'}",
+                  '      content:',
+                  '        application/json:',
+                  "          schema: {$ref: '#/components/schemas/GatewayUpstreamTimeoutErrorResponse'}",
+              ]) + '\n'
+              text = text.replace('    Accepted:\n', responses + '    Accepted:\n', 1)
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+          git diff --check
+          if git diff --quiet -- api/openapi/v1.yaml; then
+            echo "OpenAPI already contains Gateway edge responses"
+            exit 0
+          fi
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add api/openapi/v1.yaml
+          git commit -m "docs: document gateway edge responses"
+          git push origin HEAD:refactor/microservices-phase3-baseline
