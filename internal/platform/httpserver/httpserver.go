@@ -17,158 +17,89 @@ const (
 	idleTimeout       = 60 * time.Second
 )
 
+type ServerConfig struct {
+	ReadHeaderTimeout time.Duration
+	ReadTimeout       time.Duration
+	WriteTimeout      time.Duration
+	IdleTimeout       time.Duration
+}
+
+func DefaultServerConfig() ServerConfig {
+	return ServerConfig{ReadHeaderTimeout: readHeaderTimeout, ReadTimeout: readTimeout, WriteTimeout: writeTimeout, IdleTimeout: idleTimeout}
+}
+
 type statusResponse struct {
 	Status string `json:"status"`
 }
-
 type errorResponse struct {
 	Error string `json:"error"`
 }
-
 type ReadinessCheck func(context.Context) error
 
-func NewHandler(
-	checkReadiness ReadinessCheck,
-	readinessTimeout time.Duration,
-) http.Handler {
+func NewHandler(checkReadiness ReadinessCheck, readinessTimeout time.Duration) http.Handler {
 	mux := http.NewServeMux()
-
-	mux.Handle(
-		"/health/live",
-		requireMethod(http.MethodGet, healthHandler("ok")),
-	)
-
-	mux.Handle(
-		"/health/ready",
-		requireMethod(
-			http.MethodGet,
-			readinessHandler(checkReadiness, readinessTimeout),
-		),
-	)
-
+	mux.Handle("/health/live", requireMethod(http.MethodGet, healthHandler("ok")))
+	mux.Handle("/health/ready", requireMethod(http.MethodGet, readinessHandler(checkReadiness, readinessTimeout)))
 	return mux
 }
-
 func New(addr string, handler http.Handler) *http.Server {
-	return &http.Server{
-		Addr:              addr,
-		Handler:           handler,
-		ReadHeaderTimeout: readHeaderTimeout,
-		ReadTimeout:       readTimeout,
-		WriteTimeout:      writeTimeout,
-		IdleTimeout:       idleTimeout,
-	}
+	return NewWithConfig(addr, handler, DefaultServerConfig())
+}
+func NewWithConfig(addr string, handler http.Handler, cfg ServerConfig) *http.Server {
+	return &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: cfg.ReadHeaderTimeout, ReadTimeout: cfg.ReadTimeout, WriteTimeout: cfg.WriteTimeout, IdleTimeout: cfg.IdleTimeout}
 }
 
-func Run(
-	ctx context.Context,
-	server *http.Server,
-	listener net.Listener,
-	shutdownTimeout time.Duration,
-) error {
+func Run(ctx context.Context, server *http.Server, listener net.Listener, shutdownTimeout time.Duration) error {
 	serveErr := make(chan error, 1)
-
-	go func() {
-		serveErr <- server.Serve(listener)
-	}()
-
+	go func() { serveErr <- server.Serve(listener) }()
 	select {
 	case err := <-serveErr:
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
-
 		return fmt.Errorf("serve HTTP: %w", err)
-
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(
-			context.WithoutCancel(ctx),
-			shutdownTimeout,
-		)
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 		defer cancel()
-
 		shutdownErr := server.Shutdown(shutdownCtx)
 		err := <-serveErr
-
 		if shutdownErr != nil {
-			return fmt.Errorf(
-				"shutdown HTTP server: %w",
-				shutdownErr,
-			)
+			return fmt.Errorf("shutdown HTTP server: %w", shutdownErr)
 		}
-
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return fmt.Errorf(
-				"serve HTTP during shutdown: %w",
-				err,
-			)
+			return fmt.Errorf("serve HTTP during shutdown: %w", err)
 		}
-
 		return nil
 	}
 }
-
 func requireMethod(method string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != method {
 			w.Header().Set("Allow", method)
-
-			writeJSON(
-				w,
-				http.StatusMethodNotAllowed,
-				errorResponse{Error: "method_not_allowed"},
-			)
-
+			writeJSON(w, http.StatusMethodNotAllowed, errorResponse{Error: "method_not_allowed"})
 			return
 		}
-
 		next.ServeHTTP(w, r)
 	})
 }
-
 func healthHandler(status string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(
-			w,
-			http.StatusOK,
-			statusResponse{Status: status},
-		)
+		writeJSON(w, http.StatusOK, statusResponse{Status: status})
 	})
 }
-
-func readinessHandler(
-	check ReadinessCheck,
-	timeout time.Duration,
-) http.Handler {
+func readinessHandler(check ReadinessCheck, timeout time.Duration) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), timeout)
 		defer cancel()
-
 		if err := check(ctx); err != nil {
-			writeJSON(
-				w,
-				http.StatusServiceUnavailable,
-				statusResponse{Status: "not_ready"},
-			)
-
+			writeJSON(w, http.StatusServiceUnavailable, statusResponse{Status: "not_ready"})
 			return
 		}
-
-		writeJSON(
-			w,
-			http.StatusOK,
-			statusResponse{Status: "ready"},
-		)
+		writeJSON(w, http.StatusOK, statusResponse{Status: "ready"})
 	})
 }
-
 func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set(
-		"Content-Type",
-		"application/json; charset=utf-8",
-	)
-
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-
 	_ = json.NewEncoder(w).Encode(value)
 }

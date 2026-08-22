@@ -25,17 +25,14 @@ func run(logger *slog.Logger, lookup gateway.LookupEnv) error {
 	if err != nil {
 		return err
 	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-
 	listener, err := net.Listen("tcp", cfg.ListenAddress)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = listener.Close() }()
-
-	server := httpserver.New(cfg.ListenAddress, gateway.NewHandler(cfg, logger))
+	server := httpserver.NewWithConfig(cfg.ListenAddress, gateway.NewHandler(cfg, logger), httpserver.ServerConfig{ReadHeaderTimeout: cfg.ReadHeaderTimeout, ReadTimeout: cfg.ReadTimeout, WriteTimeout: cfg.WriteTimeout, IdleTimeout: cfg.IdleConnTimeout})
 	logger.Info("BeeBox Gateway starting", "address", listener.Addr().String(), "identity_upstream", cfg.IdentityBaseURL.Redacted())
 	if err := httpserver.Run(ctx, server, listener, cfg.ShutdownTimeout); err != nil {
 		return err

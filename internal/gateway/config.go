@@ -6,18 +6,29 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/DoMinhHHung/beebox/internal/requestcorrelation"
 )
 
 const (
-	defaultListenAddress               = ":8080"
-	defaultConnectTimeout              = 3 * time.Second
-	defaultResponseHeaderTimeout       = 10 * time.Second
-	defaultRequestTimeout              = 15 * time.Second
-	defaultReadinessTimeout            = 2 * time.Second
-	defaultShutdownTimeout             = 10 * time.Second
-	defaultIdleConnTimeout             = 60 * time.Second
-	defaultMaxBodyBytes          int64 = 1 << 20
-	maxConfiguredBodyBytes       int64 = 16 << 20
+	defaultListenAddress                     = ":8080"
+	defaultConnectTimeout                    = 3 * time.Second
+	defaultResponseHeaderTimeout             = 10 * time.Second
+	defaultRequestTimeout                    = 15 * time.Second
+	defaultReadinessTimeout                  = 2 * time.Second
+	defaultShutdownTimeout                   = 10 * time.Second
+	defaultIdleConnTimeout                   = 60 * time.Second
+	defaultReadHeaderTimeout                 = 5 * time.Second
+	defaultReadTimeout                       = 10 * time.Second
+	defaultWriteTimeout                      = 30 * time.Second
+	minimumConfiguredTimeout                 = 100 * time.Millisecond
+	maximumRequestTimeout                    = 30 * time.Second
+	maximumReadTimeout                       = 30 * time.Second
+	maximumWriteTimeout                      = 65 * time.Second
+	maximumGeneralTimeout                    = 5 * time.Minute
+	serverWriteSafetyMargin                  = 5 * time.Second
+	defaultMaxBodyBytes                int64 = 1 << 20
+	maxConfiguredBodyBytes             int64 = 16 << 20
 )
 
 type LookupEnv func(string) (string, bool)
@@ -25,12 +36,16 @@ type LookupEnv func(string) (string, bool)
 type Config struct {
 	ListenAddress         string
 	IdentityBaseURL       *url.URL
+	CorrelationKey        requestcorrelation.Key
 	ConnectTimeout        time.Duration
 	ResponseHeaderTimeout time.Duration
 	RequestTimeout        time.Duration
 	ReadinessTimeout      time.Duration
 	ShutdownTimeout       time.Duration
 	IdleConnTimeout       time.Duration
+	ReadHeaderTimeout     time.Duration
+	ReadTimeout           time.Duration
+	WriteTimeout          time.Duration
 	MaxBodyBytes          int64
 }
 
@@ -47,6 +62,9 @@ func LoadConfig(lookup LookupEnv) (Config, error) {
 		ReadinessTimeout:      defaultReadinessTimeout,
 		ShutdownTimeout:       defaultShutdownTimeout,
 		IdleConnTimeout:       defaultIdleConnTimeout,
+		ReadHeaderTimeout:     defaultReadHeaderTimeout,
+		ReadTimeout:           defaultReadTimeout,
+		WriteTimeout:          defaultWriteTimeout,
 		MaxBodyBytes:          defaultMaxBodyBytes,
 	}
 
@@ -70,29 +88,57 @@ func LoadConfig(lookup LookupEnv) (Config, error) {
 	}
 	cfg.IdentityBaseURL = upstream
 
-	if cfg.ConnectTimeout, err = loadPositiveDuration(lookup, "BEEBOX_GATEWAY_CONNECT_TIMEOUT", cfg.ConnectTimeout); err != nil {
+	key, err := requestcorrelation.LoadKey(requestcorrelation.LookupEnv(lookup))
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid %s", requestcorrelation.KeyEnvironmentVariable)
+	}
+	cfg.CorrelationKey = key
+
+	if cfg.ConnectTimeout, err = loadBoundedDuration(lookup, "BEEBOX_GATEWAY_CONNECT_TIMEOUT", cfg.ConnectTimeout, minimumConfiguredTimeout, maximumGeneralTimeout); err != nil {
 		return Config{}, err
 	}
-	if cfg.ResponseHeaderTimeout, err = loadPositiveDuration(lookup, "BEEBOX_GATEWAY_RESPONSE_HEADER_TIMEOUT", cfg.ResponseHeaderTimeout); err != nil {
+	if cfg.ResponseHeaderTimeout, err = loadBoundedDuration(lookup, "BEEBOX_GATEWAY_RESPONSE_HEADER_TIMEOUT", cfg.ResponseHeaderTimeout, minimumConfiguredTimeout, maximumGeneralTimeout); err != nil {
 		return Config{}, err
 	}
-	if cfg.RequestTimeout, err = loadPositiveDuration(lookup, "BEEBOX_GATEWAY_REQUEST_TIMEOUT", cfg.RequestTimeout); err != nil {
+	if cfg.RequestTimeout, err = loadBoundedDuration(lookup, "BEEBOX_GATEWAY_REQUEST_TIMEOUT", cfg.RequestTimeout, minimumConfiguredTimeout, maximumRequestTimeout); err != nil {
 		return Config{}, err
 	}
-	if cfg.ReadinessTimeout, err = loadPositiveDuration(lookup, "BEEBOX_GATEWAY_READINESS_TIMEOUT", cfg.ReadinessTimeout); err != nil {
+	if cfg.ReadinessTimeout, err = loadBoundedDuration(lookup, "BEEBOX_GATEWAY_READINESS_TIMEOUT", cfg.ReadinessTimeout, minimumConfiguredTimeout, maximumGeneralTimeout); err != nil {
 		return Config{}, err
 	}
-	if cfg.ShutdownTimeout, err = loadPositiveDuration(lookup, "BEEBOX_GATEWAY_SHUTDOWN_TIMEOUT", cfg.ShutdownTimeout); err != nil {
+	if cfg.ShutdownTimeout, err = loadBoundedDuration(lookup, "BEEBOX_GATEWAY_SHUTDOWN_TIMEOUT", cfg.ShutdownTimeout, minimumConfiguredTimeout, maximumGeneralTimeout); err != nil {
 		return Config{}, err
 	}
-	if cfg.IdleConnTimeout, err = loadPositiveDuration(lookup, "BEEBOX_GATEWAY_IDLE_CONN_TIMEOUT", cfg.IdleConnTimeout); err != nil {
+	if cfg.IdleConnTimeout, err = loadBoundedDuration(lookup, "BEEBOX_GATEWAY_IDLE_CONN_TIMEOUT", cfg.IdleConnTimeout, minimumConfiguredTimeout, maximumGeneralTimeout); err != nil {
+		return Config{}, err
+	}
+	if cfg.ReadHeaderTimeout, err = loadBoundedDuration(lookup, "BEEBOX_GATEWAY_READ_HEADER_TIMEOUT", cfg.ReadHeaderTimeout, minimumConfiguredTimeout, maximumReadTimeout); err != nil {
+		return Config{}, err
+	}
+	if cfg.ReadTimeout, err = loadBoundedDuration(lookup, "BEEBOX_GATEWAY_READ_TIMEOUT", cfg.ReadTimeout, minimumConfiguredTimeout, maximumReadTimeout); err != nil {
+		return Config{}, err
+	}
+	if cfg.WriteTimeout, err = loadBoundedDuration(lookup, "BEEBOX_GATEWAY_WRITE_TIMEOUT", cfg.WriteTimeout, minimumConfiguredTimeout, maximumWriteTimeout); err != nil {
 		return Config{}, err
 	}
 	if cfg.MaxBodyBytes, err = loadBodyLimit(lookup, "BEEBOX_GATEWAY_MAX_BODY_BYTES", cfg.MaxBodyBytes); err != nil {
 		return Config{}, err
 	}
-
+	if err := validateServerDeadlineOrdering(cfg); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
+}
+
+func validateServerDeadlineOrdering(cfg Config) error {
+	if cfg.ReadTimeout < cfg.ReadHeaderTimeout {
+		return fmt.Errorf("BEEBOX_GATEWAY_READ_TIMEOUT must be greater than or equal to BEEBOX_GATEWAY_READ_HEADER_TIMEOUT")
+	}
+	minimumWrite := cfg.ReadTimeout + cfg.RequestTimeout + serverWriteSafetyMargin
+	if cfg.WriteTimeout < minimumWrite {
+		return fmt.Errorf("BEEBOX_GATEWAY_WRITE_TIMEOUT must be at least read timeout + request timeout + %s", serverWriteSafetyMargin)
+	}
+	return nil
 }
 
 func parseIdentityBaseURL(raw string) (*url.URL, error) {
@@ -122,7 +168,7 @@ func parseIdentityBaseURL(raw string) (*url.URL, error) {
 	return parsed, nil
 }
 
-func loadPositiveDuration(lookup LookupEnv, name string, fallback time.Duration) (time.Duration, error) {
+func loadBoundedDuration(lookup LookupEnv, name string, fallback, minimum, maximum time.Duration) (time.Duration, error) {
 	value, ok := lookup(name)
 	if !ok {
 		return fallback, nil
@@ -131,8 +177,8 @@ func loadPositiveDuration(lookup LookupEnv, name string, fallback time.Duration)
 		return 0, fmt.Errorf("%s must not be empty", name)
 	}
 	parsed, err := time.ParseDuration(value)
-	if err != nil || parsed <= 0 {
-		return 0, fmt.Errorf("%s must be a positive duration", name)
+	if err != nil || parsed < minimum || parsed > maximum {
+		return 0, fmt.Errorf("%s must be between %s and %s", name, minimum, maximum)
 	}
 	return parsed, nil
 }

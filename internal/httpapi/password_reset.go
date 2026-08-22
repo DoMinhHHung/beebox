@@ -50,7 +50,7 @@ func (h *passwordResetHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *passwordResetHTTP) withResetSecurityContext(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	correlationID, err := audit.NewCorrelationID()
+	correlationID, err := correlationForRequest(r)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Authentication is temporarily unavailable.", "request_unavailable")
 		return

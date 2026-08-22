@@ -52,7 +52,7 @@ func (h *socialAccountManagementHTTP) ServeHTTP(w http.ResponseWriter, r *http.R
 
 func (h *socialAccountManagementHTTP) serve(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	correlationID, err := audit.NewCorrelationID()
+	correlationID, err := correlationForRequest(r)
 	if err != nil {
 		w.Header().Set(RequestIDHeader, "request_unavailable")
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Social account management is temporarily unavailable.", "request_unavailable")

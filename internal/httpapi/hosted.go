@@ -248,7 +248,7 @@ func (h *hostedHTTP) withMutationContext(w http.ResponseWriter, r *http.Request,
 		writeError(w, http.StatusForbidden, "csrf_failed", "The hosted authentication request was rejected.", "request_unavailable")
 		return
 	}
-	correlationID, err := audit.NewCorrelationID()
+	correlationID, err := correlationForRequest(r)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Authentication is temporarily unavailable.", "request_unavailable")
 		return
@@ -319,10 +319,7 @@ func (h *hostedHTTP) confirmEmailLink(w http.ResponseWriter, r *http.Request, re
 	if result.TokenPair.PendingMFA != nil {
 		setHostedMFACookie(w, result.TokenPair.PendingMFA.Token)
 		expiresAt := result.TokenPair.PendingMFA.ExpiresAt.UTC()
-		writeJSON(w, http.StatusOK, hostedTokenResponse{
-			Status: "mfa_required", ExpiresAt: &expiresAt,
-			AvailableMethods: append([]string(nil), result.TokenPair.PendingMFA.AvailableMethods...),
-		})
+		writeJSON(w, http.StatusOK, hostedTokenResponse{Status: "mfa_required", ExpiresAt: &expiresAt, AvailableMethods: append([]string(nil), result.TokenPair.PendingMFA.AvailableMethods...)})
 		return
 	}
 	if !h.currentRedirectAllowed(r.Context(), app.InternalID, result.CompletionURL) {
@@ -376,14 +373,7 @@ func (h *hostedHTTP) startSocial(w http.ResponseWriter, r *http.Request, request
 		return
 	}
 	now := time.Now().UTC()
-	sealed, err := h.socialProtector.SealHostedContext(authentication.HostedSocialContext{
-		ApplicationInstanceID: app.InternalID,
-		ApplicationPublicID:   app.PublicID,
-		PKCEVerifier:          verifier,
-		CompletionURL:         input.CompletionURL,
-		IssuedAt:              now,
-		ExpiresAt:             now.Add(authentication.SocialAttemptTTL),
-	})
+	sealed, err := h.socialProtector.SealHostedContext(authentication.HostedSocialContext{ApplicationInstanceID: app.InternalID, ApplicationPublicID: app.PublicID, PKCEVerifier: verifier, CompletionURL: input.CompletionURL, IssuedAt: now, ExpiresAt: now.Add(authentication.SocialAttemptTTL)})
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Social authentication is temporarily unavailable.", requestID)
 		return
@@ -423,10 +413,7 @@ func (h *hostedHTTP) exchangeSocial(w http.ResponseWriter, r *http.Request, requ
 	if pair.PendingMFA != nil {
 		setHostedMFACookie(w, pair.PendingMFA.Token)
 		expiresAt := pair.PendingMFA.ExpiresAt.UTC()
-		writeJSON(w, http.StatusOK, hostedTokenResponse{
-			Status: "mfa_required", ExpiresAt: &expiresAt,
-			AvailableMethods: append([]string(nil), pair.PendingMFA.AvailableMethods...),
-		})
+		writeJSON(w, http.StatusOK, hostedTokenResponse{Status: "mfa_required", ExpiresAt: &expiresAt, AvailableMethods: append([]string(nil), pair.PendingMFA.AvailableMethods...)})
 		return
 	}
 	clearHostedSocialCookie(w)
@@ -561,43 +548,24 @@ func (h *hostedHTTP) writeHostedAuthenticated(w http.ResponseWriter, appPublicID
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Authentication is temporarily unavailable.", "request_unavailable")
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name: refreshCookieName(appPublicID), Value: pair.RefreshToken, Path: "/", Secure: true, HttpOnly: true,
-		SameSite: http.SameSiteLaxMode, MaxAge: int(session.AbsoluteLifetime / time.Second),
-	})
-	writeJSON(w, http.StatusOK, hostedTokenResponse{
-		Status: "authenticated", Session: &authenticationSessionResponse{ID: pair.SessionID},
-		AccessToken: pair.AccessToken, TokenType: "Bearer", ExpiresIn: pair.ExpiresIn,
-		SessionID: pair.SessionID, CompletionURL: completionURL,
-	})
+	http.SetCookie(w, &http.Cookie{Name: refreshCookieName(appPublicID), Value: pair.RefreshToken, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: int(session.AbsoluteLifetime / time.Second)})
+	writeJSON(w, http.StatusOK, hostedTokenResponse{Status: "authenticated", Session: &authenticationSessionResponse{ID: pair.SessionID}, AccessToken: pair.AccessToken, TokenType: "Bearer", ExpiresIn: pair.ExpiresIn, SessionID: pair.SessionID, CompletionURL: completionURL})
 }
 
 func setHostedMFACookie(w http.ResponseWriter, token string) {
-	http.SetCookie(w, &http.Cookie{
-		Name: hostedMFACookie, Value: token, Path: "/", Secure: true, HttpOnly: true,
-		SameSite: http.SameSiteLaxMode, MaxAge: int(authentication.PendingMFATTL / time.Second),
-	})
+	http.SetCookie(w, &http.Cookie{Name: hostedMFACookie, Value: token, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: int(authentication.PendingMFATTL / time.Second)})
 }
 
 func clearHostedMFACookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{
-		Name: hostedMFACookie, Value: "", Path: "/", Secure: true, HttpOnly: true,
-		SameSite: http.SameSiteLaxMode, MaxAge: -1,
-	})
+	http.SetCookie(w, &http.Cookie{Name: hostedMFACookie, Value: "", Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})
 }
 
 func setHostedSocialCookie(w http.ResponseWriter, value string) {
-	http.SetCookie(w, &http.Cookie{
-		Name: hostedSocialCookie, Value: value, Path: "/", Secure: true, HttpOnly: true,
-		SameSite: http.SameSiteLaxMode, MaxAge: int(authentication.SocialAttemptTTL / time.Second),
-	})
+	http.SetCookie(w, &http.Cookie{Name: hostedSocialCookie, Value: value, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: int(authentication.SocialAttemptTTL / time.Second)})
 }
 
 func clearHostedSocialCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{
-		Name: hostedSocialCookie, Value: "", Path: "/", Secure: true, HttpOnly: true,
-		SameSite: http.SameSiteLaxMode, MaxAge: -1,
-	})
+	http.SetCookie(w, &http.Cookie{Name: hostedSocialCookie, Value: "", Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})
 }
 
 func (h *hostedHTTP) writeHostedSocialError(w http.ResponseWriter, requestID string, err error) {

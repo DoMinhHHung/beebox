@@ -54,7 +54,7 @@ func (h *emailLinkHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *emailLinkHTTP) withEmailLinkSecurityContext(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	correlationID, err := audit.NewCorrelationID()
+	correlationID, err := correlationForRequest(r)
 	if err != nil {
 		w.Header().Set(RequestIDHeader, "request_unavailable")
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Authentication is temporarily unavailable.", "request_unavailable")

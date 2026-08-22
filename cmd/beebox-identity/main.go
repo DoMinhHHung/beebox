@@ -30,6 +30,7 @@ import (
 	"github.com/DoMinhHHung/beebox/internal/platform/database"
 	"github.com/DoMinhHHung/beebox/internal/platform/httpserver"
 	"github.com/DoMinhHHung/beebox/internal/platform/migration"
+	"github.com/DoMinhHHung/beebox/internal/requestcorrelation"
 	"github.com/DoMinhHHung/beebox/internal/session"
 	sessionpostgres "github.com/DoMinhHHung/beebox/internal/session/postgres"
 )
@@ -91,6 +92,10 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 	if !ok {
 		return nil, errors.New("initialize product HTTP dependencies")
 	}
+	correlationKey, err := requestcorrelation.LoadKey(requestcorrelation.LookupEnv(lookup))
+	if err != nil {
+		return nil, errors.New("load internal correlation configuration")
+	}
 	sender, err := smtpdelivery.FromLookup(smtpdelivery.LookupEnv(lookup))
 	if err != nil {
 		return nil, errors.New("load SMTP delivery configuration")
@@ -151,7 +156,7 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 		base = httpapi.WithEmailOTP(base, integrationService, integrationStore, nil, nil)
 		base = httpapi.WithEmailLinks(base, integrationService, integrationStore, nil, nil)
 		base = httpapi.WithPhoneSMS(base, integrationService, integrationStore, nil, nil, nil, nil)
-		return httpapi.WithMetrics(base, recorder), nil
+		return httpapi.WithTrustedRequestCorrelation(httpapi.WithMetrics(base, recorder), correlationKey), nil
 	}
 	if err != nil {
 		return nil, errors.New("load access token signing configuration")
@@ -203,7 +208,7 @@ func buildProductHTTP(pool databasePool, lookup config.LookupEnv, health http.Ha
 		base, hostedOrigin, integrationService, integrationStore, emailLinkSession, authStore,
 		totpCompletion, recoveryCompletion, authStore, socialCore, socialCompletion, socialProtector,
 	)
-	return httpapi.WithMetrics(base, recorder), nil
+	return httpapi.WithTrustedRequestCorrelation(httpapi.WithMetrics(base, recorder), correlationKey), nil
 }
 
 func runWithDependencies(ctx context.Context, logger *slog.Logger, lookup config.LookupEnv, dependencies runtimeDependencies, args []string) error {

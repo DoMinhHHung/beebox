@@ -91,7 +91,7 @@ func (h *sessionManagementHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request
 
 func (h *sessionManagementHTTP) withContext(w http.ResponseWriter, r *http.Request, next func(http.ResponseWriter, *http.Request, string, audit.CorrelationID)) {
 	w.Header().Set("Cache-Control", "no-store")
-	correlationID, err := audit.NewCorrelationID()
+	correlationID, err := correlationForRequest(r)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Authentication is temporarily unavailable.", "request_unavailable")
 		return

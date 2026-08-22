@@ -91,7 +91,7 @@ func (h *accountManagementHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
 	r = r.WithContext(ctx)
-	correlationID, err := audit.NewCorrelationID()
+	correlationID, err := correlationForRequest(r)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Account management is temporarily unavailable.", "request_unavailable")
 		return
