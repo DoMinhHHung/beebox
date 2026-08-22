@@ -21,46 +21,7 @@ paths:
       operationId: getJWKS
       summary: Read Ed25519 access-token verification keys
       security: []
-        GatewayRequestTooLargeErrorResponse:
-      type: object
-      additionalProperties: false
-      required: [error]
-      properties:
-        error:
-          type: object
-          additionalProperties: false
-          required: [code, message, request_id]
-          properties:
-            code: {type: string, const: request_too_large}
-            message: {type: string}
-            request_id: {type: string, pattern: '^[0-9a-f]{32}$'}
-    GatewayUpstreamUnavailableErrorResponse:
-      type: object
-      additionalProperties: false
-      required: [error]
-      properties:
-        error:
-          type: object
-          additionalProperties: false
-          required: [code, message, request_id]
-          properties:
-            code: {type: string, const: upstream_unavailable}
-            message: {type: string}
-            request_id: {type: string, pattern: '^[0-9a-f]{32}$'}
-    GatewayUpstreamTimeoutErrorResponse:
-      type: object
-      additionalProperties: false
-      required: [error]
-      properties:
-        error:
-          type: object
-          additionalProperties: false
-          required: [code, message, request_id]
-          properties:
-            code: {type: string, const: upstream_timeout}
-            message: {type: string}
-            request_id: {type: string, pattern: '^[0-9a-f]{32}$'}
-  responses:
+      responses:
         '200':
           description: Active and retiring public verification keys only.
           content:
@@ -2578,6 +2539,45 @@ components:
         kid: {type: string}
         x: {type: string, description: Unpadded base64url Ed25519 public key material.}
 
+    GatewayRequestTooLargeErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, request_id]
+          properties:
+            code: {type: string, const: request_too_large}
+            message: {type: string}
+            request_id: {type: string, pattern: '^[0-9a-f]{32}$'}
+    GatewayUpstreamUnavailableErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, request_id]
+          properties:
+            code: {type: string, const: upstream_unavailable}
+            message: {type: string}
+            request_id: {type: string, pattern: '^[0-9a-f]{32}$'}
+    GatewayUpstreamTimeoutErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, request_id]
+          properties:
+            code: {type: string, const: upstream_timeout}
+            message: {type: string}
+            request_id: {type: string, pattern: '^[0-9a-f]{32}$'}
   responses:
     RequestTooLarge:
       description: >-
