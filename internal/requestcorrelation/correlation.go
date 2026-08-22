@@ -20,7 +20,6 @@ const (
 var ErrInvalidKey = errors.New("invalid internal correlation key")
 
 type LookupEnv func(string) (string, bool)
-
 type Key [32]byte
 type ID [16]byte
 
@@ -85,13 +84,18 @@ func Sign(key Key, id ID) string {
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
+func SignatureIsCanonical(value string) bool {
+	_, ok := decodeSignature(value)
+	return ok
+}
+
 func Verify(key Key, rawID, rawSignature string) (ID, bool) {
 	id, ok := ParseID(rawID)
 	if !ok {
 		return ID{}, false
 	}
-	provided, err := base64.RawURLEncoding.DecodeString(rawSignature)
-	if err != nil || len(provided) != sha256.Size {
+	provided, ok := decodeSignature(rawSignature)
+	if !ok {
 		return ID{}, false
 	}
 	mac := hmac.New(sha256.New, key[:])
@@ -101,4 +105,15 @@ func Verify(key Key, rawID, rawSignature string) (ID, bool) {
 		return ID{}, false
 	}
 	return id, true
+}
+
+func decodeSignature(value string) ([]byte, bool) {
+	provided, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil || len(provided) != sha256.Size {
+		return nil, false
+	}
+	if base64.RawURLEncoding.EncodeToString(provided) != value {
+		return nil, false
+	}
+	return provided, true
 }
