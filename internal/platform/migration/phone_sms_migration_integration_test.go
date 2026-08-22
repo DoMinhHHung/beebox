@@ -21,7 +21,7 @@ func TestPhoneSMSMigrationUpgradesExisting00013SchemaAndPreservesLimiterVocabula
 	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
 		t.Fatalf("upgrade through current schema error = %v", err)
 	}
-	assertMigrationState(t, ctx, pool, 25)
+	assertMigrationState(t, ctx, pool, 26)
 
 	db := pool.OpenSQLDB()
 	defer db.Close()
@@ -61,7 +61,7 @@ func TestPhoneSMSMigrationFreshSchemaOwnershipUniquenessAndChallengeConstraints(
 	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
 		t.Fatal(err)
 	}
-	assertMigrationState(t, ctx, pool, 25)
+	assertMigrationState(t, ctx, pool, 26)
 	db := pool.OpenSQLDB()
 	defer db.Close()
 
