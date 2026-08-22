@@ -160,8 +160,8 @@ func TestGatewayIdentityPostgreSQLCriticalJourney(t *testing.T) {
 	gatewayRequest(t, gatewayHandler, publishableA, http.MethodPost, "/v1/email-verifications/confirm", `{"email":"`+email+`","code":"`+code+`"}`, nil, http.StatusOK, nil)
 
 	var passwordSession gatewaySessionResponse
-	gatewayRequest(t, gatewayHandler, publishableA, http.MethodPost, "/v1/sign-ins", `{"email":"`+email+`","password":"`+password+`"}`, nil, http.StatusOK, &passwordSession)
-	passwordSession.requireComplete(t)
+	passwordResponse := gatewayRequest(t, gatewayHandler, publishableA, http.MethodPost, "/v1/sign-ins", `{"email":"`+email+`","password":"`+password+`"}`, nil, http.StatusOK, &passwordSession)
+	passwordSession.requireBrowserComplete(t, passwordResponse)
 	gatewayRequest(t, gatewayHandler, publishableA, http.MethodGet, "/v1/sessions/current", "", map[string]string{"Authorization": "Bearer " + passwordSession.AccessToken}, http.StatusOK, nil)
 	gatewayRequest(t, gatewayHandler, publishableA, http.MethodGet, "/v1/profile", "", map[string]string{"Authorization": "Bearer " + passwordSession.AccessToken}, http.StatusOK, nil)
 	gatewayRequest(t, gatewayHandler, "", http.MethodGet, "/.well-known/jwks.json", "", nil, http.StatusOK, nil)
@@ -180,8 +180,8 @@ func TestGatewayIdentityPostgreSQLCriticalJourney(t *testing.T) {
 		t.Fatal("email OTP did not deliver code")
 	}
 	var otpSession gatewaySessionResponse
-	gatewayRequest(t, gatewayHandler, publishableA, http.MethodPost, "/v1/sign-ins/email-otp/confirm", `{"email":"`+email+`","code":"`+otp+`"}`, nil, http.StatusOK, &otpSession)
-	otpSession.requireComplete(t)
+	otpResponse := gatewayRequest(t, gatewayHandler, publishableA, http.MethodPost, "/v1/sign-ins/email-otp/confirm", `{"email":"`+email+`","code":"`+otp+`"}`, nil, http.StatusOK, &otpSession)
+	otpSession.requireBrowserComplete(t, otpResponse)
 	gatewayRequest(t, gatewayHandler, publishableA, http.MethodGet, "/v1/profile", "", map[string]string{"Authorization": "Bearer " + otpSession.AccessToken}, http.StatusOK, nil)
 }
 
@@ -191,14 +191,28 @@ type gatewaySessionResponse struct {
 	SessionID    string `json:"session_id"`
 }
 
-func (r gatewaySessionResponse) requireComplete(t *testing.T) {
+func (r gatewaySessionResponse) requireBrowserComplete(t *testing.T, res *httptest.ResponseRecorder) {
 	t.Helper()
-	if r.AccessToken == "" || r.RefreshToken == "" || r.SessionID == "" {
-		t.Fatalf("incomplete session response: %#v", r)
+	if r.AccessToken == "" || r.SessionID == "" {
+		t.Fatalf("incomplete browser session response: %#v", r)
+	}
+	if r.RefreshToken != "" {
+		t.Fatal("browser session response exposed refresh token in JSON")
+	}
+	cookies := res.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("refresh cookies = %d, want 1", len(cookies))
+	}
+	cookie := cookies[0]
+	if !strings.HasPrefix(cookie.Name, "__Host-beebox-refresh-") || cookie.Value == "" || !cookie.Secure || !cookie.HttpOnly || cookie.Path != "/" || cookie.Domain != "" || cookie.SameSite != http.SameSiteStrictMode {
+		t.Fatalf("gateway refresh cookie = %#v", cookie)
+	}
+	if strings.Contains(res.Body.String(), cookie.Value) {
+		t.Fatal("browser response JSON contained refresh cookie secret")
 	}
 }
 
-func gatewayRequest(t *testing.T, handler http.Handler, publishable, method, path, body string, headers map[string]string, want int, output any) {
+func gatewayRequest(t *testing.T, handler http.Handler, publishable, method, path, body string, headers map[string]string, want int, output any) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, "http://public.example.test"+path, strings.NewReader(body))
 	if body != "" {
@@ -224,6 +238,7 @@ func gatewayRequest(t *testing.T, handler http.Handler, publishable, method, pat
 			t.Fatalf("decode %s %s response: %v", method, path, err)
 		}
 	}
+	return res
 }
 
 func gatewayBackendRequest(t *testing.T, handler http.Handler, secret, path string, want int) {
