@@ -54,9 +54,15 @@ func TestOrganizationAuthorizationDefaultDenyNoMagicRolesAndImmediateFreshness(t
 	assertAuthorizationDecision(t, f, f.appA.InternalID, f.userB.PublicID, f.orgA.ID, "organization", "read", organization.DecisionDeny)
 	assertAuthorizationDecision(t, f, f.appA.InternalID, f.userA.PublicID, f.orgB.ID, "organization", "read", organization.DecisionDeny)
 	assertAuthorizationDecision(t, f, f.appB.InternalID, f.userA.PublicID, f.orgB.ID, "organization", "read", organization.DecisionDeny)
-	if err := f.authorization.SetMembershipRole(f.ctx, mutationContext(t, f.appA.InternalID, f.actorA), f.membershipA.ID, adminB.ID); !errors.Is(err, organization.ErrRoleNotFound) {
-		t.Fatalf("cross-app role assignment error=%v", err)
+	if err := f.authorization.SetMembershipRole(f.ctx, mutationContext(t, f.appA.InternalID, f.actorA), f.membershipA.ID, adminB.ID); !errors.Is(err, organization.ErrRoleAssignmentNotFound) {
+		t.Fatalf("cross-app role assignment error=%v, want ErrRoleAssignmentNotFound", err)
 	}
+	// The scoped lookup intentionally does not reveal which candidate object was foreign.
+	// A denied substitution must leave the prior valid assignment and its authority intact.
+	assertAssignmentRole(t, f, f.membershipA.ID, admin.ID)
+	assertAuthorizationDecision(t, f, f.appA.InternalID, f.userA.PublicID, f.orgA.ID, "organization", "read", organization.DecisionAllow)
+	assertCrossApplicationRoleConstraint(t, f, f.membershipA.ID, adminB.ID)
+	assertAssignmentRole(t, f, f.membershipA.ID, admin.ID)
 
 	if err := f.authorization.RevokePermissionFromRole(f.ctx, mutationContext(t, f.appA.InternalID, f.actorA), admin.ID, read.ID); err != nil {
 		t.Fatal(err)
@@ -92,6 +98,48 @@ func TestOrganizationAuthorizationDefaultDenyNoMagicRolesAndImmediateFreshness(t
 	}
 	assertAuthorizationDecision(t, f, f.appA.InternalID, f.userA.PublicID, f.orgA.ID, "organization", "read", organization.DecisionDeny)
 	assertAssignmentCount(t, f, f.membershipA.ID, 0)
+}
+
+func assertAssignmentRole(t *testing.T, f authorizationFixture, membershipID organization.MembershipID, want organization.RoleID) {
+	t.Helper()
+	db := f.pool.OpenSQLDB()
+	defer db.Close()
+	var got string
+	if err := db.QueryRowContext(f.ctx, `
+		SELECT r.opaque_id::text
+		FROM organization_membership_role_assignments a
+		JOIN organization_memberships m
+		  ON m.application_instance_id=a.application_instance_id AND m.id=a.membership_id
+		JOIN organization_role_definitions r
+		  ON r.application_instance_id=a.application_instance_id AND r.id=a.role_definition_id
+		WHERE a.application_instance_id=$1 AND m.opaque_id=$2::uuid`,
+		int64(f.appA.InternalID), string(membershipID)).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if organization.RoleID(got) != want {
+		t.Fatalf("assignment role=%s, want %s", got, want)
+	}
+}
+
+func assertCrossApplicationRoleConstraint(t *testing.T, f authorizationFixture, membershipID organization.MembershipID, foreignRoleID organization.RoleID) {
+	t.Helper()
+	db := f.pool.OpenSQLDB()
+	defer db.Close()
+	_, err := db.ExecContext(f.ctx, `
+		UPDATE organization_membership_role_assignments a
+		SET role_definition_id=(
+			SELECT id FROM organization_role_definitions
+			WHERE application_instance_id=$2 AND opaque_id=$4::uuid
+		)
+		WHERE a.application_instance_id=$1
+		  AND a.membership_id=(
+			SELECT id FROM organization_memberships
+			WHERE application_instance_id=$1 AND opaque_id=$3::uuid
+		  )`,
+		int64(f.appA.InternalID), int64(f.appB.InternalID), string(membershipID), string(foreignRoleID))
+	if err == nil {
+		t.Fatal("cross-application direct role substitution unexpectedly bypassed database constraints")
+	}
 }
 
 func assertConcurrentRoleReplacement(t *testing.T, f authorizationFixture, first, second organization.RoleID) {
