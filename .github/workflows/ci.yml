@@ -162,6 +162,12 @@ jobs:
       - name: Go SDK tests
         run: go test ./sdk/go
 
+      - name: Correlation boundary tests
+        run: |
+          go test ./internal/requestcorrelation -count=1
+          go test ./internal/httpapi -count=1
+          go test ./internal/gateway -count=1
+
       - name: Social provider contract tests
         run: |
           go test ./internal/authentication/socialprovider -count=1
