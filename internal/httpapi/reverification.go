@@ -61,7 +61,7 @@ func (h *reverificationHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *reverificationHTTP) mint(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	correlationID, requestID, ok := newReverificationRequestID(w)
+	correlationID, requestID, ok := newReverificationRequestID(w, r)
 	if !ok {
 		return
 	}
@@ -100,7 +100,7 @@ func (h *reverificationHTTP) mint(w http.ResponseWriter, r *http.Request) {
 
 func (h *reverificationHTTP) authorizeMutation(w http.ResponseWriter, r *http.Request, purpose string) {
 	w.Header().Set("Cache-Control", "no-store")
-	correlationID, requestID, ok := newReverificationRequestID(w)
+	correlationID, requestID, ok := newReverificationRequestID(w, r)
 	if !ok {
 		return
 	}
@@ -197,8 +197,8 @@ func (h *reverificationHTTP) writeReverificationError(w http.ResponseWriter, req
 	}
 }
 
-func newReverificationRequestID(w http.ResponseWriter) (audit.CorrelationID, string, bool) {
-	correlationID, err := audit.NewCorrelationID()
+func newReverificationRequestID(w http.ResponseWriter, r *http.Request) (audit.CorrelationID, string, bool) {
+	correlationID, err := correlationForRequest(r)
 	if err != nil {
 		w.Header().Set(RequestIDHeader, "request_unavailable")
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Reverification is temporarily unavailable.", "request_unavailable")
@@ -210,7 +210,7 @@ func newReverificationRequestID(w http.ResponseWriter) (audit.CorrelationID, str
 }
 
 func (h *reverificationHTTP) preflight(w http.ResponseWriter, r *http.Request) {
-	_, requestID, ok := newReverificationRequestID(w)
+	_, requestID, ok := newReverificationRequestID(w, r)
 	if !ok {
 		return
 	}

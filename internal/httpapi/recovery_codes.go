@@ -52,7 +52,7 @@ func (h *recoveryCodeHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *recoveryCodeHTTP) serve(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	correlationID, err := audit.NewCorrelationID()
+	correlationID, err := correlationForRequest(r)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Recovery is temporarily unavailable.", "request_unavailable")
 		return

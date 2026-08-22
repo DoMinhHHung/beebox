@@ -54,6 +54,100 @@ jobs:
             exit 1
           fi
 
+      - name: Build microservice binaries
+        run: |
+          go build ./cmd/beebox-gateway
+          go build ./cmd/beebox-identity
+
+      - name: Validate microservice container topology
+        shell: bash
+        run: |
+          docker compose config --format json > /tmp/beebox-compose.json
+          python3 - <<'PY'
+          import json
+
+          with open('/tmp/beebox-compose.json', encoding='utf-8') as f:
+              cfg = json.load(f)
+          services = cfg['services']
+          required = {'gateway', 'identity', 'postgres', 'mailpit'}
+          missing = required.difference(services)
+          if missing:
+              raise SystemExit(f'missing compose services: {sorted(missing)}')
+
+          gateway = services['gateway']
+          identity = services['identity']
+          postgres = services['postgres']
+          mailpit = services['mailpit']
+          if gateway.get('build', {}).get('target') != 'gateway':
+              raise SystemExit('gateway must build the gateway Docker target')
+          if identity.get('build', {}).get('target') != 'identity':
+              raise SystemExit('identity must build the identity Docker target')
+          if 'BEEBOX_DATABASE_URL' in (gateway.get('environment') or {}):
+              raise SystemExit('gateway must not receive product database credentials')
+          if not gateway.get('ports'):
+              raise SystemExit('gateway must be the published HTTP entry point')
+          if identity.get('ports'):
+              raise SystemExit('identity must not publish a host port in reference topology')
+          if postgres.get('ports'):
+              raise SystemExit('postgres must not publish a host port in reference topology')
+          upstream = (gateway.get('environment') or {}).get('BEEBOX_IDENTITY_UPSTREAM_URL', '')
+          if 'identity:8081' not in upstream:
+              raise SystemExit('gateway must route to the private identity service')
+
+          smtp_ports = [port for port in (mailpit.get('ports') or []) if int(port.get('target', 0)) == 1025]
+          if len(smtp_ports) != 1:
+              raise SystemExit(f'mailpit must publish exactly one SMTP mapping: {smtp_ports!r}')
+          smtp = smtp_ports[0]
+          if str(smtp.get('published')) != '1025':
+              raise SystemExit(f'mailpit SMTP host port must be 1025: {smtp!r}')
+          if smtp.get('host_ip') != '127.0.0.1':
+              raise SystemExit(f'mailpit SMTP must bind host loopback only: {smtp!r}')
+
+          gateway_key = (gateway.get('environment') or {}).get('BEEBOX_INTERNAL_CORRELATION_KEY', '')
+          identity_key = (identity.get('environment') or {}).get('BEEBOX_INTERNAL_CORRELATION_KEY', '')
+          if not gateway_key or gateway_key != identity_key:
+              raise SystemExit('gateway and identity must share one explicit internal correlation key')
+
+          gateway_networks = set(gateway.get('networks') or {})
+          identity_networks = set(identity.get('networks') or {})
+          postgres_networks = set(postgres.get('networks') or {})
+          if not gateway_networks.intersection(identity_networks):
+              raise SystemExit('gateway and identity require a shared service network')
+          if not identity_networks.intersection(postgres_networks):
+              raise SystemExit('identity and postgres require a shared data network')
+          if gateway_networks.intersection(postgres_networks):
+              raise SystemExit('gateway must not share a direct network with postgres')
+          PY
+
+          cleanup_mailpit() {
+            docker compose stop mailpit >/dev/null 2>&1 || true
+            docker compose rm -f mailpit >/dev/null 2>&1 || true
+          }
+          trap cleanup_mailpit EXIT
+          docker compose up -d mailpit
+          python3 - <<'PY'
+          import socket
+          import time
+
+          deadline = time.monotonic() + 20
+          last_error = None
+          while time.monotonic() < deadline:
+              try:
+                  with socket.create_connection(('127.0.0.1', 1025), timeout=1):
+                      print('mailpit SMTP reachable on 127.0.0.1:1025')
+                      break
+              except OSError as exc:
+                  last_error = exc
+                  time.sleep(0.25)
+          else:
+              raise SystemExit(f'mailpit SMTP loopback reachability failed: {last_error}')
+          PY
+          cleanup_mailpit
+          trap - EXIT
+
+          docker build --target gateway -t beebox-gateway:ci .
+          docker build --target identity -t beebox-identity:ci .
+
       - name: Vet
         run: go vet ./...
 
@@ -67,6 +161,12 @@ jobs:
 
       - name: Go SDK tests
         run: go test ./sdk/go
+
+      - name: Correlation boundary tests
+        run: |
+          go test ./internal/requestcorrelation -count=1
+          go test ./internal/httpapi -count=1
+          go test ./internal/gateway -count=1
 
       - name: Social provider contract tests
         run: |
@@ -99,6 +199,7 @@ jobs:
             ./internal/authentication/postgres \
             ./internal/session/postgres \
             ./internal/httpapi \
+            ./internal/gateway \
             2>&1 | tee /tmp/beebox-pg-integration.log
           status=${PIPESTATUS[0]}
           set -e

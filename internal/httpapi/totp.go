@@ -83,7 +83,7 @@ func (h *totpHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *totpHTTP) serve(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	correlationID, err := audit.NewCorrelationID()
+	correlationID, err := correlationForRequest(r)
 	if err != nil {
 		w.Header().Set(RequestIDHeader, "request_unavailable")
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "TOTP authentication is temporarily unavailable.", "request_unavailable")

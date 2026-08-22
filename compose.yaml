@@ -5,8 +5,8 @@ services:
       POSTGRES_USER: beebox
       POSTGRES_PASSWORD: beebox_local
       POSTGRES_DB: beebox
-    ports:
-      - "5432:5432"
+    expose:
+      - "5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U beebox -d beebox"]
       interval: 5s
@@ -14,12 +14,67 @@ services:
       retries: 10
     volumes:
       - beebox-postgres:/var/lib/postgresql/data
+    networks:
+      - identity-data
 
   mailpit:
     image: axllent/mailpit:v1.27.8
+    expose:
+      - "1025"
     ports:
-      - "1025:1025"
+      - "127.0.0.1:1025:1025"
       - "8025:8025"
+    networks:
+      - identity-data
+
+  identity:
+    build:
+      context: .
+      target: identity
+    environment:
+      BEEBOX_DATABASE_URL: postgres://beebox:beebox_local@postgres:5432/beebox?sslmode=disable
+      BEEBOX_IDENTITY_HTTP_ADDR: 0.0.0.0:8081
+      BEEBOX_INTERNAL_CORRELATION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY
+      BEEBOX_ISSUER:
+      BEEBOX_SIGNING_KID:
+      BEEBOX_SIGNING_PRIVATE_KEY:
+      BEEBOX_SIGNING_PUBLIC_KEY:
+      BEEBOX_SECRET_ENCRYPTION_KEYS:
+      BEEBOX_SECRET_ENCRYPTION_ACTIVE_KEY_ID:
+      BEEBOX_HOSTED_AUTH_ORIGIN:
+      BEEBOX_SOCIAL_STATE_KEY:
+      BEEBOX_SOCIAL_CONNECTIONS:
+      BEEBOX_SMS_MODE:
+    expose:
+      - "8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - gateway-identity
+      - identity-data
+
+  gateway:
+    build:
+      context: .
+      target: gateway
+    environment:
+      BEEBOX_GATEWAY_HTTP_ADDR: 0.0.0.0:8080
+      BEEBOX_IDENTITY_UPSTREAM_URL: http://identity:8081
+      BEEBOX_INTERNAL_CORRELATION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY
+    ports:
+      - "8080:8080"
+    depends_on:
+      identity:
+        condition: service_started
+    networks:
+      - gateway-identity
+
+networks:
+  gateway-identity:
+    driver: bridge
+  identity-data:
+    driver: bridge
 
 volumes:
   beebox-postgres:
