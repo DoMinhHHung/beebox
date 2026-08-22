@@ -236,7 +236,7 @@ func (s *Store) SetMembershipRole(ctx context.Context, current organization.Muta
 	).Scan(&membershipInternalID, &targetUserID, &organizationReference, &roleInternalID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return organization.ErrAssignmentNotFound
+			return organization.ErrRoleAssignmentNotFound
 		}
 		return classifyAuthorizationError(ctx, err)
 	}
@@ -289,7 +289,7 @@ func (s *Store) ClearMembershipRole(ctx context.Context, current organization.Mu
 	).Scan(&membershipInternalID, &targetUserID, &organizationReference, &roleReference)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return organization.ErrAssignmentNotFound
+			return organization.ErrRoleAssignmentNotFound
 		}
 		return classifyAuthorizationError(ctx, err)
 	}
