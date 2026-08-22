@@ -49,7 +49,7 @@ PostgreSQL
 
 `cmd/beebox-gateway` is the public HTTP edge. It owns public listener lifecycle, reverse proxying, canonical public request IDs, authenticated Gateway -> Identity correlation metadata, forwarding-header sanitization, bounded pre-dispatch API bodies, bounded transport/server timeouts, safe access logs, health/readiness and graceful shutdown.
 
-Gateway must ignore client `X-Request-ID`, strip client copies of BeeBox internal correlation/signature headers and generate a fresh cryptographically random 16-byte / 32-lowercase-hex public request ID for every edge request. It signs that generated ID with HMAC-SHA256 using the dedicated `BEEBOX_INTERNAL_CORRELATION_KEY`; Identity may reuse it only after constant-time verification. The public caller receives exactly one `X-Request-ID` value.
+Gateway must ignore client `X-Request-ID`, strip client copies of BeeBox internal correlation/signature headers and generate a fresh cryptographically random 16-byte / 32-lowercase-hex public request ID for every edge request. It signs that generated ID with HMAC-SHA256 using the dedicated `BEEBOX_INTERNAL_CORRELATION_KEY`. A valid HMAC allows Identity to reuse that same value as trusted audit correlation; HMAC failure must never grant audit trust. The public caller receives exactly one `X-Request-ID` value owned by Gateway.
 
 Gateway owns **no product database tables, migrations or product authorization**. It never verifies passwords, grants sessions, resolves identifier ownership, performs MFA/RBAC decisions or trusts client forwarding/correlation metadata as authority. Possession of a request ID or the internal correlation key is never application/user/tenant authorization. Gateway must not automatically retry ambiguous state-changing requests.
 
@@ -61,7 +61,9 @@ Gateway-generated canonical `/v1` failures use the same BeeBox nested error enve
 
 Identity remains independently responsible for application scope, authentication, authorization, Origin/CSRF/redirect validation and all security-state decisions. Being reachable from Gateway grants no product trust.
 
-Identity establishes correlation once at the outer HTTP composition boundary. A valid-looking direct `X-Request-ID` without authenticated internal proof is not authoritative and must be replaced with a fresh Identity correlation. Phase 1/2 wrapper handlers consume request-context correlation rather than independently creating competing request IDs.
+Identity establishes two distinct observability values at the outer HTTP composition boundary: a **public/wire request ID** used only for `X-Request-ID` and canonical `error.request_id`, and a **trusted audit correlation** used by audit-sensitive application calls. With valid Gateway HMAC provenance both values are the Gateway ID. During a well-formed mixed-key/invalid-proof Gateway-style envelope, Identity may retain the Gateway candidate as the non-authoritative public diagnostic ID so the proxied header/error body remain stable, but it must mint a fresh independent audit correlation. A direct or malformed request that lacks a complete Gateway-style envelope mints fresh Identity public and audit IDs. Public diagnostic shape, private network source, Host or `X-Forwarded-*` metadata can never create audit trust.
+
+Phase 1/2 wrapper handlers consume the trusted audit correlation from request context rather than independently creating competing audit IDs. Public diagnostic IDs and audit correlation are observability only and cannot influence authentication, tenant selection, session/MFA state or authorization.
 
 ### Service/data ownership rules
 
@@ -210,7 +212,7 @@ These are merge-blocking:
 - Gateway `/v1` edge failures remain canonical BeeBox errors: nested envelope, stable 413/502/504 codes, safe messages and matching request-ID header/body.
 - A Gateway 504 after dispatch does not prove a state-changing operation failed to commit. Clients reuse the same supported idempotency key or reconcile authoritative state before retrying.
 - Current bounded API request bodies are validated before upstream dispatch, including unknown/chunked lengths. An oversized body must not partially reach Identity.
-- Request/correlation IDs are observability only and cannot influence authorization or tenant scope.
+- Public request IDs and trusted audit correlations are separate observability concepts. Valid Gateway HMAC provenance may make them equal; invalid/mixed provenance must never let the public diagnostic ID become audit authority. Neither value can influence authentication, authorization or tenant scope.
 
 Use standard Go cryptography and established OAuth/OIDC/WebAuthn/SAML/JWT guidance as applicable; never invent cryptographic primitives.
 
@@ -246,9 +248,9 @@ Tests are risk-based:
 - negative/unauthorized/cross-tenant/replay/expiry/partial-failure/concurrency cases;
 - Go race tests and fuzz/property tests where useful.
 
-Gateway boundary tests must cover client request-ID/internal-header spoofing, authenticated correlation provenance, direct-Identity invalid-proof fallback, exactly-one public request ID, canonical SDK-decodable 413/502/504, actual-server timeout/deadline behavior, mutation-outcome ambiguity without automatic retry, and unknown/chunked body-limit exact-boundary/cancellation/cleanup behavior.
+Gateway boundary tests must cover client request-ID/internal-header spoofing, matching-key authenticated correlation provenance, mixed-key public-ID/audit-correlation divergence with canonical error header/body equality, direct-Identity malformed/invalid-proof fallback, exactly-one public request ID, canonical SDK-decodable 413/502/504, actual-server timeout/deadline behavior, mutation-outcome ambiguity without automatic retry, and unknown/chunked body-limit exact-boundary/cancellation/cleanup behavior.
 
-Repository CI must run on the exact current head. Current required checks include formatting, independent Gateway/Identity builds, Docker/Compose topology validation, vet, `govulncheck`, OpenAPI, Go SDK, social-provider stress/race checks, `go test ./...`, PostgreSQL 17 integration including Gateway and full `go test -race ./...`.
+Repository CI must run on the exact current head. Current required checks include formatting, independent Gateway/Identity builds, Docker/Compose topology validation including Mailpit loopback SMTP publication, vet, `govulncheck`, OpenAPI, Go SDK, social-provider stress/race checks, `go test ./...`, PostgreSQL 17 integration including Gateway and full `go test -race ./...`.
 
 ## 9. Phased delivery
 
