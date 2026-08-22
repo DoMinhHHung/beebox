@@ -93,6 +93,11 @@ jobs:
           if 'identity:8081' not in upstream:
               raise SystemExit('gateway must route to the private identity service')
 
+          gateway_key = (gateway.get('environment') or {}).get('BEEBOX_INTERNAL_CORRELATION_KEY', '')
+          identity_key = (identity.get('environment') or {}).get('BEEBOX_INTERNAL_CORRELATION_KEY', '')
+          if not gateway_key or gateway_key != identity_key:
+              raise SystemExit('gateway and identity must share one explicit internal correlation key')
+
           gateway_networks = set(gateway.get('networks') or {})
           identity_networks = set(identity.get('networks') or {})
           postgres_networks = set(postgres.get('networks') or {})

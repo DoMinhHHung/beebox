@@ -11,24 +11,24 @@ import (
 )
 
 const (
-	defaultListenAddress                     = ":8080"
-	defaultConnectTimeout                    = 3 * time.Second
-	defaultResponseHeaderTimeout             = 10 * time.Second
-	defaultRequestTimeout                    = 15 * time.Second
-	defaultReadinessTimeout                  = 2 * time.Second
-	defaultShutdownTimeout                   = 10 * time.Second
-	defaultIdleConnTimeout                   = 60 * time.Second
-	defaultReadHeaderTimeout                 = 5 * time.Second
-	defaultReadTimeout                       = 10 * time.Second
-	defaultWriteTimeout                      = 30 * time.Second
-	minimumConfiguredTimeout                 = 100 * time.Millisecond
-	maximumRequestTimeout                    = 30 * time.Second
-	maximumReadTimeout                       = 30 * time.Second
-	maximumWriteTimeout                      = 65 * time.Second
-	maximumGeneralTimeout                    = 5 * time.Minute
-	serverWriteSafetyMargin                  = 5 * time.Second
-	defaultMaxBodyBytes                int64 = 1 << 20
-	maxConfiguredBodyBytes             int64 = 16 << 20
+	defaultListenAddress          = ":8080"
+	defaultConnectTimeout         = 3 * time.Second
+	defaultResponseHeaderTimeout  = 10 * time.Second
+	defaultRequestTimeout         = 15 * time.Second
+	defaultReadinessTimeout       = 2 * time.Second
+	defaultShutdownTimeout        = 10 * time.Second
+	defaultIdleConnTimeout        = 60 * time.Second
+	defaultReadHeaderTimeout      = 5 * time.Second
+	defaultReadTimeout            = 10 * time.Second
+	defaultWriteTimeout           = 30 * time.Second
+	minimumConfiguredTimeout      = 100 * time.Millisecond
+	maximumRequestTimeout         = 30 * time.Second
+	maximumReadTimeout            = 30 * time.Second
+	maximumWriteTimeout           = 65 * time.Second
+	maximumGeneralTimeout         = 5 * time.Minute
+	serverWriteSafetyMargin       = 5 * time.Second
+	defaultMaxBodyBytes     int64 = 1 << 20
+	maxConfiguredBodyBytes  int64 = 16 << 20
 )
 
 type LookupEnv func(string) (string, bool)
