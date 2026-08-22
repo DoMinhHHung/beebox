@@ -14,7 +14,12 @@ import (
 
 func correlationTestKey(t *testing.T) requestcorrelation.Key {
 	t.Helper()
-	value := base64.RawURLEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
+	return correlationTestKeyFromMaterial(t, "0123456789abcdef0123456789abcdef")
+}
+
+func correlationTestKeyFromMaterial(t *testing.T, material string) requestcorrelation.Key {
+	t.Helper()
+	value := base64.RawURLEncoding.EncodeToString([]byte(material))
 	key, err := requestcorrelation.LoadKey(func(name string) (string, bool) {
 		if name == requestcorrelation.KeyEnvironmentVariable {
 			return value, true
@@ -29,6 +34,11 @@ func correlationTestKey(t *testing.T) requestcorrelation.Key {
 
 func newCorrelationSignupHandler(t *testing.T, signup *fakeSignup) http.Handler {
 	t.Helper()
+	return newCorrelationSignupHandlerWithKey(t, signup, correlationTestKey(t))
+}
+
+func newCorrelationSignupHandlerWithKey(t *testing.T, signup *fakeSignup, key requestcorrelation.Key) http.Handler {
+	t.Helper()
 	appID := applicationinstance.InternalID(42)
 	base := New(
 		http.NotFoundHandler(),
@@ -37,7 +47,7 @@ func newCorrelationSignupHandler(t *testing.T, signup *fakeSignup) http.Handler 
 		signup,
 		&fakeVerification{},
 	)
-	return WithTrustedRequestCorrelation(base, correlationTestKey(t))
+	return WithTrustedRequestCorrelation(base, key)
 }
 
 func correlationSignupRequest() *http.Request {
@@ -59,7 +69,7 @@ func TestAuthenticatedGatewayCorrelationBecomesAuditCorrelation(t *testing.T) {
 		t.Fatal("parse request ID")
 	}
 	req := correlationSignupRequest()
-	req.Header.Set(RequestIDHeader, "client-selected-value")
+	req.Header.Set(RequestIDHeader, requestID)
 	req.Header.Set(requestcorrelation.InternalIDHeader, requestID)
 	req.Header.Set(requestcorrelation.InternalSignatureHeader, requestcorrelation.Sign(key, id))
 	res := httptest.NewRecorder()
@@ -72,6 +82,34 @@ func TestAuthenticatedGatewayCorrelationBecomesAuditCorrelation(t *testing.T) {
 	}
 	if got := hex.EncodeToString(signup.correlation[:]); got != requestID {
 		t.Fatalf("audit correlation = %q want trusted gateway correlation %q", got, requestID)
+	}
+}
+
+func TestMismatchedGatewayKeyKeepsPublicIDButFreshensAuditCorrelation(t *testing.T) {
+	const requestID = "00112233445566778899aabbccddeeff"
+	gatewayKey := correlationTestKeyFromMaterial(t, "0123456789abcdef0123456789abcdef")
+	identityKey := correlationTestKeyFromMaterial(t, "fedcba9876543210fedcba9876543210")
+	id, ok := requestcorrelation.ParseID(requestID)
+	if !ok {
+		t.Fatal("parse request ID")
+	}
+	signup := &fakeSignup{}
+	handler := newCorrelationSignupHandlerWithKey(t, signup, identityKey)
+	req := correlationSignupRequest()
+	req.Header.Set(RequestIDHeader, requestID)
+	req.Header.Set(requestcorrelation.InternalIDHeader, requestID)
+	req.Header.Set(requestcorrelation.InternalSignatureHeader, requestcorrelation.Sign(gatewayKey, id))
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body=%s", res.Code, res.Body.String())
+	}
+	if values := res.Header().Values(RequestIDHeader); len(values) != 1 || values[0] != requestID {
+		t.Fatalf("public request IDs = %#v want exactly %q", values, requestID)
+	}
+	auditID := hex.EncodeToString(signup.correlation[:])
+	if auditID == requestID || len(auditID) != 32 {
+		t.Fatalf("mismatched proof selected audit correlation: public=%q audit=%q", requestID, auditID)
 	}
 }
 
@@ -95,7 +133,7 @@ func TestDirectIdentityValidLookingRequestIDIsNotAuditAuthority(t *testing.T) {
 	}
 }
 
-func TestInvalidInternalCorrelationSignatureFallsBackToFreshCorrelation(t *testing.T) {
+func TestMalformedInternalCorrelationEnvelopeMintsFreshPublicAndAuditIDs(t *testing.T) {
 	const supplied = "00112233445566778899aabbccddeeff"
 	signup := &fakeSignup{}
 	handler := newCorrelationSignupHandler(t, signup)
@@ -110,7 +148,7 @@ func TestInvalidInternalCorrelationSignatureFallsBackToFreshCorrelation(t *testi
 	}
 	values := res.Header().Values(RequestIDHeader)
 	if len(values) != 1 || len(values[0]) != 32 || values[0] == supplied {
-		t.Fatalf("invalid provenance was accepted: %#v", values)
+		t.Fatalf("malformed provenance selected public request ID: %#v", values)
 	}
 	if got := hex.EncodeToString(signup.correlation[:]); got != values[0] {
 		t.Fatalf("audit correlation = %q response request ID = %q", got, values[0])
