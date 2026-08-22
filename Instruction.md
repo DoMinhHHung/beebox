@@ -47,15 +47,21 @@ PostgreSQL
 
 ### Gateway
 
-`cmd/beebox-gateway` is the public HTTP edge. It owns public listener lifecycle, reverse proxying, request/correlation IDs, forwarding-header sanitization, bounded body/transport timeouts, safe access logs, health/readiness and graceful shutdown.
+`cmd/beebox-gateway` is the public HTTP edge. It owns public listener lifecycle, reverse proxying, canonical public request IDs, authenticated Gateway -> Identity correlation metadata, forwarding-header sanitization, bounded pre-dispatch API bodies, bounded transport/server timeouts, safe access logs, health/readiness and graceful shutdown.
 
-Gateway owns **no product database tables, migrations or product authorization**. It never verifies passwords, grants sessions, resolves identifier ownership, performs MFA/RBAC decisions or trusts client forwarding metadata as authority. It must not automatically retry ambiguous state-changing requests.
+Gateway must ignore client `X-Request-ID`, strip client copies of BeeBox internal correlation/signature headers and generate a fresh cryptographically random 16-byte / 32-lowercase-hex public request ID for every edge request. It signs that generated ID with HMAC-SHA256 using the dedicated `BEEBOX_INTERNAL_CORRELATION_KEY`; Identity may reuse it only after constant-time verification. The public caller receives exactly one `X-Request-ID` value.
+
+Gateway owns **no product database tables, migrations or product authorization**. It never verifies passwords, grants sessions, resolves identifier ownership, performs MFA/RBAC decisions or trusts client forwarding/correlation metadata as authority. Possession of a request ID or the internal correlation key is never application/user/tenant authorization. Gateway must not automatically retry ambiguous state-changing requests.
+
+Gateway-generated canonical `/v1` failures use the same BeeBox nested error envelope as Identity. Stable edge codes are `request_too_large` (413), `upstream_unavailable` (502) and `upstream_timeout` (504); error bodies and response headers use the same canonical request ID and must not expose internal transport detail.
 
 ### Identity Service
 
 `cmd/beebox-identity` is the internal Phase 1/2 authority. Identity/authentication/session behavior remains in one service because current correctness paths share security-sensitive PostgreSQL transactions, replay/concurrency invariants and audit boundaries. Identity exclusively owns the current Phase 1/2 mutable PostgreSQL state and migrations.
 
-Identity remains independently responsible for application scope, authentication, authorization, Origin/CSRF/redirect validation and all security-state decisions. Being reachable from Gateway grants no trust.
+Identity remains independently responsible for application scope, authentication, authorization, Origin/CSRF/redirect validation and all security-state decisions. Being reachable from Gateway grants no product trust.
+
+Identity establishes correlation once at the outer HTTP composition boundary. A valid-looking direct `X-Request-ID` without authenticated internal proof is not authoritative and must be replaced with a fresh Identity correlation. Phase 1/2 wrapper handlers consume request-context correlation rather than independently creating competing request IDs.
 
 ### Service/data ownership rules
 
@@ -67,6 +73,8 @@ Identity remains independently responsible for application scope, authentication
 - External/internal I/O is bounded by context, timeouts and safe retry semantics.
 - Identity should be private/internal by deployment topology; direct Internet exposure is not a supported bypass path.
 - PostgreSQL remains correctness authority for owned persistent state. Redis may cache derived state but cannot be required for correctness without an explicit freshness/invalidation design.
+- `BEEBOX_INTERNAL_CORRELATION_KEY` is dedicated observability infrastructure: raw 32-byte high-entropy key, unpadded base64url, same value on the serving Gateway/Identity hop, never reused for JWT/TOTP/OAuth/application/database authority, never logged or returned.
+- Correlation MAC proves provenance of tracing metadata only. It is not a replacement for transport security on an untrusted internal network.
 
 A future bounded context may become another runtime only when an ADR defines a stable contract, exclusive data ownership, failure modes, SLO/operability, deployment order, migration and rollback. Do not create empty services before the behavior exists. ADR 0009 defines Phase 3 Organization/Authorization as one coherent future bounded context; P3.0 is contract-only.
 
@@ -199,6 +207,10 @@ These are merge-blocking:
 - Security-sensitive required audit stays in the correctness transaction.
 - Provider/network failure maps to stable safe errors and never leaks vendor/internal detail.
 - All I/O propagates context and has bounded resources/timeouts; ambiguous mutations are not blindly retried.
+- Gateway `/v1` edge failures remain canonical BeeBox errors: nested envelope, stable 413/502/504 codes, safe messages and matching request-ID header/body.
+- A Gateway 504 after dispatch does not prove a state-changing operation failed to commit. Clients reuse the same supported idempotency key or reconcile authoritative state before retrying.
+- Current bounded API request bodies are validated before upstream dispatch, including unknown/chunked lengths. An oversized body must not partially reach Identity.
+- Request/correlation IDs are observability only and cannot influence authorization or tenant scope.
 
 Use standard Go cryptography and established OAuth/OIDC/WebAuthn/SAML/JWT guidance as applicable; never invent cryptographic primitives.
 
@@ -219,6 +231,8 @@ Use standard Go cryptography and established OAuth/OIDC/WebAuthn/SAML/JWT guidan
 - Bound payloads, pagination, queues, retries, fan-out, caches and concurrency.
 - Retry only classified transient and safe/idempotent work, with bounded backoff when appropriate.
 - Metrics labels have bounded cardinality. Logs/traces carry safe correlation identifiers, never credentials.
+- Gateway server deadlines are service-specific: read timeout must cover read-header timeout and write timeout must remain after read + whole-request timeout with an explicit safety margin. Invalid ordering fails startup; do not weaken Identity server defaults to make Gateway timeouts work.
+- For bounded Phase 1/2 API bodies, pre-dispatch buffering is intentional correctness behavior. Future streaming/upload endpoints require a separate contract and resource model.
 - Performance claims require benchmarks/profiles/query plans/load evidence.
 
 ## 8. Testing strategy
@@ -231,6 +245,8 @@ Tests are risk-based:
 - Gateway -> owning service -> PostgreSQL integration for critical public journeys;
 - negative/unauthorized/cross-tenant/replay/expiry/partial-failure/concurrency cases;
 - Go race tests and fuzz/property tests where useful.
+
+Gateway boundary tests must cover client request-ID/internal-header spoofing, authenticated correlation provenance, direct-Identity invalid-proof fallback, exactly-one public request ID, canonical SDK-decodable 413/502/504, actual-server timeout/deadline behavior, mutation-outcome ambiguity without automatic retry, and unknown/chunked body-limit exact-boundary/cancellation/cleanup behavior.
 
 Repository CI must run on the exact current head. Current required checks include formatting, independent Gateway/Identity builds, Docker/Compose topology validation, vet, `govulncheck`, OpenAPI, Go SDK, social-provider stress/race checks, `go test ./...`, PostgreSQL 17 integration including Gateway and full `go test -race ./...`.
 
