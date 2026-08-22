@@ -42,7 +42,7 @@ The Gateway is the public HTTP edge. It owns:
 - liveness and readiness, where readiness depends on the required Identity upstream;
 - graceful shutdown and safe canonical upstream failure mapping.
 
-For every public request, Gateway ignores any inbound `X-Request-ID`, removes any client-supplied internal correlation/signature headers, and generates a fresh cryptographically random 16-byte ID rendered as 32 lowercase hexadecimal characters. That ID is the single public `X-Request-ID` for the request. Gateway signs the exact ID with HMAC-SHA256 using the dedicated `BEEBOX_INTERNAL_CORRELATION_KEY` and domain-separated purpose input, then forwards only the generated internal correlation ID plus its signature to Identity.
+For every public request, Gateway ignores any inbound `X-Request-ID`, removes any client-supplied internal correlation/signature headers, and generates a fresh cryptographically random 16-byte ID rendered as 32 lowercase hexadecimal characters. That ID is the single public `X-Request-ID` for the request. Gateway signs the exact ID with HMAC-SHA256 using the dedicated `BEEBOX_INTERNAL_CORRELATION_KEY` and domain-separated purpose input, then forwards the generated public ID, internal correlation ID and signature to Identity.
 
 The Gateway owns **no product PostgreSQL tables, migration runner, password verification, token trust decision, session authorization, identifier ownership, MFA decision, organization membership decision or RBAC policy**. Network position, possession of a correlation ID, or possession of the internal correlation key is never authentication or authorization evidence.
 
@@ -58,7 +58,16 @@ Identity Service exclusively owns the current mutable BeeBox product PostgreSQL 
 
 Identity Service still validates application scope, authentication, authorization, Origin, CSRF, redirect and security state itself. Requests arriving from Gateway do not receive elevated product trust.
 
-Identity establishes exactly one request correlation at the outer HTTP composition boundary. It accepts a Gateway-supplied correlation only when the internal ID is canonical and the HMAC signature verifies in constant time with the configured dedicated key. Missing or invalid proof, including a direct caller supplying a valid-looking public `X-Request-ID`, causes Identity to generate a fresh correlation. Wrapper handlers consume the correlation from request context rather than independently minting competing IDs.
+Identity establishes two distinct observability values at the outer HTTP composition boundary:
+
+1. **Public/wire request ID** — diagnostic-only metadata used for the Identity response `X-Request-ID` and canonical BeeBox `error.request_id`.
+2. **Trusted audit correlation** — the correlation value passed into audit-sensitive application behavior. A Gateway candidate may be reused here only when its HMAC proof verifies with the configured dedicated key.
+
+With valid matching Gateway/Identity correlation keys, both values are the Gateway-generated ID `G`. With a complete, well-formed Gateway-style envelope whose signature encoding is canonical but whose HMAC does not verify under the Identity key, Identity retains `G` only as the non-authoritative public/wire diagnostic ID and generates a fresh audit correlation `I`. The public header and canonical error body therefore remain `G`, while audit evidence uses `I`. This split is intentional during a mixed-key rollout and prevents loss of the public support/error identifier without trusting unverified provenance as audit authority.
+
+A direct Identity request, or a malformed/incomplete Gateway-style envelope, cannot select either value through a client `X-Request-ID`. Identity generates a fresh local public request ID and a fresh local audit correlation. Public-ID shape, private network source, `Host`, `X-Forwarded-*` headers or Gateway reachability never establish audit trust. Neither the public request ID nor the audit correlation can grant authentication, tenant, session, MFA or authorization authority.
+
+Wrapper handlers consume trusted audit correlation from request context rather than independently minting competing audit IDs. Public error/request-ID production consumes the distinct public/wire request ID.
 
 ### Data ownership
 
@@ -82,15 +91,15 @@ Current Phase 1/2 public bodies are bounded API requests, not streaming-upload c
 
 The Gateway does not automatically retry state-changing `POST`, `PUT`, `PATCH` or `DELETE` requests. A 504 after dispatch does **not** prove that Identity failed to commit: the outcome may be unknown. Clients must not blindly replay a non-idempotent mutation. If the operation supports an idempotency key, the same key must be reused; otherwise the client should reconcile/fetch authoritative state before deciding whether to retry. Operation-specific replay/idempotency contracts remain authoritative.
 
-Identity business errors and security responses remain canonical; the Gateway does not reinterpret application authorization.
+Identity business errors and security responses remain canonical; the Gateway does not reinterpret application authorization and does not parse/rewrite arbitrary Identity JSON to repair request correlation.
 
 ## Internal correlation secret
 
-`BEEBOX_INTERNAL_CORRELATION_KEY` is dedicated observability/transport metadata infrastructure. It is a raw 32-byte high-entropy key encoded as unpadded base64url. Gateway and Identity serving the same topology must be configured with the same value, and both fail startup when their required key configuration is absent or malformed.
+`BEEBOX_INTERNAL_CORRELATION_KEY` is dedicated observability/transport metadata infrastructure. It is a raw 32-byte high-entropy key encoded as unpadded base64url. Gateway and Identity serving the same topology must normally be configured with the same value, and both fail startup when their required key configuration is absent or malformed.
 
-The key is not reused as a JWT signing key, TOTP encryption key, social OAuth state key, application secret or database credential. It and correlation signatures are never logged or returned publicly. The HMAC authenticates only provenance of correlation metadata; it cannot bypass application credentials, sessions, MFA, Origin, CSRF, tenant checks or authorization.
+The key is not reused as a JWT signing key, TOTP encryption key, social OAuth state key, application secret or database credential. It and correlation signatures are never logged or returned publicly. The HMAC authenticates only provenance of trusted audit correlation metadata; it cannot bypass application credentials, sessions, MFA, Origin, CSRF, tenant checks or authorization.
 
-Rotation is a coordinated service rollout concern. Deploy matching key material to both sides of the Gateway/Identity hop; a temporary mismatch must fail closed to a newly generated Identity correlation rather than accepting unverified metadata. Do not add a PKI/service mesh solely for this correlation mechanism.
+Rotation is a coordinated service rollout concern. Deploy matching key material to both sides of the Gateway/Identity hop. During a temporary mixed-key window, a well-formed Gateway diagnostic envelope keeps its public edge ID `G` stable in the proxied response while Identity rejects `G` as trusted audit provenance and mints `I`. Trace/audit continuity therefore intentionally splits until configuration converges, but the public support/error ID remains internally consistent and no product authority is granted. Operators should restore matching key configuration rather than introducing a permissive unsigned fallback. Do not add a PKI/service mesh solely for this correlation mechanism.
 
 ## Lifecycle and deployment order
 
@@ -111,13 +120,13 @@ Both processes own graceful shutdown with bounded deadlines. Identity closes Pos
 
 Gateway is the public entry point. Identity Service should bind to a loopback/private interface by default and deployment infrastructure must prevent direct Internet exposure. Operators must not expose Identity as an alternate public path around edge controls.
 
-Private network placement is defense in depth only. Identity continues to enforce authentication, application/tenant isolation and authorization on every request. The correlation HMAC authenticates only the tracing/correlation metadata, not the whole service connection. This ADR does not introduce service mesh or mandatory mTLS infrastructure. A deployment that crosses an untrusted network must add an appropriate transport-security design before doing so.
+Private network placement is defense in depth only. Identity continues to enforce authentication, application/tenant isolation and authorization on every request. The correlation HMAC authenticates only trusted audit-correlation provenance, not the whole service connection. This ADR does not introduce service mesh or mandatory mTLS infrastructure. A deployment that crosses an untrusted network must add an appropriate transport-security design before doing so.
 
 ## Observability
 
-Gateway always creates the public request ID; a caller cannot select audit correlation by supplying `X-Request-ID`. Gateway normalizes proxied responses so exactly one public `X-Request-ID` value is emitted. Identity verifies authenticated internal provenance before using the same value for request/audit correlation; direct or invalidly signed requests receive fresh Identity correlation instead.
+Gateway always creates the public edge request ID; a caller cannot select it by supplying `X-Request-ID`. Gateway normalizes proxied responses so exactly one public `X-Request-ID` value is emitted. Identity's canonical error body uses the public/wire request ID already established at the outer Identity boundary, so Gateway does not need to parse/rewrite business JSON.
 
-Correlation is observability only. No authorization, tenancy or product-security decision may depend on a correlation/request ID or on the internal correlation key.
+When Gateway proof verifies, public request ID and trusted audit correlation are equal. When a complete Gateway-style envelope is well formed but its HMAC does not verify, the public request ID remains the Gateway diagnostic value while the trusted audit correlation is fresh and independent. Direct/malformed requests receive fresh Identity public and audit values. This divergence is observability degradation only; correlation never authorizes product behavior.
 
 Logs and metric labels must never contain passwords, OTPs, recovery codes, refresh/access tokens, OAuth authorization codes, provider tokens, signing/encryption/correlation keys, correlation signatures or unbounded query values. Gateway access logs intentionally omit query strings because OAuth/code/state and email-link material may appear there.
 
@@ -139,6 +148,6 @@ BeeBox continues to forbid service-per-function/handler/table decomposition, sha
 
 ## Consequences
 
-The network hop adds an availability/latency boundary and therefore requires explicit timeout, readiness, observability and failure handling. Bounded pre-dispatch body buffering intentionally trades at most the configured small API-body memory bound for the guarantee that an oversized unknown-length mutation is never partially dispatched. Authenticated correlation adds one dedicated shared secret that must be coordinated operationally but does not become product authority.
+The network hop adds an availability/latency boundary and therefore requires explicit timeout, readiness, observability and failure handling. Bounded pre-dispatch body buffering intentionally trades at most the configured small API-body memory bound for the guarantee that an oversized unknown-length mutation is never partially dispatched. Authenticated correlation adds one dedicated shared secret that must be coordinated operationally but does not become product authority. A brief mixed-key window intentionally splits public diagnostic continuity from trusted audit continuity rather than weakening HMAC verification.
 
 In exchange BeeBox gains independently buildable Gateway and Identity artifacts and a clear public/internal deployment boundary without sacrificing Phase 1/2 transactional correctness.
