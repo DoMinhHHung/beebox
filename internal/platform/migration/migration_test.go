@@ -52,6 +52,7 @@ func TestEmbeddedSourcesAreValidAndOrdered(t *testing.T) {
 		"00023_identity_profile_self_service.sql",
 		"00024_email_signin_links.sql",
 		"00025_organizations.sql",
+		"00026_organization_memberships.sql",
 	}
 	if len(entries) != len(want) {
 		t.Fatalf("embedded migration count = %d, want %d", len(entries), len(want))
