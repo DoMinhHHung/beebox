@@ -21,14 +21,11 @@ CREATE TABLE organization_role_definitions (
     CONSTRAINT organization_role_definitions_opaque_id_key UNIQUE (opaque_id),
     CONSTRAINT organization_role_definitions_application_key_key UNIQUE (application_instance_id, role_key),
     CONSTRAINT organization_role_definitions_application_instance_id_id_key UNIQUE (application_instance_id, id),
-    CONSTRAINT organization_role_definitions_role_key_check CHECK (
+    CONSTRAINT organization_role_definitions_key_check CHECK (
         octet_length(role_key) BETWEEN 1 AND 63
-        AND role_key ~ '^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$'
+        AND role_key ~ '^[a-z][a-z0-9]*([._-][a-z0-9]+)*$'
     )
 );
-
-CREATE INDEX organization_role_definitions_application_opaque_id_idx
-    ON organization_role_definitions(application_instance_id, opaque_id);
 
 CREATE TABLE organization_permission_definitions (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -41,24 +38,21 @@ CREATE TABLE organization_permission_definitions (
 
     CONSTRAINT organization_permission_definitions_opaque_id_key UNIQUE (opaque_id),
     CONSTRAINT organization_permission_definitions_application_key_key UNIQUE (application_instance_id, permission_key),
-    CONSTRAINT organization_permission_definitions_application_resource_action_key UNIQUE (application_instance_id, resource_key, action_key),
+    CONSTRAINT organization_permission_definitions_app_resource_action_key UNIQUE (application_instance_id, resource_key, action_key),
     CONSTRAINT organization_permission_definitions_application_instance_id_id_key UNIQUE (application_instance_id, id),
-    CONSTRAINT organization_permission_definitions_permission_key_check CHECK (
-        octet_length(permission_key) BETWEEN 1 AND 63
-        AND permission_key ~ '^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$'
+    CONSTRAINT organization_permission_definitions_key_check CHECK (
+        octet_length(permission_key) BETWEEN 1 AND 127
+        AND permission_key ~ '^[a-z][a-z0-9]*([._-][a-z0-9]+)*$'
     ),
-    CONSTRAINT organization_permission_definitions_resource_key_check CHECK (
+    CONSTRAINT organization_permission_definitions_resource_check CHECK (
         octet_length(resource_key) BETWEEN 1 AND 63
-        AND resource_key ~ '^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$'
+        AND resource_key ~ '^[a-z][a-z0-9]*([._-][a-z0-9]+)*$'
     ),
-    CONSTRAINT organization_permission_definitions_action_key_check CHECK (
+    CONSTRAINT organization_permission_definitions_action_check CHECK (
         octet_length(action_key) BETWEEN 1 AND 63
-        AND action_key ~ '^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$'
+        AND action_key ~ '^[a-z][a-z0-9]*([._-][a-z0-9]+)*$'
     )
 );
-
-CREATE INDEX organization_permission_definitions_application_opaque_id_idx
-    ON organization_permission_definitions(application_instance_id, opaque_id);
 
 CREATE TABLE organization_role_permission_grants (
     application_instance_id BIGINT NOT NULL,
@@ -94,3 +88,12 @@ CREATE TABLE organization_membership_role_assignments (
     CONSTRAINT organization_membership_role_assignments_timestamp_order_check
         CHECK (updated_at >= created_at)
 );
+
+CREATE INDEX organization_role_definitions_application_opaque_id_idx
+    ON organization_role_definitions(application_instance_id, opaque_id);
+
+CREATE INDEX organization_permission_definitions_application_opaque_id_idx
+    ON organization_permission_definitions(application_instance_id, opaque_id);
+
+CREATE INDEX organization_membership_role_assignments_application_role_idx
+    ON organization_membership_role_assignments(application_instance_id, role_definition_id, membership_id);
