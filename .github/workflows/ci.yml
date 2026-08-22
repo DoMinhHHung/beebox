@@ -203,6 +203,7 @@ jobs:
             ./internal/identity/postgres \
             ./internal/authentication/postgres \
             ./internal/session/postgres \
+            ./internal/organization/postgres \
             ./internal/httpapi \
             ./internal/gateway \
             2>&1 | tee /tmp/beebox-pg-integration.log
