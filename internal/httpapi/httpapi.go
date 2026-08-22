@@ -119,7 +119,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Authentication is temporarily unavailable.", "request_unavailable")
 		return
 	}
-	requestID := hex.EncodeToString(correlationID[:])
+	requestID := publicRequestIDForRequest(r)
+	if requestID == "" {
+		requestID = hex.EncodeToString(correlationID[:])
+	}
 	w.Header().Set(RequestIDHeader, requestID)
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
