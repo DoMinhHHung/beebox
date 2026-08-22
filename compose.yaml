@@ -15,7 +15,7 @@ services:
     volumes:
       - beebox-postgres:/var/lib/postgresql/data
     networks:
-      - beebox-backend
+      - identity-data
 
   mailpit:
     image: axllent/mailpit:v1.27.8
@@ -24,7 +24,7 @@ services:
     ports:
       - "8025:8025"
     networks:
-      - beebox-backend
+      - identity-data
 
   identity:
     build:
@@ -49,7 +49,8 @@ services:
       postgres:
         condition: service_healthy
     networks:
-      - beebox-backend
+      - gateway-identity
+      - identity-data
 
   gateway:
     build:
@@ -64,10 +65,12 @@ services:
       identity:
         condition: service_started
     networks:
-      - beebox-backend
+      - gateway-identity
 
 networks:
-  beebox-backend:
+  gateway-identity:
+    driver: bridge
+  identity-data:
     driver: bridge
 
 volumes:

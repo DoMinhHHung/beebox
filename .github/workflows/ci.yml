@@ -92,6 +92,16 @@ jobs:
           upstream = (gateway.get('environment') or {}).get('BEEBOX_IDENTITY_UPSTREAM_URL', '')
           if 'identity:8081' not in upstream:
               raise SystemExit('gateway must route to the private identity service')
+
+          gateway_networks = set(gateway.get('networks') or {})
+          identity_networks = set(identity.get('networks') or {})
+          postgres_networks = set(postgres.get('networks') or {})
+          if not gateway_networks.intersection(identity_networks):
+              raise SystemExit('gateway and identity require a shared service network')
+          if not identity_networks.intersection(postgres_networks):
+              raise SystemExit('identity and postgres require a shared data network')
+          if gateway_networks.intersection(postgres_networks):
+              raise SystemExit('gateway must not share a direct network with postgres')
           PY
           docker build --target gateway -t beebox-gateway:ci .
           docker build --target identity -t beebox-identity:ci .
