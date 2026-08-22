@@ -20,6 +20,16 @@ import (
 	"golang.org/x/oauth2"
 )
 
+type deadlineBlockingTransport struct {
+	calls atomic.Int32
+}
+
+func (t *deadlineBlockingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	t.calls.Add(1)
+	<-req.Context().Done()
+	return nil, req.Context().Err()
+}
+
 func TestOIDCProofRejectsInvalidCryptographicClaims(t *testing.T) {
 	t.Parallel()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -132,20 +142,20 @@ func TestProviderBackchannelCancellationTimeoutBoundAndNoRetry(t *testing.T) {
 		}
 	})
 	t.Run("timeout", func(t *testing.T) {
-		var calls atomic.Int32
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			calls.Add(1)
-			time.Sleep(100 * time.Millisecond)
-		}))
-		defer server.Close()
-		client := server.Client()
-		client.Timeout = 10 * time.Millisecond
-		a := &adapter{provider: authentication.ProviderDiscord, clientID: "fake-client", clientSecret: "fake-secret", redirectURL: server.URL + "/callback", tokenURL: server.URL, userInfoURL: server.URL, authStyle: oauth2.AuthStyleInParams, mode: subjectTopLevelStringID, httpClient: client}
-		if _, err := a.ExchangeIdentity(context.Background(), "fake-code", "", [32]byte{}); err == nil {
-			t.Fatal("expected timeout")
+		transport := &deadlineBlockingTransport{}
+		client := &http.Client{Timeout: 25 * time.Millisecond, Transport: transport}
+		a := &adapter{provider: authentication.ProviderDiscord, clientID: "fake-client", clientSecret: "fake-secret", redirectURL: "https://client.example.test/callback", tokenURL: "https://provider.example.test/token", userInfoURL: "https://provider.example.test/user", authStyle: oauth2.AuthStyleInParams, mode: subjectTopLevelStringID, httpClient: client}
+		started := time.Now()
+		_, err := a.ExchangeIdentity(context.Background(), "fake-code", "", [32]byte{})
+		elapsed := time.Since(started)
+		if err != authentication.ErrSocialProviderProof {
+			t.Fatalf("timeout error = %v, want safe provider proof failure", err)
 		}
-		if calls.Load() != 1 {
-			t.Fatalf("timeout calls = %d", calls.Load())
+		if calls := transport.calls.Load(); calls != 1 {
+			t.Fatalf("timeout transport calls = %d, want exactly 1", calls)
+		}
+		if elapsed > time.Second {
+			t.Fatalf("timeout was not bounded: %s", elapsed)
 		}
 	})
 	t.Run("bounded response", func(t *testing.T) {
