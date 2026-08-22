@@ -56,7 +56,7 @@ func TestOrganizationAuthorizationMigrationUpgradesExactVersion26(t *testing.T) 
 		"organization_role_definitions_application_key_key",
 		"organization_role_definitions_application_instance_id_id_key",
 		"organization_permission_definitions_application_key_key",
-		"organization_permission_definitions_application_resource_action_key",
+		"organization_permission_definitions_app_resource_action_key",
 		"organization_permission_definitions_application_instance_id_id_key",
 		"organization_role_permission_grants_role_scope_fk",
 		"organization_role_permission_grants_permission_scope_fk",
