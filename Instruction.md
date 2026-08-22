@@ -1,419 +1,291 @@
 # BeeBox Repository Instructions
 
-> Status: engineering constitution and delivery plan for a greenfield repository.  
+> Status: engineering constitution and delivery plan.  
 > Product benchmark reviewed: Clerk public documentation on 2026-08-16.  
-> Applies to every human, AI agent, branch, pull request, service, SDK, migration, and deployment in this repository unless a newer accepted ADR explicitly overrides a section.
+> Applies to every human, AI agent, branch, pull request, service, SDK, migration and deployment unless a newer accepted ADR explicitly overrides a section.
 
 ## 1. Product definition
 
-BeeBox is an open-source, developer-first identity and access platform written primarily in Go. It aims to provide the product capabilities developers expect from Clerk—authentication, user and session management, organizations, authorization, machine identities, webhooks, administration, and billing entitlements—through BeeBox-owned contracts and implementation.
+BeeBox is an open-source, developer-first identity and access platform written primarily in Go. It aims to provide the public product capabilities developers expect from Clerk—authentication, user/session management, organizations, authorization, machine identities, webhooks, administration and billing entitlements—through BeeBox-owned contracts and implementation.
 
-“Clerk clone” means **public capability parity as a product benchmark**, not source-code, API, UI, documentation, trademark, asset, or proprietary-behavior copying. BeeBox must have its own naming, contracts, threat model, implementation, design system, and release policy.
+“Clerk clone” means **public capability parity as a product benchmark**, not source-code, API, UI, documentation, trademark, asset or proprietary-behavior copying. BeeBox owns its naming, contracts, threat models, implementation, design system and release policy.
 
 ### Goals
 
 - Secure defaults for B2C and B2B identity flows.
-- A fast local setup and a clear self-hosting path.
-- Stable, versioned APIs and SDKs with excellent Go support first.
-- Headless APIs plus optional prebuilt UI components.
-- Strong tenant isolation, auditability, observability, and migration safety.
-- A codebase that can evolve from one deployable into bounded-context services without a rewrite.
+- Fast local setup and a clear self-hosting path.
+- Stable versioned APIs and SDKs, with Go first.
+- Headless APIs plus optional hosted/prebuilt UI.
+- Strong tenant isolation, auditability, observability and migration safety.
+- Explicit bounded-context ownership that can evolve without rewriting identity correctness.
 
-### Non-goals for the initial releases
+### Non-goals for initial releases
 
-- Bit-for-bit or endpoint-for-endpoint compatibility with Clerk.
-- A microservice per feature, function, endpoint, or database table.
-- Kubernetes, Kafka, service mesh, event sourcing, CQRS, or multi-region active-active before measured demand.
-- Building every SDK and social/enterprise provider before the core contracts stabilize.
+- Bit-for-bit or endpoint-for-endpoint Clerk compatibility.
+- A microservice per feature, function, endpoint or table.
+- Shared mutable table ownership or distributed transactions.
+- Kubernetes, Kafka, service mesh, CQRS, event sourcing or multi-region active-active without measured need and a ratified design.
 - Inventing cryptography or authentication protocols.
 
-## 2. Architecture decision: modular monolith first, microservices by evidence
+## 2. Architecture decision: Gateway + bounded-context services
 
-BeeBox uses a **microservice-ready modular monolith** for the first production releases. The initial system is one Go deployable with strict bounded-context package boundaries. This is intentional: authentication needs atomic state transitions, a small team needs short feedback loops, and premature network boundaries multiply consistency, latency, security, testing, and operational failure modes.
+ADR 0008 supersedes the original one-deployable modular-monolith baseline. BeeBox now starts its microservice topology with the **smallest coherent extraction**:
 
-“Use microservices” is satisfied as an evolutionary target, not by creating empty services on day one. A module may be extracted only when an ADR provides evidence for at least one of these drivers:
-
-- materially different scale or latency profile;
-- independent ownership and release cadence;
-- security/compliance isolation;
-- availability or blast-radius isolation;
-- a stable contract and a clear single owner for its data.
-
-The ADR must also define API/event contracts, data ownership, SLOs, timeouts, retry/idempotency semantics, deployment order, observability, incident ownership, migration, and rollback. Extracted services must not share mutable table ownership. Cross-service workflows use explicit APIs and, when asynchronous delivery is justified, transactional outbox/inbox plus idempotent consumers. Distributed transactions are forbidden.
-
-```mermaid
-flowchart TD
-    C["Apps and SDKs"] --> E["Edge/API"]
-    E --> R["Go identity runtime"]
-    R --> D["PostgreSQL"]
-    R --> P["Email, SMS, OAuth, payment providers"]
-    R --> O["Outbox and workers"]
+```text
+Public clients
+     |
+     v
+BeeBox Gateway
+     |
+     | bounded HTTP
+     v
+BeeBox Identity Service
+     |
+     v
+PostgreSQL
 ```
 
-Likely future extraction order, only after the criteria above are met:
+### Gateway
 
-1. Notification delivery and webhook dispatch workers.
-2. Audit/log ingestion and retention.
-3. Machine authentication/token verification if its traffic profile diverges.
-4. Billing entitlements and payment orchestration.
-5. Core identity, authentication, and sessions last because their consistency boundary is tightly coupled.
+`cmd/beebox-gateway` is the public HTTP edge. It owns public listener lifecycle, reverse proxying, request/correlation IDs, forwarding-header sanitization, bounded body/transport timeouts, safe access logs, health/readiness and graceful shutdown.
+
+Gateway owns **no product database tables, migrations or product authorization**. It never verifies passwords, grants sessions, resolves identifier ownership, performs MFA/RBAC decisions or trusts client forwarding metadata as authority. It must not automatically retry ambiguous state-changing requests.
+
+### Identity Service
+
+`cmd/beebox-identity` is the internal Phase 1/2 authority. Identity/authentication/session behavior remains in one service because current correctness paths share security-sensitive PostgreSQL transactions, replay/concurrency invariants and audit boundaries. Identity exclusively owns the current Phase 1/2 mutable PostgreSQL state and migrations.
+
+Identity remains independently responsible for application scope, authentication, authorization, Origin/CSRF/redirect validation and all security-state decisions. Being reachable from Gateway grants no trust.
+
+### Service/data ownership rules
+
+- No service-per-function/handler/table decomposition.
+- No shared mutable table ownership.
+- No distributed transactions.
+- Cross-service APIs use stable BeeBox-owned identifiers, never raw PostgreSQL primary keys as public contracts.
+- HTTP is sufficient for Gateway -> Identity. Do not add gRPC/message buses for appearance.
+- External/internal I/O is bounded by context, timeouts and safe retry semantics.
+- Identity should be private/internal by deployment topology; direct Internet exposure is not a supported bypass path.
+- PostgreSQL remains correctness authority for owned persistent state. Redis may cache derived state but cannot be required for correctness without an explicit freshness/invalidation design.
+
+A future bounded context may become another runtime only when an ADR defines a stable contract, exclusive data ownership, failure modes, SLO/operability, deployment order, migration and rollback. Do not create empty services before the behavior exists. ADR 0009 defines Phase 3 Organization/Authorization as one coherent future bounded context; P3.0 is contract-only.
 
 ## 3. Clean Architecture rules
 
 Clean Architecture is a dependency rule, not a folder-count target.
 
-- **Domain:** entities, value objects, policies, state machines, and invariants. No HTTP, SQL, queue, vendor SDK, environment, or framework imports.
-- **Application:** use cases and orchestration. Depends on domain and narrow ports. Owns transaction intent, authorization intent, and stable application errors.
-- **Ports:** interfaces only at real I/O, clock/random/crypto, or provider boundaries. Do not create an interface for every struct.
-- **Adapters:** HTTP/gRPC handlers, PostgreSQL repositories, Redis, email/SMS/OAuth/payment providers, queues, and telemetry.
-- **Composition:** process startup, dependency wiring, config validation, lifecycle, migrations, and graceful shutdown.
+- **Domain:** entities, policies, state machines and invariants. No HTTP, SQL, queue, vendor SDK, environment or framework imports.
+- **Application:** use cases/orchestration. Depends inward and owns transaction/authorization intent plus stable errors.
+- **Ports:** interfaces only at real I/O, clock/random/crypto or provider boundaries. No interface per struct.
+- **Adapters:** HTTP, PostgreSQL, provider SDK/protocol, telemetry and Gateway edge code depend inward.
+- **Composition:** process startup, concrete wiring, configuration, lifecycle, migrations and shutdown.
 
-Dependency direction is always inward. Domain and application code must not import adapter packages. Public API/event models do not double as database models. Vendor types never cross a BeeBox public boundary.
+Public API/event models never double as database/vendor models. Vendor types do not cross BeeBox public boundaries. Existing good package boundaries stay in place when moving files would only create churn.
 
-Recommended initial layout:
+Current layout direction:
 
 ```text
-cmd/beebox/                   process entrypoint
-internal/platform/           config, database, telemetry, HTTP, crypto primitives
-internal/identity/           users, identifiers, profiles, metadata
-internal/authentication/     sign-up/sign-in, verification, factors, recovery
-internal/session/            clients, sessions, tokens, devices, revocation
-internal/organization/       organizations, memberships, invitations, domains
-internal/authorization/      roles, permissions, policy and entitlement checks
-internal/machineauth/        API keys, M2M, OAuth applications/server
-internal/webhook/            subscriptions, signing, delivery, retry
-internal/audit/              security and administrative audit events
-internal/billing/            plans, features, subscriptions, entitlements
-api/openapi/                 versioned public HTTP contracts
-api/events/                  versioned event schemas
-migrations/                  ordered database migrations
-sdk/go/                      first maintained SDK
-web/                         optional dashboard and prebuilt components
-docs/adr/                    architecture decisions
-docs/threat-model/           assets, trust boundaries, threats and controls
+cmd/beebox-gateway/           public edge process
+cmd/beebox-identity/          Phase 1/2 Identity process
+cmd/beebox/                   compatibility/rollback operator path while schema-compatible
+internal/gateway/             edge proxy/configuration adapter
+internal/platform/            config, database, HTTP lifecycle, crypto primitives
+internal/identity/            users, identifiers, profiles
+internal/authentication/      signup/signin, factors, linking, recovery, reverification
+internal/session/             sessions, tokens, refresh/revocation
+internal/audit/               security audit behavior
+api/openapi/                  versioned public HTTP contract
+sdk/go/                       maintained Go SDK
+migrations/                   Identity-owned ordered migrations
+docs/adr/                     architecture decisions
+docs/contracts/               language-neutral contracts
+docs/threat-model/            threat models/deltas
 ```
 
-Package names may change as code emerges. Do not create empty packages to match this tree.
+Future organization/authorization, machine-auth, webhook and billing packages/runtimes appear only with implemented behavior and explicit ownership; do not create empty scaffolding.
 
 ## 4. Capability inventory
 
-This inventory is a benchmark and roadmap, not a promise that all features ship in v1. Every capability needs its full lifecycle—configuration, API, persistence, authorization, validation, failure semantics, audit, observability, tests, documentation, and deletion/revocation—not merely a handler or UI.
+This is a product benchmark/roadmap, not a claim that every capability ships today. Each shipped capability needs configuration, public contract, persistence/ownership, authorization, validation, failure semantics, audit/observability, tests, documentation and deletion/revocation lifecycle where applicable.
 
-### 4.1 Applications, workspaces, instances, and environments
+### 4.1 Applications and environments
 
-- Workspace ownership, members, transfer, and application grouping.
-- Applications/instances with isolated development, staging, and production credentials and data.
-- Publishable and secret keys; rotation, revocation, scope, last-used metadata, and secure display.
-- Allowed origins, redirect URLs, authorized parties, primary/custom/satellite domains, proxy deployments, and domain changes.
-- Instance-level authentication, session, organization, security, email/SMS, and branding configuration.
-- Environment validation, safe defaults, import/export where safe, and production-readiness checks.
-- Dashboard for users, organizations, sessions, credentials, logs, webhooks, billing, and configuration.
-- Application logs with filtering, correlation, retention policy, and redaction.
+- Application/instance isolation, credentials, rotation/revocation and allowed origins/redirects/domains.
+- Environment-specific authentication/session/organization/security/provider/branding policy.
+- Admin views, application logs, safe redaction, production-readiness checks and controlled import/export.
 
-### 4.2 Sign-up, sign-in, and verification
+### 4.2 Sign-up, sign-in and verification
 
-- Email address, phone number, username, and configurable profile-field collection.
-- Password authentication with secure hashing, password policy, rehash, change, forgot/reset, and compromised-credential response.
-- Passwordless email OTP, SMS OTP, and email verification/sign-in links.
-- Social OAuth/OIDC connections, provider account linking/unlinking, PKCE/state/nonce, custom credentials, and a “last used method” hint.
-- Google One Tap-style accelerated sign-in where the provider supports it.
-- Passkeys/WebAuthn registration, authentication, naming, listing, and revocation.
-- Multi-factor authentication using supported factors, backup/recovery codes, enrollment, challenge, reset, and step-up/reverification.
-- Device trust and remembered-device policy with explicit expiry and revocation.
-- Enterprise SSO using SAML and OIDC, domain enforcement, Just-in-Time provisioning, and connection lifecycle.
-- Configurable verification requirements at sign-up and for added identifiers.
-- Account linking rules that prevent takeover and handle conflicting verified identifiers.
-- Session tasks for incomplete requirements such as verification, legal consent, password reset, or organization selection.
-- Waitlist, invitations/sign-in tickets, allowlisted identifiers, blocked identifiers, user lock/ban, and controlled registration modes.
-- Terms/privacy consent with policy version and acceptance timestamp.
-- CAPTCHA/bot and abuse protection, rate limiting, attempt budgets, lockout, enumeration resistance, and replay prevention.
-- Custom sign-up/sign-in flows and prebuilt flows with stable error codes.
+- Email/phone/password, OTP, email links, social OAuth/OIDC, explicit account linking/unlinking.
+- Passkeys/WebAuthn, MFA, recovery codes, factor reset and step-up/reverification.
+- Configurable verification, account-linking rules, registration modes, invitations/tickets and abuse defenses.
+- Enterprise SAML/OIDC and directory provisioning only in later ratified phases.
+- Every primary proof must preserve enumeration resistance, rate/attempt budgets, replay prevention and tenant scope.
 
 ### 4.3 User management
 
-- User CRUD, list/search/filter/pagination, public profile, avatar, locale, external ID, and timestamps.
-- Multiple email addresses and phone numbers with verification and primary-identifier changes.
-- Connected social/enterprise accounts and passkeys.
-- Public, private, and unsafe metadata with explicit visibility and size limits.
-- Password/factor/session administration, lock/ban/unban, and sign-out everywhere.
-- Invitations and one-time sign-in/actor tokens.
-- Support impersonation with actor/subject claims, short lifetime, visible indication, permission checks, and audit trail.
-- Account deletion, tenant deletion, export, retention, tombstone/anonymization, and downstream cleanup.
-- Administrative and user self-service profile experiences.
+- User CRUD/list/search with bounded pagination, profile/avatar/locale/external ID and timestamps.
+- Multiple identifiers with verification/primary semantics.
+- Linked providers/passkeys/factors/session administration.
+- Metadata only with explicit visibility/size policy.
+- Lock/ban, deletion/export/retention and support impersonation with actor/subject audit.
 
-### 4.4 Clients, sessions, and tokens
+### 4.4 Sessions and tokens
 
-- Browser/client lifecycle, active session selection, multi-session/account switching, sign-out one or all.
-- Session creation, list, touch, refresh, inactivity timeout, maximum lifetime, revoke, expire, and device/IP/user-agent metadata policy.
-- Secure cookie and bearer-token transport with CSRF and authorized-party protections.
-- Short-lived signed session JWTs, standard claims, custom claims, token templates, and size limits.
-- JWKS publication, key IDs, signing-key rotation, clock skew, issuer/audience/expiry validation, and cache behavior.
-- Session reverification/step-up for sensitive actions and pending session tasks.
-- Actor/impersonated-session representation and detection.
-- Session and token APIs for backend verification without forcing a synchronous BeeBox call on every request.
+- Session create/list/touch/refresh/revoke/expire with explicit inactivity/absolute lifetime.
+- Secure cookies and bearer transport, CSRF/authorized-origin protections.
+- Short-lived signed JWTs/JWKS, key rotation and strict issuer/audience/time validation.
+- Reverification for sensitive operations and explicit revocation/freshness limits.
 
 ### 4.5 Organizations and B2B identity
 
-- Organization create/read/update/delete, image, slug, metadata, limits, and personal-account mode.
-- Membership lifecycle, member lists, active organization switching, leave/remove, and default organization behavior.
-- Invitations with roles, expiry, revoke/resend/accept, duplicate handling, and existing-user behavior.
-- Verified organization domains, enrollment modes, ownership verification, domain invitations, and conflict rules.
-- Default and custom roles, fine-grained permissions, system permissions, role sets, and default-role assignment.
-- Server-side authorization helpers that are default-deny and tenant-aware.
-- Organization-scoped SAML/OIDC enterprise connections, JIT provisioning, and per-domain enforcement.
-- Directory Sync/SCIM-style provisioning and deprovisioning, custom-attribute sync, group-to-role mapping, reconciliation, and audit.
-- Organization profile, organization list, creation, switching, membership, and invitation UI flows.
+- Organizations, memberships, active organization, invitations and verified domains.
+- Default/custom roles, fine-grained permissions and default-deny server authorization.
+- Organization-scoped Enterprise SSO/directory sync only after its own trust/ownership contracts.
+- Organization UI/API/SDK flows after P3 runtime contracts stabilize.
+
+ADR 0009 and `docs/contracts/phase3-organization-authorization.md` are the P3.0 baseline. `application_instance` remains the root tenant boundary; organization is additional scope.
 
 ### 4.6 Authorization and entitlements
 
-- Subject/resource/action policy checks for users, organizations, machines, and support actors.
-- RBAC for organization roles and permissions; policy extension points only after concrete use cases.
-- Feature definitions shared by authorization and billing entitlements.
-- Plan/feature checks for B2C users and B2B organizations.
-- Server-side enforcement; UI visibility is never an authorization control.
-- Claim freshness, cache invalidation, permission-change propagation, and audit decisions for sensitive actions.
+- Subject/resource/action/scope authorization for users, organizations, machines and support actors.
+- Application-owned role/permission vocabulary with authoritative membership state.
+- UI visibility is never an authorization control.
+- Feature definitions do not automatically equal paid entitlements.
+- Mutable authorization claim freshness, cache invalidation and permission-change propagation require explicit design.
 
 ### 4.7 Machine authentication and OAuth platform
 
-- User- and organization-scoped API keys with name, description, scopes, claims, expiry, one-time secret display, verification, last-used metadata, and revocation.
-- Machine identities and M2M tokens for service-to-service authentication.
-- JWT and opaque token formats with explicit validation, lookup, revocation, and latency trade-offs.
-- OAuth applications/clients, client secrets, redirect URIs, consent, scopes, authorization code + PKCE, access/refresh tokens, rotation, introspection/revocation, and audit.
-- OAuth authorization server/discovery/JWKS capabilities needed for first-party apps, third-party integrations, agents, and MCP servers.
-- Rate limits, quotas, credential compromise response, and safe key rotation runbooks.
+- User/org API keys, machine identities and M2M tokens with scopes, expiry, rotation/revocation and audit.
+- OAuth applications/authorization server behavior only through versioned contracts with PKCE, consent, scopes, introspection/revocation as required.
 
-### 4.8 APIs, SDKs, UI, and developer experience
+### 4.8 APIs, SDKs, UI and developer experience
 
-- Versioned Frontend and Backend APIs with stable resource IDs, errors, pagination, idempotency, and deprecation policy.
-- Go backend/client SDK first; JavaScript/TypeScript frontend SDK and other SDKs only after contracts stabilize.
-- Middleware/helpers for authenticate, optional/required auth, authorization, token verification, and machine credentials.
-- Headless custom-flow primitives for every supported lifecycle.
-- Prebuilt sign-in, sign-up, user button/profile, organization switcher/list/profile/create, API-key management, pricing table, checkout, and subscription-management components.
-- Hosted account portal/auth pages as an optional integration path.
-- Themes, appearance/layout, custom CSS, branding, localization, custom routes, redirect behavior, legal/support links, and accessible UI.
-- Test identities, test email/phone behavior, authenticated test helpers, and agent task/session setup for Playwright/Cypress-like workflows.
-- Quickstarts, examples, API references, upgrade/migration guides, changelog, and reproducible code generation.
-- Integrations through standards and documented adapters; provider breadth follows demand.
+- Versioned Frontend/Backend APIs, stable IDs/errors/pagination/idempotency/deprecation.
+- Go SDK first; frontend/other SDKs follow stable contracts.
+- Headless primitives plus hosted/prebuilt surfaces, theming/localization and safe redirect/legal/support configuration.
+- Quickstarts, examples, upgrade guides and reproducible generation.
 
-### 4.9 Webhooks, events, audit, and logs
+### 4.9 Webhooks, events, audit and logs
 
-- Versioned user, session, organization, membership, invitation, machine-auth, and billing events.
-- Webhook endpoint CRUD, event subscriptions, signing secrets, timestamped signatures, verification, rotation, and replay protection.
-- At-least-once delivery, idempotency identifiers, ordering rules, bounded exponential retry with jitter, delivery attempts, observability, disable policy, and manual replay.
-- Transactional outbox so committed state and emitted events do not diverge.
-- Immutable security/admin audit records containing actor, subject, tenant, action, resource, result, time, source, and correlation ID; sensitive values redacted.
-- Application logs and dashboards that support incident investigation without exposing credentials or unnecessary PII.
+- Versioned events, signed webhooks, bounded retry/replay and idempotency.
+- Transactional outbox only when asynchronous committed-state delivery is actually introduced.
+- Security/admin audit with minimized actor/subject/application/organization/action/resource/result/time/correlation evidence.
 
-### 4.10 Billing and monetization
+### 4.10 Billing
 
-- B2C user and B2B organization billing models.
-- Plans, features, free/default plans, monthly and annual prices, free trials, and custom prices.
-- Flat and seat-based organization plans, seat limits, purchased seats, and membership reconciliation.
-- Subscriptions and subscription items: create, upgrade/downgrade, cancel, renew, trial extension, and status transitions.
-- Discounts and promo codes with amount/percentage, duration, eligibility, and redemption rules.
-- Checkout, payer/customer, payment methods, payment attempts, statements/invoices where supported, credits/balances, totals, taxes, and currency constraints.
-- Entitlement checks that fail safely during payment/provider outages and reconcile asynchronously.
-- Stripe adapter first, isolated behind BeeBox ports; BeeBox contracts must not expose Stripe models.
-- Billing webhooks, payment/subscription reconciliation, idempotency, audit, and support tooling.
+- B2C/B2B plans/features/subscriptions, checkout/trials/discounts/seats/entitlements and a provider adapter only in the billing phase.
+- Payment/provider state never silently becomes identity correctness authority.
 
-### 4.11 Operations and enterprise readiness
+### 4.11 Operations
 
-- Health/readiness, graceful shutdown, structured logs, metrics, traces, correlation IDs, SLOs, alerts, and runbooks.
-- Backups and verified restore, migration safety, data retention, export/deletion, and disaster recovery.
-- Key and secret rotation, least-privilege service credentials, environment separation, and incident response.
-- Quotas, tenant fairness, abuse controls, provider failover/degradation, and background reconciliation.
-- Security documentation, threat models, vulnerability reporting, dependency/provenance checks, SBOM/signing when maturity requires it.
-- Multi-region and advanced compliance only after data residency, consistency, recovery, and operational requirements are explicit.
-
-Reference baseline:
-
-- [Authentication options](https://clerk.com/docs/guides/configure/auth-strategies/sign-up-sign-in-options)
-- [Organizations](https://clerk.com/docs/guides/organizations/overview)
-- [Roles and permissions](https://clerk.com/docs/guides/organizations/control-access/roles-and-permissions)
-- [Session tokens](https://clerk.com/docs/guides/sessions/session-tokens)
-- [Machine authentication](https://clerk.com/docs/guides/development/machine-auth/overview)
-- [Billing](https://clerk.com/docs/guides/billing/overview)
-- [Directory Sync](https://clerk.com/docs/guides/configure/auth-strategies/enterprise-connections/directory-sync)
-- [Webhooks](https://clerk.com/docs/guides/development/webhooks/overview)
+- Health/readiness, bounded graceful shutdown, structured safe logs, metrics/traces/correlation, SLOs/alerts/runbooks.
+- Backups/restores, key/secret rotation, migration safety, retention/deletion and incident response.
+- Advanced multi-region/compliance only after explicit residency/consistency/recovery requirements.
 
 ## 5. Core domain and security invariants
 
-These are merge-blocking requirements:
+These are merge-blocking:
 
-- Every row/resource belongs to an explicit application/instance and, where applicable, an organization. Server-side queries enforce that scope.
-- Authentication proves identity; authorization separately decides access. Never trust client-supplied tenant, owner, role, permission, or entitlement.
-- Verified identifiers are normalized consistently and protected by database constraints. Account linking cannot be based on an unverified claim.
-- Passwords use a reviewed password-hashing library and tunable parameters. OTPs, reset tokens, API keys, recovery codes, and similar secrets are generated with cryptographic randomness and stored hashed when lookup/lifecycle permits.
-- A secret is never logged. PII is minimized and redacted in logs, metrics, traces, events, fixtures, and error responses.
-- Tokens validate an algorithm allowlist, signature, issuer, audience/authorized party, expiry/not-before, and rotation semantics. JWT revocation limitations must be explicit.
-- State-changing endpoints define idempotency, retry, replay, concurrency, and transaction behavior.
-- Session and privilege elevation rotate or reverify credentials as required; logout/revoke semantics are explicit.
-- Support impersonation always preserves actor identity and audit evidence.
-- All external I/O has context, timeouts, bounded resources, and safe retry behavior.
-- Security-sensitive actions create an audit event even when asynchronous notification later fails.
-- Deletion, retention, backup, and restore behavior are designed before claiming compliance.
+- Every resource belongs to an explicit application and, where applicable, organization. Server-side queries enforce scope.
+- Authentication proves identity; authorization independently decides access. Never trust client tenant/user/owner/role/permission/entitlement fields.
+- Public resource IDs are locators only.
+- Verified identifiers are normalized consistently and protected by database constraints. Equality never implicitly links principals.
+- Password/OTP/token/key/recovery secrets use reviewed primitives/libraries and cryptographic randomness. Store derived/hashed/encrypted forms according to lifecycle; never log secrets.
+- PII is minimized/redacted in logs, metrics, traces, events, fixtures and errors.
+- Tokens validate an allowlisted algorithm, signature, issuer/audience/authorized party and time claims with explicit rotation/revocation limitations.
+- Security mutations define validation, uniqueness, idempotency, replay, concurrency and transaction behavior.
+- Important relational invariants use PostgreSQL constraints/serialization, not application pre-checks alone.
+- Security-sensitive required audit stays in the correctness transaction.
+- Provider/network failure maps to stable safe errors and never leaks vendor/internal detail.
+- All I/O propagates context and has bounded resources/timeouts; ambiguous mutations are not blindly retried.
 
-Use OWASP ASVS, OAuth 2.1/OIDC, WebAuthn, SAML, JWT BCP, and Go cryptography libraries as applicable. Never implement cryptographic primitives from scratch.
+Use standard Go cryptography and established OAuth/OIDC/WebAuthn/SAML/JWT guidance as applicable; never invent cryptographic primitives.
 
-## 6. Data, APIs, and event contracts
+## 6. Data, APIs and events
 
-- PostgreSQL is the initial source of truth. Redis is optional and may not be required for correctness.
-- Database constraints enforce uniqueness and referential/domain invariants; application checks alone are insufficient under concurrency.
-- Migrations are ordered, repeatable, reviewed, and safe for rolling deploy. Use expand/contract for breaking schema evolution. Backfills are batched, observable, restartable, and separate from dangerous long locks.
+- PostgreSQL is the initial source of truth for each owning service.
+- A mutable table has one service owner.
+- Historical merged migrations are never rewritten. New migrations are ordered and rolling/rollback-safe; breaking evolution uses expand/contract.
 - Repositories expose domain-oriented operations, not generic CRUD abstractions.
-- Public HTTP APIs live under an explicit version (for example `/v1`). Stable machine-readable error codes are separate from safe human messages.
-- List APIs are bounded and paginated with deterministic ordering. Mutations document idempotency.
-- Event schemas have names, versions, immutable identifiers, occurrence time, tenant/application scope, subject/resource references, and compatibility rules.
-- Never reuse an existing field/event with a new meaning. Deprecations need telemetry, documentation, migration path, and removal criteria.
+- Public HTTP APIs use explicit versions such as `/v1`; machine-readable error codes remain stable and separate from safe messages.
+- Lists are bounded/paginated/deterministically ordered and cursors are tenant-scoped.
+- Public/event/schema contracts are language-neutral and versioned. Never change an existing field/event meaning in place.
 
-## 7. Reliability, performance, and observability
+## 7. Reliability, performance and observability
 
-- Correctness first; optimize only with a workload and measurement.
-- Propagate `context.Context` through I/O. Define deadline budgets at request/job boundaries. Close rows, bodies, timers, tickers, connections, and goroutines.
-- Bound pagination, queues, worker pools, caches, retries, fan-out, payloads, and concurrency.
-- Retries apply only to classified transient failures and safe/idempotent operations; use capped exponential backoff with jitter.
-- Metrics must cover rate, error, latency, saturation, authentication failures, OTP abuse, session/token operations, database pools, provider failures, webhook backlog, and job age. Labels must have bounded cardinality.
-- Logs and traces carry request/correlation/tenant-safe identifiers and never secrets.
-- Every critical user journey has an SLO and a runbook once production traffic exists.
-- Performance PRs include before/after benchmarks, profiles, query plans, or load-test evidence on a defined workload.
+- Correctness first; optimize from a measured workload.
+- Propagate `context.Context`; close rows/bodies/timers/connections/goroutines.
+- Bound payloads, pagination, queues, retries, fan-out, caches and concurrency.
+- Retry only classified transient and safe/idempotent work, with bounded backoff when appropriate.
+- Metrics labels have bounded cardinality. Logs/traces carry safe correlation identifiers, never credentials.
+- Performance claims require benchmarks/profiles/query plans/load evidence.
 
 ## 8. Testing strategy
 
-Tests are risk-based, not coverage theater.
+Tests are risk-based:
 
-- Domain unit tests for state machines and invariants.
-- Application tests for authorization, transactions, idempotency, retries, and failure mapping.
-- PostgreSQL integration tests for constraints, queries, races, and migrations.
-- Contract tests for public APIs, events, SDKs, and provider adapters.
-- End-to-end tests for critical identity journeys.
-- Negative, unauthorized, cross-tenant, enumeration, replay, expiry, boundary, and partial-failure cases.
-- Race tests for concurrent Go code; fuzz/property tests for parsers, token/identifier handling, and stateful invariants where valuable.
-- Benchmarks/load tests only for critical paths with a target workload.
+- domain/application unit tests for state/invariants/authorization;
+- PostgreSQL integration for constraints, transactions, migrations and races;
+- API/SDK/provider contract tests;
+- Gateway -> owning service -> PostgreSQL integration for critical public journeys;
+- negative/unauthorized/cross-tenant/replay/expiry/partial-failure/concurrency cases;
+- Go race tests and fuzz/property tests where useful.
 
-Expected Go checks once the scaffold exists:
+Repository CI must run on the exact current head. Current required checks include formatting, independent Gateway/Identity builds, Docker/Compose topology validation, vet, `govulncheck`, OpenAPI, Go SDK, social-provider stress/race checks, `go test ./...`, PostgreSQL 17 integration including Gateway and full `go test -race ./...`.
 
-```bash
-gofmt -w .
-go vet ./...
-go test ./...
-go test -race ./...
-```
+## 9. Phased delivery
 
-The repository may wrap these in `make`, `task`, or CI commands. Use the repository-native command when introduced. CI must run required checks on the current PR head SHA.
-
-## 9. Planning and phased delivery
-
-Do not attempt the entire capability inventory in one milestone.
-
-### Phase 0 — Repository and contracts
-
-- Initialize Go module `github.com/DoMinhHHung/beebox` with the supported Go version.
-- Add config validation, structured logging, HTTP lifecycle, health endpoints, PostgreSQL connection, migration runner, CI, lint/test commands, contribution/security docs, and initial threat model.
-- Define resource ID, error, pagination, idempotency, time, API-version, audit-event, and tenancy conventions.
-- Deliver one thin authenticated health/example slice only if it proves the architecture without inventing product behavior.
+### Phase 0 — Repository/contracts
+Go module, lifecycle, config, health, PostgreSQL, migrations, CI and conventions.
 
 ### Phase 1 — B2C core
+Application isolation/credentials, users/email/password, sessions/JWT/JWKS, refresh/revoke, OpenAPI and Go SDK.
 
-- Application/instance isolation and credentials.
-- Users and verified email identifiers.
-- Email + password sign-up/sign-in, email OTP verification, password reset.
-- Sessions, secure cookies/bearer tokens, JWT/JWKS, refresh/revoke/sign-out.
-- Minimal Go SDK and OpenAPI contract.
-
-Exit criteria: complete lifecycle, negative/security tests, audit events, operational metrics, documented local setup, and no cross-tenant access.
-
-### Phase 2 — Passwordless, social, MFA, and self-service
-
-- Email links/OTP, phone OTP through an adapter, first social OAuth provider, account linking.
-- Passkeys, MFA, recovery codes, step-up/reverification, device/session management.
-- User profile, hosted/headless flows, theming/localization baseline.
-- Abuse defenses and provider-outage behavior.
+### Phase 2 — Passwordless/social/MFA/self-service
+Email/phone OTP and links, social OAuth/linking, passkeys, TOTP/recovery, reverification, session/account self-service, hosted/headless baseline and hardening.
 
 ### Phase 3 — Organizations and authorization
-
-- Organizations, memberships, invitations, active organization, verified domains.
-- Roles, permissions, feature definitions, tenant-aware authorization helpers.
-- B2B UI/API/SDK flows and adversarial cross-tenant test suite.
+P3.0 contract first; later vertical slices implement organizations, memberships, invitations, active organization, domains, roles, permissions, authorization helpers and B2B surfaces. Do not implement runtime beyond the authorized slice.
 
 ### Phase 4 — Enterprise and machine identity
+Enterprise SSO/directory provisioning, API keys, machine identities, M2M and OAuth platform.
 
-- SAML/OIDC enterprise connections, JIT policy, then Directory Sync/SCIM.
-- User/org API keys, machine identities, M2M tokens, OAuth applications/server.
-- Credential rotation/revocation, scopes, audit, quotas, and incident runbooks.
+### Phase 5 — Webhooks/admin/operational maturity
+Transactional event delivery when needed, webhook/audit/admin workflows, retention/export/deletion, restore/SLO/alert exercises.
 
-### Phase 5 — Webhooks, administration, and operational maturity
+### Phase 6 — Billing and further justified bounded-context extraction
+Billing/entitlements plus additional service extraction only where ownership/scale/isolation/deploy evidence satisfies Section 2.
 
-- Transactional outbox, signed webhook delivery, retries/replay tooling.
-- Audit/log dashboards, impersonation, admin workflows, retention/export/deletion.
-- SLOs, alerts, restore exercises, provider reconciliation, and security review.
+Each PR should normally be a smallest complete vertical outcome. A Human may explicitly authorize a larger architectural PR; that authorization does not relax security/data/test gates.
 
-### Phase 6 — Billing and justified service extraction
+## 10. PR workflow
 
-- Plans/features, B2C/B2B subscriptions, checkout, trials, discounts, seat billing, entitlements, and Stripe adapter.
-- Profile workloads and operational ownership. Extract only bounded contexts that pass the Section 2 criteria.
+1. Personalization Router inspects actual remote state and creates task-specific Supervisor/Checker prompts.
+2. Implementer/Supervisor works from actual `main`, repository instructions and task packet, creates or updates only the authorized branch/Draft PR, verifies locally/CI and hands evidence off.
+3. Checker independently verifies current-head scope, acceptance, security, tests, reviews and mergeability and returns `ALLOW`, `DO NOT MERGE` or `BLOCKED`.
+4. Human alone performs the authorized Ready/merge action.
+5. Main Branch Inspector audits exact merged state when requested.
 
-Each phase is split into small vertical PRs. A PR must leave `main` buildable, testable, documented, and backward-compatible.
+Never push feature work directly to `main`, force-push without explicit authority, hide CI failures or merge from an implementation role.
 
-## 10. Issue and PR workflow
-
-The agent workflow is:
-
-1. **Personalization Router** inspects current `main` and converts the request into task-specific prompts for the Supervisor and Checker.
-2. **Implementation Supervisor** plans the smallest vertical slice and guides implementation, tests, commits, and Draft PR creation.
-3. **Checker** independently reviews the current PR head and returns `ALLOW SQUASH & MERGE`, `DO NOT MERGE`, or `BLOCKED`.
-4. A human performs squash merge only after all required gates pass.
-5. **Main Branch Inspector** periodically audits the exact `main` SHA for systemic regressions and architecture drift.
-
-### Branches and commits
-
-- Never push feature work directly to `main`.
-- Use short-lived branches such as `feat/email-password-signup`, `fix/session-replay`, `docs/repository-instructions`.
-- Keep commits reviewable; squash merge produces one outcome-oriented commit.
-- Do not mix unrelated refactors, dependency upgrades, generated churn, and features.
-
-### Required PR body
-
-- Summary and user-visible outcome.
-- Why now / linked issue.
-- Scope and explicit non-goals.
-- Design and alternatives considered.
-- Security/privacy and tenant-isolation impact.
-- API/event/data/migration compatibility.
-- Test commands and results.
-- Performance evidence when claimed.
-- Rollout, monitoring, and rollback.
-- Known risks and follow-up issues.
-
-### Merge gate
-
-Squash & merge is allowed only when required CI is green on the current head, required approvals and conversations are resolved, the branch is mergeable/current per policy, acceptance criteria have evidence, no blocker/major finding remains, and migrations/contracts/rollout are safe. A green CI run cannot compensate for missing tests or a broken requirement.
+A PR body records Summary/Why/Scope/Non-goals/Design/Security & tenant impact/API-data-migration impact/Tests & exact results/Rollout/Rollback/Risks/Follow-ups.
 
 ## 11. Definition of Done
 
-A feature is done only when:
+A change is done only when behavior/non-goals are explicit; domain/security/tenant invariants are enforced; contracts/docs/generated artifacts are current; risk-appropriate happy/negative/authz/tenant/concurrency/failure tests pass; secrets/PII/audit are safe; timeout/retry/idempotency/cleanup behavior is defined; rollout/rollback are credible; required checks pass on final head; and independent Checker evidence has no blocking finding before Human merge.
 
-- behavior and non-goals are documented;
-- domain/security/tenant invariants are enforced in code and database where applicable;
-- API/event/schema changes are versioned and generated artifacts/docs are current;
-- happy, negative, unauthorized, cross-tenant, concurrency, and failure paths are tested according to risk;
-- secrets/PII are protected and audit events exist for sensitive actions;
-- timeouts, retries, idempotency, cleanup, and provider failure behavior are defined;
-- migration, rollout, monitoring, and rollback are credible;
-- focused and full repository checks pass on the final head SHA;
-- the Checker allows squash & merge;
-- follow-up debt has an explicit issue, owner, and reason for deferral.
-
-“Handler exists”, “UI renders”, “CI green”, and “works on my machine” are not definitions of done.
+“Handler exists”, “UI renders”, “CI green” and “works on my machine” are not definitions of done by themselves.
 
 ## 12. Decision priority and change control
 
-When trade-offs conflict, prioritize:
+Prioritize:
 
-1. Correctness and tenant/data integrity.
-2. Simplicity and the smallest complete vertical slice.
-3. Maintainability and explicit contracts.
-4. Security, privacy, and reliability as release gates.
-5. Developer experience.
-6. Performance after measurement.
+1. correctness and tenant/data integrity;
+2. security/privacy/reliability as release gates;
+3. simplest complete ownership/transaction design;
+4. maintainability and explicit contracts;
+5. developer experience;
+6. performance after measurement.
 
-Any change to product identity, tenant model, account-linking semantics, token trust boundary, public compatibility policy, data ownership, or modular-monolith-first strategy requires an ADR and explicit maintainer approval. Agents must surface conflicts; they must not silently reinterpret this document.
+Changes to product identity, tenant model, account-link semantics, token trust boundary, public compatibility policy, mutable data ownership or service/deployment trust boundaries require an ADR and explicit maintainer/Human authority. ADR 0008 is the authorized record for the current microservice transition. Agents must surface future conflicts rather than quietly reinterpreting this document.

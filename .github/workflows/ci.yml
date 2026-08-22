@@ -59,6 +59,43 @@ jobs:
           go build ./cmd/beebox-gateway
           go build ./cmd/beebox-identity
 
+      - name: Validate microservice container topology
+        shell: bash
+        run: |
+          docker compose config --format json > /tmp/beebox-compose.json
+          python3 - <<'PY'
+          import json
+
+          with open('/tmp/beebox-compose.json', encoding='utf-8') as f:
+              cfg = json.load(f)
+          services = cfg['services']
+          required = {'gateway', 'identity', 'postgres', 'mailpit'}
+          missing = required.difference(services)
+          if missing:
+              raise SystemExit(f'missing compose services: {sorted(missing)}')
+
+          gateway = services['gateway']
+          identity = services['identity']
+          postgres = services['postgres']
+          if gateway.get('build', {}).get('target') != 'gateway':
+              raise SystemExit('gateway must build the gateway Docker target')
+          if identity.get('build', {}).get('target') != 'identity':
+              raise SystemExit('identity must build the identity Docker target')
+          if 'BEEBOX_DATABASE_URL' in (gateway.get('environment') or {}):
+              raise SystemExit('gateway must not receive product database credentials')
+          if not gateway.get('ports'):
+              raise SystemExit('gateway must be the published HTTP entry point')
+          if identity.get('ports'):
+              raise SystemExit('identity must not publish a host port in reference topology')
+          if postgres.get('ports'):
+              raise SystemExit('postgres must not publish a host port in reference topology')
+          upstream = (gateway.get('environment') or {}).get('BEEBOX_IDENTITY_UPSTREAM_URL', '')
+          if 'identity:8081' not in upstream:
+              raise SystemExit('gateway must route to the private identity service')
+          PY
+          docker build --target gateway -t beebox-gateway:ci .
+          docker build --target identity -t beebox-identity:ci .
+
       - name: Vet
         run: go vet ./...
 
