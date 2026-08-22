@@ -8,7 +8,11 @@ import (
 func TestAccessTokenClaimsDoNotCarryOrganizationAuthority(t *testing.T) {
 	t.Parallel()
 	typeOfClaims := reflect.TypeOf(Claims{})
-	for _, forbidden := range []string{"org", "organization_id", "membership_id", "role", "roles", "permission", "permissions"} {
+	for _, forbidden := range []string{
+		"org", "organization", "organization_id",
+		"membership", "membership_id",
+		"role", "roles", "permission", "permissions",
+	} {
 		for i := 0; i < typeOfClaims.NumField(); i++ {
 			field := typeOfClaims.Field(i)
 			if field.Tag.Get("json") == forbidden || field.Name == forbidden {

@@ -25,7 +25,7 @@ func TestPasskeyMigrationUpgradesVersion17(t *testing.T) {
 	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
 		t.Fatalf("upgrade through current schema: %v", err)
 	}
-	assertMigrationState(t, ctx, pool, 26)
+	assertMigrationState(t, ctx, pool, 27)
 
 	app, err := applicationpostgres.New(pool).Create(ctx)
 	if err != nil {

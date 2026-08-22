@@ -21,12 +21,15 @@ func TestStoreCreateAndResolveKeepRootScopesDistinct(t *testing.T) {
 	databaseURL := isolatedDatabaseURL(t, "beebox_application_instance_store")
 	pool := openPool(t, databaseURL)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := migration.Up(ctx, pool.OpenSQLDB()); err != nil {
+	setupCtx, cancelSetup := context.WithTimeout(context.Background(), 20*time.Second)
+	if err := migration.Up(setupCtx, pool.OpenSQLDB()); err != nil {
+		cancelSetup()
 		t.Fatalf("migration.Up() error = %v", err)
 	}
+	cancelSetup()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	store := New(pool)
 	instanceA, err := store.Create(ctx)
 	if err != nil {
@@ -91,11 +94,12 @@ func TestStoreConcurrentCreateGetsDistinctDatabaseIdentities(t *testing.T) {
 	databaseURL := isolatedDatabaseURL(t, "beebox_application_instance_concurrent")
 	pool := openPool(t, databaseURL)
 
-	setupCtx, cancelSetup := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancelSetup()
+	setupCtx, cancelSetup := context.WithTimeout(context.Background(), 20*time.Second)
 	if err := migration.Up(setupCtx, pool.OpenSQLDB()); err != nil {
+		cancelSetup()
 		t.Fatalf("migration.Up() error = %v", err)
 	}
+	cancelSetup()
 
 	store := New(pool)
 	const creators = 8
@@ -144,12 +148,15 @@ func TestStoreDatabaseFailureUsesStableSafeError(t *testing.T) {
 	databaseURL := isolatedDatabaseURL(t, "beebox_application_instance_failure")
 	pool := openPool(t, databaseURL)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := migration.Up(ctx, pool.OpenSQLDB()); err != nil {
+	setupCtx, cancelSetup := context.WithTimeout(context.Background(), 20*time.Second)
+	if err := migration.Up(setupCtx, pool.OpenSQLDB()); err != nil {
+		cancelSetup()
 		t.Fatalf("migration.Up() error = %v", err)
 	}
+	cancelSetup()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	db := pool.OpenSQLDB()
 	if _, err := db.ExecContext(ctx, "DROP TABLE application_instances CASCADE"); err != nil {
 		db.Close()

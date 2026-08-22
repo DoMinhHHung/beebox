@@ -27,8 +27,8 @@ func TestOrganizationMembershipMigrationUpgradesExactVersion25(t *testing.T) {
 		t.Fatalf("version 25 unexpectedly contains organization_memberships: %q", *before)
 	}
 
-	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
-		t.Fatalf("upgrade exact 25 -> current schema: %v", err)
+	if err := upWithSources(ctx, pool.OpenSQLDB(), migrationSourcesRange(t, 26, 26)); err != nil {
+		t.Fatalf("upgrade exact 25 -> 26: %v", err)
 	}
 	assertMigrationState(t, ctx, pool, 26)
 

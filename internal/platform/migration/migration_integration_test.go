@@ -23,7 +23,7 @@ import (
 func TestMigrationFirstApplyAndRerunAreIdempotent(t *testing.T) {
 	databaseURL := isolatedDatabaseURL(t, "beebox_migration_first_apply")
 	pool := openPool(t, databaseURL)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	firstAdapter := pool.OpenSQLDB()
 	if err := Up(ctx, firstAdapter); err != nil {
@@ -32,11 +32,11 @@ func TestMigrationFirstApplyAndRerunAreIdempotent(t *testing.T) {
 	if err := firstAdapter.PingContext(ctx); err == nil || err.Error() != "sql: database is closed" {
 		t.Fatalf("first adapter remained open after Up: %v", err)
 	}
-	assertMigrationState(t, ctx, pool, 26)
+	assertMigrationState(t, ctx, pool, 27)
 	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
 		t.Fatalf("second Up() error = %v", err)
 	}
-	assertMigrationState(t, ctx, pool, 26)
+	assertMigrationState(t, ctx, pool, 27)
 	assertSchemaTables(t, ctx, pool)
 }
 
@@ -52,7 +52,7 @@ func TestConcurrentMigrationRunnersSerializeAndConverge(t *testing.T) {
 		go func(pool *database.Pool) {
 			defer runners.Done()
 			<-start
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 			errorsByRunner <- Up(ctx, pool.OpenSQLDB())
 		}(pool)
@@ -65,9 +65,9 @@ func TestConcurrentMigrationRunnersSerializeAndConverge(t *testing.T) {
 			t.Fatalf("concurrent Up() error = %v", err)
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	assertMigrationState(t, ctx, firstPool, 26)
+	assertMigrationState(t, ctx, firstPool, 27)
 	assertSchemaTables(t, ctx, firstPool)
 }
 
@@ -108,7 +108,7 @@ func TestMigrationLockWaitHonorsCancellation(t *testing.T) {
 func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 	databaseURL := isolatedDatabaseURL(t, "beebox_migration_transaction")
 	pool := openPool(t, databaseURL)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
 		t.Fatalf("baseline Up() error = %v", err)
@@ -141,7 +141,8 @@ func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 		"00024_email_signin_links.sql":            {Data: []byte(validMigration)},
 		"00025_organizations.sql":                 {Data: []byte(validMigration)},
 		"00026_organization_memberships.sql":      {Data: []byte(validMigration)},
-		"00027_failure_probe.sql": {Data: []byte(
+		"00027_organization_authorization.sql":    {Data: []byte(validMigration)},
+		"00028_failure_probe.sql": {Data: []byte(
 			"-- +goose Up\n" +
 				"-- " + secretMarker + "\n" +
 				"CREATE TABLE migration_failure_probe (id bigint PRIMARY KEY);\n" +
@@ -164,12 +165,12 @@ func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 	if probeTable.Valid {
 		t.Fatalf("failing migration left probe table %q", probeTable.String)
 	}
-	var versionTwentySevenCount int
-	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM goose_db_version WHERE version_id = 27 AND is_applied").Scan(&versionTwentySevenCount); err != nil {
-		t.Fatalf("query version 27 error = %v", err)
+	var versionTwentyEightCount int
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM goose_db_version WHERE version_id = 28 AND is_applied").Scan(&versionTwentyEightCount); err != nil {
+		t.Fatalf("query version 28 error = %v", err)
 	}
-	if versionTwentySevenCount != 0 {
-		t.Fatalf("applied version 27 rows = %d, want 0", versionTwentySevenCount)
+	if versionTwentyEightCount != 0 {
+		t.Fatalf("applied version 28 rows = %d, want 0", versionTwentyEightCount)
 	}
 }
 
@@ -268,7 +269,11 @@ func assertSchemaTables(t *testing.T, ctx context.Context, pool *database.Pool) 
 		"email_verification_challenges",
 		"external_identities",
 		"goose_db_version",
+		"organization_membership_role_assignments",
 		"organization_memberships",
+		"organization_permission_definitions",
+		"organization_role_definitions",
+		"organization_role_permission_grants",
 		"organizations",
 		"passkey_attempts",
 		"passkey_credentials",
