@@ -115,28 +115,39 @@ func (s *Store) RemoveMembership(ctx context.Context, current organization.Mutat
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	var membershipInternalID int64
 	var organizationID organization.ID
 	var targetUserID int64
 	err = tx.QueryRowContext(ctx, `
-		SELECT o.opaque_id::text,m.user_id
+		SELECT m.id,o.opaque_id::text,m.user_id
 		FROM organization_memberships m
 		JOIN organizations o
 		  ON o.application_instance_id=m.application_instance_id AND o.id=m.organization_id
 		WHERE m.application_instance_id=$1 AND m.opaque_id=$2::uuid
 		FOR UPDATE OF m`,
 		int64(current.ApplicationInstanceID), string(membershipID),
-	).Scan(&organizationID, &targetUserID)
+	).Scan(&membershipInternalID, &organizationID, &targetUserID)
 	if err != nil {
 		return classifyMembershipError(ctx, err)
 	}
-	if !organizationID.Valid() || !identity.InternalID(targetUserID).Valid() {
+	if membershipInternalID <= 0 || !organizationID.Valid() || !identity.InternalID(targetUserID).Valid() {
 		return organization.ErrPersistence
+	}
+
+	// Role assignment is subordinate current membership authority. P3.3 keeps
+	// the FK restrictive (NO ACTION) and removes the assignment explicitly in
+	// this same transaction rather than introducing cascade lifecycle semantics.
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM organization_membership_role_assignments
+		WHERE application_instance_id=$1 AND membership_id=$2`,
+		int64(current.ApplicationInstanceID), membershipInternalID); err != nil {
+		return classifyMembershipError(ctx, err)
 	}
 
 	result, err := tx.ExecContext(ctx, `
 		DELETE FROM organization_memberships
-		WHERE application_instance_id=$1 AND opaque_id=$2::uuid`,
-		int64(current.ApplicationInstanceID), string(membershipID))
+		WHERE application_instance_id=$1 AND id=$2`,
+		int64(current.ApplicationInstanceID), membershipInternalID)
 	if err != nil {
 		return classifyMembershipError(ctx, err)
 	}

@@ -47,15 +47,18 @@ func NewCorrelationID() (CorrelationID, error) {
 // current authentication cores. It intentionally contains no email/password
 // or verification-code data and defines no public event schema.
 type Event struct {
-	InternalID            int64
-	ApplicationInstanceID applicationinstance.InternalID
-	ActorKind             string
-	ActorUserID           *identity.InternalID
-	SubjectUserID         *identity.InternalID
-	Action                string
-	ResourceCategory      string
-	Outcome               string
-	CorrelationID         CorrelationID
-	Source                string
-	OccurredAt            time.Time
+	InternalID               int64
+	ApplicationInstanceID    applicationinstance.InternalID
+	ActorKind                string
+	ActorUserID              *identity.InternalID
+	SubjectUserID            *identity.InternalID
+	Action                   string
+	ResourceCategory         string
+	ResourceReference        string
+	OrganizationReference    string
+	RelatedResourceReference string
+	Outcome                  string
+	CorrelationID            CorrelationID
+	Source                   string
+	OccurredAt               time.Time
 }
