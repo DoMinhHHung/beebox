@@ -21,7 +21,46 @@ paths:
       operationId: getJWKS
       summary: Read Ed25519 access-token verification keys
       security: []
-      responses:
+        GatewayRequestTooLargeErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, request_id]
+          properties:
+            code: {type: string, const: request_too_large}
+            message: {type: string}
+            request_id: {type: string, pattern: '^[0-9a-f]{32}$'}
+    GatewayUpstreamUnavailableErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, request_id]
+          properties:
+            code: {type: string, const: upstream_unavailable}
+            message: {type: string}
+            request_id: {type: string, pattern: '^[0-9a-f]{32}$'}
+    GatewayUpstreamTimeoutErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, request_id]
+          properties:
+            code: {type: string, const: upstream_timeout}
+            message: {type: string}
+            request_id: {type: string, pattern: '^[0-9a-f]{32}$'}
+  responses:
         '200':
           description: Active and retiring public verification keys only.
           content:
@@ -42,6 +81,9 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/SignUpRequest'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '202': {$ref: '#/components/responses/Accepted'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
@@ -70,6 +112,9 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/PhoneRequest'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '202': {$ref: '#/components/responses/Accepted'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
@@ -97,6 +142,9 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/PhoneConfirmRequest'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200':
           description: Ordinary BeeBox session after successful phone possession proof.
           headers:
@@ -124,6 +172,9 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/EmailRequest'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '202': {$ref: '#/components/responses/Accepted'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
@@ -143,6 +194,9 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/EmailVerificationConfirmRequest'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200': {$ref: '#/components/responses/OKStatus'}
         '400': {$ref: '#/components/responses/VerificationFailed'}
         '401': {$ref: '#/components/responses/Unauthorized'}
@@ -168,6 +222,9 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/SignInRequest'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200':
           description: Tagged authenticated or MFA-required result after valid password proof.
           headers:
@@ -200,6 +257,9 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/EmailRequest'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '202': {$ref: '#/components/responses/Accepted'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
@@ -227,6 +287,9 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/EmailOTPConfirmRequest'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200':
           description: Tagged authenticated or MFA-required result after one-time OTP consumption.
           headers:
@@ -260,6 +323,9 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/PhoneRequest'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '202': {$ref: '#/components/responses/Accepted'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
@@ -286,6 +352,9 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/PhoneConfirmRequest'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200':
           description: Tagged authenticated or MFA-required result after successful one-time phone OTP consumption.
           headers:
@@ -333,6 +402,9 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/ReverificationRequest'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '201':
           description: One-time reverification grant bound to the target session and requested purpose.
           headers:
@@ -367,6 +439,9 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/SocialAuthAttemptRequest'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '201':
           description: Provider authorization URL containing BeeBox-bound state.
           headers:
@@ -407,6 +482,9 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/SocialLinkAttemptRequest'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '201':
           description: Provider authorization URL for the exact initiation-bound social link attempt.
           headers:
@@ -442,6 +520,9 @@ paths:
         - {$ref: '#/components/parameters/SocialLinkLimit'}
         - {$ref: '#/components/parameters/SocialLinkCursor'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200':
           description: Bounded page of linked social identities owned by the current application user.
           headers:
@@ -484,6 +565,9 @@ paths:
         - {$ref: '#/components/parameters/ReverificationGrantHeader'}
         - {$ref: '#/components/parameters/SocialLinkID'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '204':
           description: Link removed, already absent, not owned by the current user, or outside the current application scope; response is intentionally anti-enumerating and has no body.
           headers:
@@ -519,6 +603,9 @@ paths:
       parameters:
         - {$ref: '#/components/parameters/SocialProviderPath'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '303':
           description: Exact stored application redirect with one bounded BeeBox authentication or linking result query parameter.
           headers:
@@ -553,6 +640,9 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/SocialAuthExchangeRequest'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200':
           description: Tagged authenticated or MFA-required result after one-time social completion consumption.
           headers:
@@ -587,6 +677,9 @@ paths:
         - {$ref: '#/components/parameters/BrowserOrigin'}
         - {$ref: '#/components/parameters/ReverificationGrantHeader'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '201':
           description: One-time TOTP setup material.
           content:
@@ -618,6 +711,9 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/TOTPEnrollmentConfirmRequest'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200':
           description: Active TOTP credential metadata.
           content:
@@ -639,6 +735,9 @@ paths:
       parameters:
         - {$ref: '#/components/parameters/BrowserOrigin'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200':
           description: Whether TOTP is active plus its opaque BeeBox credential ID.
           content:
@@ -664,6 +763,9 @@ paths:
         - {$ref: '#/components/parameters/BrowserOrigin'}
         - {$ref: '#/components/parameters/ReverificationGrantHeader'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '204': {description: TOTP removed or already absent in the exact current scope.}
         '401': {$ref: '#/components/responses/InvalidSession'}
         '403': {$ref: '#/components/responses/TOTPForbidden'}
@@ -689,6 +791,9 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/TOTPAuthenticationCompleteRequest'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200':
           description: Tagged authenticated result after successful one-time TOTP completion.
           content:
@@ -722,6 +827,9 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/TOTPReplacementRequest'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '201':
           description: One-time replacement TOTP setup material; the old credential remains active.
           content:
@@ -753,6 +861,9 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/TOTPEnrollmentConfirmRequest'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200':
           description: Replacement credential metadata and the new recovery set shown exactly once.
           content:
@@ -774,6 +885,9 @@ paths:
       parameters:
         - {$ref: '#/components/parameters/BrowserOrigin'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200':
           description: Minimized recovery-code state.
           content:
@@ -801,6 +915,9 @@ paths:
         - {$ref: '#/components/parameters/BrowserOrigin'}
         - {$ref: '#/components/parameters/ReverificationGrantHeader'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200':
           description: New recovery codes shown exactly once.
           content:
@@ -829,6 +946,9 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/RecoveryCodeCompleteRequest'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200':
           description: Tagged authenticated result after one-time recovery-code consumption.
           content:
@@ -856,6 +976,9 @@ paths:
         - {$ref: '#/components/parameters/BrowserOrigin'}
         - {$ref: '#/components/parameters/ReverificationGrantHeader'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '201':
           description: Opaque WebAuthn creation options and one-time BeeBox ceremony locator.
           content:
@@ -889,6 +1012,9 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/PasskeyRegistrationCompleteRequest'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '201':
           description: Registered passkey metadata only; no private key or verifier state is exposed.
           content:
@@ -913,6 +1039,9 @@ paths:
       parameters:
         - {$ref: '#/components/parameters/BrowserOrigin'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '201':
           description: Opaque WebAuthn assertion options and one-time BeeBox ceremony locator.
           content:
@@ -944,6 +1073,9 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/PasskeyAuthenticationCompleteRequest'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200':
           description: Tagged authenticated or MFA-required result after valid passkey primary proof.
           content:
@@ -969,6 +1101,9 @@ paths:
       parameters:
         - {$ref: '#/components/parameters/BrowserOrigin'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200':
           description: Bounded passkey list for the current application/user.
           content:
@@ -997,6 +1132,9 @@ paths:
         - {$ref: '#/components/parameters/ReverificationGrantHeader'}
         - {$ref: '#/components/parameters/PasskeyID'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '204':
           description: Owned passkey removed; a valid but absent/out-of-scope locator remains non-authoritative.
         '400': {$ref: '#/components/responses/BadRequest'}
@@ -1026,6 +1164,9 @@ paths:
         - {$ref: '#/components/parameters/SessionListLimit'}
         - {$ref: '#/components/parameters/SessionListCursor'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200':
           description: Bounded newest-first page of the current user's application-scoped sessions.
           headers:
@@ -1058,6 +1199,9 @@ paths:
         - {$ref: '#/components/parameters/ReverificationGrantHeader'}
         - {$ref: '#/components/parameters/SessionID'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '204':
           description: Owned session revoked, already revoked/absent, or outside the current application/user scope without ownership disclosure.
           headers:
@@ -1086,6 +1230,9 @@ paths:
         - {$ref: '#/components/parameters/BrowserOrigin'}
         - {$ref: '#/components/parameters/ReverificationGrantHeader'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200': {$ref: '#/components/responses/OKStatus'}
         '401': {$ref: '#/components/responses/InvalidSession'}
         '403': {$ref: '#/components/responses/ReverificationFailed'}
@@ -1109,6 +1256,9 @@ paths:
         - {$ref: '#/components/parameters/BrowserOrigin'}
         - {$ref: '#/components/parameters/ReverificationGrantHeader'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200': {$ref: '#/components/responses/OKStatus'}
         '401': {$ref: '#/components/responses/InvalidSession'}
         '403': {$ref: '#/components/responses/ReverificationFailed'}
@@ -1129,6 +1279,9 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/RefreshRequest'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200':
           description: Rotated refresh state and fresh five-minute access token.
           headers:
@@ -1152,6 +1305,9 @@ paths:
         - publishableKey: []
           bearerAuth: []
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200':
           description: Current application-scoped session.
           headers:
@@ -1172,6 +1328,9 @@ paths:
         - publishableKey: []
           bearerAuth: []
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200': {$ref: '#/components/responses/OKStatus'}
         '401': {$ref: '#/components/responses/InvalidSession'}
         '503': {$ref: '#/components/responses/Unavailable'}
@@ -1184,6 +1343,9 @@ paths:
       parameters:
         - {$ref: '#/components/parameters/SessionID'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200':
           description: Session from the application authenticated by the secret key.
           headers:
@@ -1204,6 +1366,9 @@ paths:
       parameters:
         - {$ref: '#/components/parameters/SessionID'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200': {$ref: '#/components/responses/OKStatus'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/SessionNotFound'}
@@ -1221,6 +1386,9 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/EmailRequest'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '202': {$ref: '#/components/responses/Accepted'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
@@ -1244,6 +1412,9 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/PasswordResetConfirmRequest'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200': {$ref: '#/components/responses/OKStatus'}
         '400': {$ref: '#/components/responses/PasswordResetFailed'}
         '401': {$ref: '#/components/responses/Unauthorized'}
@@ -1267,6 +1438,9 @@ paths:
         - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
         - {name: cursor, in: query, required: false, schema: {type: string, minLength: 1, maxLength: 512}, description: Opaque email-identifier cursor; it conveys no authority.}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200':
           description: Bounded page of owned email identifiers.
           content:
@@ -1318,6 +1492,9 @@ paths:
               properties:
                 email: {type: string, format: email}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '201': {description: Unverified email identifier created in the exact current scope.}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/InvalidSession'}
@@ -1340,6 +1517,9 @@ paths:
         - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
         - {name: cursor, in: query, required: false, schema: {type: string, minLength: 1, maxLength: 512}, description: Opaque phone-identifier cursor; it conveys no authority.}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200':
           description: Bounded page of owned phone identifiers.
           content:
@@ -1391,6 +1571,9 @@ paths:
               properties:
                 phone: {type: string, pattern: '^\+[1-9][0-9]{1,14}$'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '201': {description: Unverified phone identifier created in the exact current scope.}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/InvalidSession'}
@@ -1415,6 +1598,9 @@ paths:
         - {$ref: '#/components/parameters/ReverificationGrantHeader'}
         - {name: identifier_id, in: path, required: true, schema: {type: string, pattern: '^eml_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '204': {description: Identifier removed or not owned in the exact current scope without ownership disclosure.}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/InvalidSession'}
@@ -1438,6 +1624,9 @@ paths:
         - {$ref: '#/components/parameters/ReverificationGrantHeader'}
         - {name: identifier_id, in: path, required: true, schema: {type: string, pattern: '^phn_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '204': {description: Identifier removed or not owned in the exact current scope without ownership disclosure.}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/InvalidSession'}
@@ -1460,6 +1649,9 @@ paths:
         - {$ref: '#/components/parameters/BrowserOrigin'}
         - {name: identifier_id, in: path, required: true, schema: {type: string, pattern: '^eml_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '202': {description: Verification request accepted for the exact owned identifier.}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/InvalidSession'}
@@ -1488,6 +1680,9 @@ paths:
               properties:
                 code: {type: string, pattern: '^[0-9]{6}$'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200': {description: Owned email identifier metadata after successful verification.}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/InvalidSession'}
@@ -1508,6 +1703,9 @@ paths:
         - {$ref: '#/components/parameters/BrowserOrigin'}
         - {name: identifier_id, in: path, required: true, schema: {type: string, pattern: '^phn_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '202': {description: Verification request accepted for the exact owned identifier.}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/InvalidSession'}
@@ -1539,6 +1737,9 @@ paths:
               properties:
                 code: {type: string, pattern: '^[0-9]{6}$'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200': {description: Owned phone identifier metadata after successful verification.}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/InvalidSession'}
@@ -1562,6 +1763,9 @@ paths:
         - {$ref: '#/components/parameters/ReverificationGrantHeader'}
         - {name: identifier_id, in: path, required: true, schema: {type: string, pattern: '^eml_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200': {$ref: '#/components/responses/OKStatus'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/InvalidSession'}
@@ -1582,6 +1786,9 @@ paths:
         - {$ref: '#/components/parameters/ReverificationGrantHeader'}
         - {name: identifier_id, in: path, required: true, schema: {type: string, pattern: '^phn_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200': {$ref: '#/components/responses/OKStatus'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/InvalidSession'}
@@ -1600,6 +1807,9 @@ paths:
       parameters:
         - {$ref: '#/components/parameters/BrowserOrigin'}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200':
           description: Current minimized profile.
           content:
@@ -1642,6 +1852,9 @@ paths:
                 family_name: {type: [string, 'null'], maxLength: 100}
                 locale: {type: [string, 'null'], maxLength: 35}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200':
           description: Updated minimized profile.
           content:
@@ -1677,6 +1890,9 @@ paths:
                 email: {type: string, format: email}
                 completion_url: {type: string, format: uri, maxLength: 2048, description: Exact application-scoped allowlisted final destination.}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '202': {$ref: '#/components/responses/Accepted'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
@@ -1707,6 +1923,9 @@ paths:
                 challenge_id: {type: string, pattern: '^eln_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'}
                 secret: {type: string, minLength: 43, maxLength: 43, pattern: '^[A-Za-z0-9_-]{43}$', writeOnly: true}
       responses:
+        '413': {$ref: '#/components/responses/RequestTooLarge'}
+        '502': {$ref: '#/components/responses/UpstreamUnavailable'}
+        '504': {$ref: '#/components/responses/UpstreamTimeout'}
         '200':
           description: Tagged authenticated or MFA-required result after one-time email-link consumption.
           headers:
@@ -2360,6 +2579,30 @@ components:
         x: {type: string, description: Unpadded base64url Ed25519 public key material.}
 
   responses:
+    RequestTooLarge:
+      description: >-
+        Gateway rejected the bounded API request before dispatch because its body exceeded the configured limit. The canonical BeeBox error code is request_too_large.
+      headers:
+        X-Request-ID: {$ref: '#/components/headers/RequestID'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/GatewayRequestTooLargeErrorResponse'}
+    UpstreamUnavailable:
+      description: >-
+        Gateway could not obtain a response from Identity. Internal hostnames, upstream URLs and network implementation details are never exposed. The canonical BeeBox error code is upstream_unavailable.
+      headers:
+        X-Request-ID: {$ref: '#/components/headers/RequestID'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/GatewayUpstreamUnavailableErrorResponse'}
+    UpstreamTimeout:
+      description: >-
+        Gateway did not receive the upstream response before its bounded request timeout. The canonical BeeBox error code is upstream_timeout. For POST, PUT, PATCH or DELETE after dispatch, OUTCOME MAY BE UNKNOWN because Identity may already have committed. Do not blindly replay a non-idempotent mutation; when the operation supports an idempotency key, reuse the same idempotency key, otherwise reconcile authoritative state before deciding whether to retry.
+      headers:
+        X-Request-ID: {$ref: '#/components/headers/RequestID'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/GatewayUpstreamTimeoutErrorResponse'}
     Accepted:
       description: Request accepted without revealing protected account state.
       headers:
