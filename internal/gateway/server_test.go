@@ -112,15 +112,20 @@ func TestGatewayMaximumConfiguredDeadlinesProduceProtocolCorrectServer(t *testin
 func TestGatewayMutationTimeoutCanFollowCommittedUpstreamMutationWithoutRetry(t *testing.T) {
 	var calls atomic.Int32
 	var mutated atomic.Bool
+	releaseUpstream := make(chan struct{})
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Errorf("method=%s", r.Method)
 		}
 		calls.Add(1)
 		mutated.Store(true)
-		<-r.Context().Done()
+		<-releaseUpstream
+		w.WriteHeader(http.StatusNoContent)
 	}))
-	defer upstream.Close()
+	defer func() {
+		close(releaseUpstream)
+		upstream.Close()
+	}()
 	cfg := testConfig(t, upstream.URL)
 	cfg.RequestTimeout = 50 * time.Millisecond
 	cfg.ResponseHeaderTimeout = time.Second
