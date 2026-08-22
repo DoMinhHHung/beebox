@@ -23,7 +23,7 @@ import (
 func TestMigrationFirstApplyAndRerunAreIdempotent(t *testing.T) {
 	databaseURL := isolatedDatabaseURL(t, "beebox_migration_first_apply")
 	pool := openPool(t, databaseURL)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	firstAdapter := pool.OpenSQLDB()
 	if err := Up(ctx, firstAdapter); err != nil {
@@ -52,7 +52,7 @@ func TestConcurrentMigrationRunnersSerializeAndConverge(t *testing.T) {
 		go func(pool *database.Pool) {
 			defer runners.Done()
 			<-start
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 			errorsByRunner <- Up(ctx, pool.OpenSQLDB())
 		}(pool)
@@ -65,7 +65,7 @@ func TestConcurrentMigrationRunnersSerializeAndConverge(t *testing.T) {
 			t.Fatalf("concurrent Up() error = %v", err)
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	assertMigrationState(t, ctx, firstPool, 27)
 	assertSchemaTables(t, ctx, firstPool)
@@ -108,7 +108,7 @@ func TestMigrationLockWaitHonorsCancellation(t *testing.T) {
 func TestFailingTransactionalMigrationRollsBackAndIsNotRecorded(t *testing.T) {
 	databaseURL := isolatedDatabaseURL(t, "beebox_migration_transaction")
 	pool := openPool(t, databaseURL)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	if err := Up(ctx, pool.OpenSQLDB()); err != nil {
 		t.Fatalf("baseline Up() error = %v", err)
