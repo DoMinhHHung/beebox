@@ -162,6 +162,11 @@ jobs:
       - name: Go SDK tests
         run: go test ./sdk/go
 
+      - name: Authentication security regression tests
+        run: |
+          go test ./internal/authentication/socialprovider -run '^TestProviderBackchannelCancellationTimeoutBoundAndNoRetry$' -count=100 -shuffle=on
+          go test ./internal/session -count=20
+
       - name: Correlation boundary tests
         run: |
           go test ./internal/requestcorrelation -count=1
