@@ -22,6 +22,7 @@ services:
     expose:
       - "1025"
     ports:
+      - "127.0.0.1:1025:1025"
       - "8025:8025"
     networks:
       - identity-data
