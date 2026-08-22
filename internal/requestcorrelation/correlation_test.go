@@ -50,6 +50,9 @@ func TestSignVerifyIsPurposeBoundAndTamperSafe(t *testing.T) {
 		t.Fatal("parse canonical id")
 	}
 	signature := Sign(key, id)
+	if !SignatureIsCanonical(signature) {
+		t.Fatal("generated signature is not canonical")
+	}
 	verified, ok := Verify(key, id.String(), signature)
 	if !ok || verified != id {
 		t.Fatal("valid signature rejected")
@@ -59,6 +62,19 @@ func TestSignVerifyIsPurposeBoundAndTamperSafe(t *testing.T) {
 	}
 	if _, ok := Verify(key, id.String(), strings.Repeat("A", len(signature))); ok {
 		t.Fatal("tampered signature accepted")
+	}
+}
+
+func TestSignatureIsCanonicalRejectsMalformedEncoding(t *testing.T) {
+	for _, signature := range []string{
+		"",
+		"not-base64url***",
+		base64.RawURLEncoding.EncodeToString([]byte("short")),
+		testKeyValue() + "=",
+	} {
+		if SignatureIsCanonical(signature) {
+			t.Fatalf("malformed signature accepted: %q", signature)
+		}
 	}
 }
 
