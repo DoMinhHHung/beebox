@@ -8,7 +8,7 @@ This runbook covers the ADR 0008 Gateway + Identity topology. `docs/production-o
 - `beebox-identity`: internal Phase 1/2 authority. Owns PostgreSQL, migrations, providers, signing/encryption material and product HTTP behavior.
 - PostgreSQL 17: correctness source for current product state.
 
-Only Gateway is the normal public endpoint. Direct public access to Identity must be blocked by infrastructure.
+Only Gateway is the normal public BeeBox endpoint. Direct public access to Identity must be blocked by infrastructure.
 
 ## Startup
 
@@ -63,21 +63,28 @@ The configured read timeout must be at least the read-header timeout. Gateway re
 
 Never give Gateway database credentials or Identity signing/encryption/provider secrets.
 
-## Request ID and trusted correlation
+## Public request ID and trusted audit correlation
 
-Gateway owns the public request ID. It ignores any inbound client `X-Request-ID`, strips any inbound `X-BeeBox-Internal-Correlation` and `X-BeeBox-Internal-Correlation-Signature`, then generates a fresh cryptographically random 16-byte / 32-lowercase-hex ID.
+Gateway owns the public request ID. It ignores any inbound client `X-Request-ID`, strips any inbound `X-BeeBox-Internal-Correlation` and `X-BeeBox-Internal-Correlation-Signature`, then generates a fresh cryptographically random 16-byte / 32-lowercase-hex ID `G`.
 
-Gateway signs that generated ID with HMAC-SHA256 using the dedicated correlation key and forwards the generated internal ID/signature to Identity. Identity accepts it only after constant-time verification. Missing, malformed or invalid proof causes Identity to mint a fresh local correlation; a direct caller cannot choose audit correlation by supplying a valid-looking public ID.
+Gateway forwards a complete internal diagnostic envelope containing public ID `G`, internal correlation ID `G`, and a canonical HMAC-SHA256 signature generated with the dedicated correlation key. Identity handles two separate values at its outer HTTP boundary:
 
-Proxied public responses are normalized to exactly one `X-Request-ID`. Where a canonical BeeBox error body contains `error.request_id`, it must equal the public response header value.
+- **public/wire request ID** — response `X-Request-ID` and canonical `error.request_id` only;
+- **trusted audit correlation** — correlation passed to audit-sensitive application behavior.
 
-The correlation key/signature must never appear in responses, logs or metrics. Correlation provenance is observability metadata only and never bypasses application credentials, sessions, MFA, Origin, CSRF, tenant or authorization checks.
+When the HMAC verifies, both are `G`.
+
+When the envelope is complete/canonical but the HMAC fails because Gateway and Identity use different valid keys, Identity keeps `G` only as the non-authoritative public diagnostic ID and generates a fresh audit correlation `I`. Therefore the public response remains exactly one `X-Request-ID: G`, canonical Identity errors contain `error.request_id: G`, and Identity audit evidence uses `I != G`. This intentional split preserves the support/error contract without treating an unverified value as audit provenance.
+
+A direct Identity caller, or a malformed/incomplete envelope, cannot select audit correlation or a retained Gateway diagnostic ID using only a valid-looking `X-Request-ID`. Identity generates fresh local public and audit values. Public-ID shape, source network, Host and `X-Forwarded-*` metadata never establish trust.
+
+The correlation key/signature must never appear in responses, logs or metrics. Public request IDs and trusted audit correlations are observability metadata only and never bypass application credentials, sessions, MFA, Origin, CSRF, tenant or authorization checks.
 
 ### Correlation-key rotation
 
-Rotate the key as a coordinated Gateway/Identity rollout so both sides converge on the same new value. A temporary mismatch must degrade only trace continuity: Identity rejects the invalid proof and creates a fresh correlation. Do not add a permissive fallback that trusts an unsigned ID. Do not reuse the old/new key as another security primitive.
+Rotate the key as a coordinated Gateway/Identity rollout so both sides converge on the same new value. A temporary mixed-key window degrades cross-service trace/audit continuity only: the Gateway public support ID remains `G` while Identity audit correlation becomes fresh `I`. Operators should repair the key mismatch; they must not add a permissive fallback that trusts unsigned or merely well-shaped IDs as audit authority.
 
-The HMAC authenticates only correlation metadata. It is not transport encryption/authentication for the complete internal HTTP connection; deployments crossing an untrusted network still need an appropriate transport-security design.
+The HMAC authenticates only trusted audit-correlation provenance. It is not transport encryption/authentication for the complete internal HTTP connection; deployments crossing an untrusted network still need an appropriate transport-security design.
 
 ## Bounded request bodies
 
@@ -98,7 +105,9 @@ For canonical `/v1` traffic, Gateway-generated failures use the same nested BeeB
 - 502: `upstream_unavailable`
 - 504: `upstream_timeout`
 
-Messages are safe and do not expose internal hostnames/URLs, Go network errors, timeout implementation details or credentials. Each edge error includes the canonical request ID, matching the single `X-Request-ID` response header.
+Messages are safe and do not expose internal hostnames/URLs, Go network errors, timeout implementation details or credentials. Each edge error includes the canonical public request ID, matching the single `X-Request-ID` response header.
+
+Identity canonical error bodies also consume the public/wire request ID established at the outer Identity boundary. During a mixed-key correlation window they therefore still contain Gateway ID `G`, even though trusted audit correlation is the independent fresh `I`. Gateway does not parse or rewrite arbitrary business JSON to repair this contract.
 
 Health endpoints keep their health/readiness response contract and do not pretend to be `/v1` business errors.
 
@@ -116,7 +125,13 @@ Gateway never automatically retries a state-changing request. The actual-server 
 
 ## Local Docker topology
 
-`docker compose up --build` starts Gateway, Identity, PostgreSQL and Mailpit. Only Gateway HTTP and Mailpit UI are published by the reference Compose file; Identity and PostgreSQL use Docker-private networks. Gateway and PostgreSQL share no network.
+`docker compose up --build` starts Gateway, Identity, PostgreSQL and Mailpit. The reference host publications are:
+
+- Gateway HTTP: `localhost:8080`;
+- Mailpit UI: `http://localhost:8025`;
+- Mailpit SMTP for a **host-run Identity development process only**: `127.0.0.1:1025`, explicitly bound to host loopback.
+
+Identity and PostgreSQL themselves remain Docker-private and have no host-published ports. Gateway and PostgreSQL share no network.
 
 Migrate before relying on Identity readiness:
 
@@ -129,7 +144,23 @@ Operator commands such as signing-key generation and application bootstrap run a
 
 The Compose file contains an explicit fixed **local-only development** correlation key shared between Gateway and Identity so the reference topology starts reproducibly. Do not copy that value to production; production must use independently generated high-entropy key material managed as a secret.
 
-Mailpit SMTP is intentionally **not** wired into containerized Identity with plaintext `insecure_localhost`: that mode is restricted to loopback by the SMTP adapter. For email-flow development either run Identity on the host against `127.0.0.1:1025` using `BEEBOX_SMTP_TLS_MODE=insecure_localhost`, or configure a TLS/STARTTLS-capable SMTP endpoint for the container. Do not weaken the SMTP trust rule for Compose convenience.
+### Mailpit SMTP development path
+
+The reference Compose mapping publishes Mailpit target SMTP port 1025 as host `127.0.0.1:1025`. It is intentionally **not** bound to `0.0.0.0`, so the reference topology does not expose plaintext development SMTP to the LAN/public interfaces.
+
+A host-run Identity may use:
+
+```sh
+BEEBOX_SMTP_ADDR=127.0.0.1:1025
+BEEBOX_SMTP_FROM=beebox@example.test
+BEEBOX_SMTP_TLS_MODE=insecure_localhost
+```
+
+Containerized Identity must **not** use `insecure_localhost` against `mailpit:1025`; that host name is not loopback and the SMTP adapter's loopback-only security rule remains unchanged. For containerized Identity, use a TLS/STARTTLS-capable SMTP endpoint instead.
+
+CI parses normalized `docker compose config --format json` and requires Mailpit SMTP target `1025`, published host port `1025`, and `host_ip=127.0.0.1`. CI also starts Mailpit and opens an actual TCP connection to `127.0.0.1:1025` before continuing, while retaining the existing Identity/PostgreSQL exposure and Gateway/PostgreSQL network-isolation gates.
+
+Mailpit is a development aid only and is not a production dependency.
 
 ## Shutdown
 
@@ -151,7 +182,7 @@ Gateway readiness fails and requests map to safe upstream errors. Inspect Identi
 
 ### Correlation mismatch
 
-If Gateway and Identity are configured with different correlation keys, product authorization must remain unaffected but Identity will reject the supplied correlation proof and mint its own request correlation. Restore matching secret configuration; do not log key/signature values while diagnosing.
+If Gateway and Identity are configured with different correlation keys, product authorization remains unaffected. For a complete canonical Gateway envelope, the client-facing Gateway diagnostic ID `G` remains stable in the public response while Identity rejects `G` as trusted audit provenance and mints a fresh `I`. Expect trace/audit continuity to split during this window. Restore matching secret configuration; do not log key/signature values and do not weaken verification while diagnosing.
 
 ### PostgreSQL unavailable
 
@@ -167,7 +198,7 @@ Treat the operation as potentially committed. Reuse the same idempotency key onl
 
 ## Observability and correlation
 
-Gateway access logs carry method/path/status/latency and its generated bounded request ID, but omit query strings and credential-bearing headers. Identity uses the same correlation only when authenticated internal provenance verifies.
+Gateway access logs carry method/path/status/latency and its generated bounded public request ID, but omit query strings and credential-bearing headers. Identity audit uses that same value only when authenticated internal provenance verifies. During mixed-key provenance, public Gateway diagnostics use `G` and Identity trusted audit uses independent `I` until configuration is corrected.
 
 Never log Authorization, Cookie/Set-Cookie, passwords, OTP/recovery codes, OAuth code/state/provider tokens, signing/encryption/correlation keys, correlation signatures or database URLs containing credentials.
 
@@ -175,7 +206,7 @@ Never log Authorization, Cookie/Set-Cookie, passwords, OTP/recovery codes, OAuth
 
 No schema change is required by the ADR 0008 extraction. Roll out Identity first, verify readiness and current migrations, then Gateway. Canary/traffic-shift strategy is an infrastructure concern but must preserve Gateway as the public edge.
 
-Correlation-key rotation should be coordinated with the two service revisions. If a brief mixed-key window occurs, trace continuity may split but Identity must fail closed to a new local correlation; no product-security fallback is permitted.
+Correlation-key rotation should be coordinated with the two service revisions. If a brief mixed-key window occurs, public diagnostic continuity remains stable while trusted audit continuity splits; no product-security fallback is permitted. Restore matching key configuration promptly.
 
 ## Rollback
 
@@ -183,7 +214,9 @@ Because the refactor keeps the Phase 1/2 schema compatible and does not add a de
 
 ## Local debugging checklist
 
-- `docker compose config` validates the topology.
+- `docker compose config --format json` validates the topology.
+- confirm Mailpit SMTP normalized mapping is target `1025`, published `1025`, `host_ip=127.0.0.1`.
+- after Mailpit starts, confirm a TCP connection to `127.0.0.1:1025` succeeds from the host.
 - build both Docker targets independently.
 - confirm Gateway has no database environment.
 - confirm Identity/PostgreSQL have no host-published ports in the reference topology.
@@ -191,6 +224,7 @@ Because the refactor keeps the Phase 1/2 schema compatible and does not add a de
 - inspect `/health/live` and `/health/ready` separately.
 - send a client-selected `X-Request-ID` and confirm Gateway replaces it.
 - send client internal-correlation/signature headers and confirm Gateway strips them.
-- trace one generated request ID from Gateway through verified Identity correlation without adding key/signature/query material to logs.
-- confirm representative proxied responses contain exactly one `X-Request-ID`.
+- with matching correlation keys, confirm public request ID and Identity audit correlation are equal.
+- with distinct valid Gateway/Identity keys, confirm public header and canonical error body both retain Gateway `G` while Identity audit correlation becomes `I != G`.
+- confirm internal correlation headers/signatures never reach the client.
 - reproduce public behavior through Gateway, not by treating direct Identity access as the supported client path.
