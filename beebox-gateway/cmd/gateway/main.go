@@ -20,8 +20,10 @@ func main() {
 	}
 
 	srv := &http.Server{
-		Addr:    cfg.HTTPAddr,
-		Handler: router.New(cfg),
+		Addr:              cfg.HTTPAddr,
+		Handler:           router.New(cfg),
+		ReadHeaderTimeout: cfg.RequestTimeout,
+		IdleTimeout:       cfg.RequestTimeout,
 	}
 
 	errCh := make(chan error, 1)

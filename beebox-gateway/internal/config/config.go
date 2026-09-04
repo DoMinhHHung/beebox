@@ -37,6 +37,9 @@ func Load() (Config, error) {
 		if err != nil {
 			return Config{}, fmt.Errorf("%s: %w", envShutdownTimeout, err)
 		}
+		if d <= 0 {
+			return Config{}, fmt.Errorf("%s: must be greater than 0", envShutdownTimeout)
+		}
 		cfg.ShutdownTimeout = d
 	}
 
