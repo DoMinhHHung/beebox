@@ -36,6 +36,19 @@ func (f *fakeAccounts) FindByID(_ context.Context, id uuid.UUID) (domain.Account
 	return a, nil
 }
 
+func (f *fakeAccounts) FindByEmail(_ context.Context, email string) (domain.Account, error) {
+	id, ok := f.byMail[email]
+	if !ok {
+		return domain.Account{}, domain.ErrNotFound
+	}
+	return f.FindByID(context.Background(), id)
+}
+
+type fakeHasher struct{}
+
+func (fakeHasher) Hash(password string) (string, error) { return "hash:" + password, nil }
+func (fakeHasher) Verify(password, encoded string) bool { return encoded == "hash:"+password }
+
 type fakeProjects struct {
 	items   map[uuid.UUID]domain.Project
 	deleted int
@@ -153,10 +166,17 @@ func TestDeleteProjectWrongConfirmationDoesNotDelete(t *testing.T) {
 }
 
 func TestCreateAccount(t *testing.T) {
-	u := CreateAccount{Accounts: &fakeAccounts{}}
-	got, err := u.Execute(context.Background(), "owner@example.com")
-	if err != nil || got.ID.Version() != 7 {
+	u := CreateAccount{Accounts: &fakeAccounts{}, Hasher: fakeHasher{}}
+	got, err := u.Execute(context.Background(), "owner@example.com", "password1")
+	if err != nil || got.ID.Version() != 7 || got.PasswordHash == "" {
 		t.Fatalf("got=%+v err=%v", got, err)
+	}
+}
+
+func TestCreateAccountRejectsShortPassword(t *testing.T) {
+	_, err := (CreateAccount{Accounts: &fakeAccounts{}, Hasher: fakeHasher{}}).Execute(context.Background(), "owner@example.com", "short")
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("err=%v", err)
 	}
 }
 

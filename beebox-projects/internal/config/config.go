@@ -15,6 +15,7 @@ const (
 	envReadTimeout       = "BEEBOX_READ_TIMEOUT"
 	envReadHeaderTimeout = "BEEBOX_READ_HEADER_TIMEOUT"
 	envInternalToken     = "BEEBOX_INTERNAL_TOKEN"
+	envAllowOwnerHeader  = "BEEBOX_ALLOW_OWNER_HEADER"
 	defaultHTTPAddr      = ":8082"
 	defaultPlansBase     = "http://127.0.0.1:8081"
 	defaultShutdown      = 10 * time.Second
@@ -30,6 +31,7 @@ type Config struct {
 	ReadTimeout       time.Duration
 	ReadHeaderTimeout time.Duration
 	InternalToken     string
+	AllowOwnerHeader  bool
 }
 
 func Load() (Config, error) {
@@ -41,6 +43,7 @@ func Load() (Config, error) {
 		ReadTimeout:       defaultRead,
 		ReadHeaderTimeout: defaultReadHeader,
 		InternalToken:     os.Getenv(envInternalToken),
+		AllowOwnerHeader:  envTruthy(os.Getenv(envAllowOwnerHeader)),
 	}
 	if v := os.Getenv(envHTTPAddr); v != "" {
 		cfg.HTTPAddr = v
@@ -65,6 +68,15 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func envTruthy(v string) bool {
+	switch strings.TrimSpace(strings.ToLower(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func durationEnv(name string, fallback time.Duration) (time.Duration, error) {

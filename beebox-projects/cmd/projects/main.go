@@ -11,6 +11,7 @@ import (
 
 	"github.com/DoMinhHHung/beebox/beebox-projects/internal/application"
 	"github.com/DoMinhHHung/beebox/beebox-projects/internal/config"
+	"github.com/DoMinhHHung/beebox/beebox-projects/internal/infrastructure/crypto"
 	"github.com/DoMinhHHung/beebox/beebox-projects/internal/infrastructure/httpclient"
 	"github.com/DoMinhHHung/beebox/beebox-projects/internal/infrastructure/postgres"
 	httpapi "github.com/DoMinhHHung/beebox/beebox-projects/internal/interface/http"
@@ -34,6 +35,9 @@ func main() {
 	}
 
 	accounts := postgres.NewAccountRepository(pool)
+	ownerSessions := postgres.NewOwnerSessionRepository(pool)
+	hasher := crypto.Argon2id{}
+	tokens := crypto.SessionTokens{}
 	projects := postgres.NewProjectRepository(pool)
 	keys := postgres.NewAPIKeyRepository(pool)
 	origins := postgres.NewOriginRepository(pool)
@@ -42,7 +46,7 @@ func main() {
 	catalog := httpclient.NewPlanCatalog(cfg.PlansBaseURL, nil)
 
 	handler := httpapi.New(httpapi.Deps{
-		CreateAccount: application.CreateAccount{Accounts: accounts},
+		CreateAccount: application.CreateAccount{Accounts: accounts, Hasher: hasher},
 		CreateProject: application.CreateProject{Projects: projects, Catalog: catalog},
 		ListProjects:  application.ListProjects{Projects: projects},
 		GetProject:    application.GetProject{Projects: projects},
@@ -65,8 +69,19 @@ func main() {
 			Modules:  modules,
 			Fields:   fields,
 		},
-		InternalToken: cfg.InternalToken,
-		Ready:         pool,
+		OwnerSignUp: application.OwnerSignUp{
+			Accounts: accounts, Sessions: ownerSessions, Hasher: hasher, Tokens: tokens,
+		},
+		OwnerSignIn: application.OwnerSignIn{
+			Accounts: accounts, Sessions: ownerSessions, Hasher: hasher, Tokens: tokens,
+		},
+		OwnerSignOut: application.OwnerSignOut{Sessions: ownerSessions, Tokens: tokens},
+		OwnerMe: application.OwnerMe{
+			Accounts: accounts, Sessions: ownerSessions, Tokens: tokens,
+		},
+		AllowOwnerHeader: cfg.AllowOwnerHeader,
+		InternalToken:    cfg.InternalToken,
+		Ready:            pool,
 	})
 
 	srv := &http.Server{
