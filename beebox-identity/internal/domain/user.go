@@ -22,6 +22,7 @@ type User struct {
 	Env          string
 	Email        string
 	PasswordHash string
+	NeedsEmail   bool
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }

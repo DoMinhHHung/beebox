@@ -38,6 +38,7 @@ services:
       BEEBOX_DATABASE_URL: postgres://beebox:beebox@postgres:5432/beebox?sslmode=disable
       BEEBOX_PLANS_BASE_URL: http://plans:8081
       BEEBOX_INTERNAL_TOKEN: dev-internal
+      BEEBOX_OAUTH_KEK: 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
     ports:
       - "8082:8082"
     depends_on:

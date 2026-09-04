@@ -40,10 +40,18 @@ func main() {
 	hasher := crypto.Argon2id{}
 	tokens := crypto.SessionTokens{}
 	now := func() time.Time { return time.Now().UTC() }
+	httpClient := &http.Client{Timeout: 5 * time.Second}
 	resolver := &httpclient.Projects{
 		BaseURL: cfg.ProjectsBaseURL,
 		Token:   cfg.InternalToken,
-		HTTP:    &http.Client{Timeout: 5 * time.Second},
+		HTTP:    httpClient,
+	}
+	identities := postgres.NewIdentityRepository(pool)
+	oauthStates := postgres.NewOAuthStateRepository(pool)
+	oauthCreds := &httpclient.OAuthCreds{
+		BaseURL: cfg.ProjectsBaseURL,
+		Token:   cfg.InternalToken,
+		HTTP:    httpClient,
 	}
 
 	handler := httpapi.New(httpapi.Deps{
@@ -53,8 +61,13 @@ func main() {
 		SignIn: application.SignIn{
 			Users: users, Sessions: sessions, Hasher: hasher, Tokens: tokens, Now: now, TTL: cfg.SessionTTL,
 		},
-		SignOut:       application.SignOut{Sessions: sessions, Tokens: tokens, Now: now},
-		Me:            application.Me{Users: users, Sessions: sessions, Tokens: tokens, Now: now},
+		SignOut:    application.SignOut{Sessions: sessions, Tokens: tokens, Now: now},
+		Me:         application.Me{Users: users, Sessions: sessions, Tokens: tokens, Now: now},
+		OAuthStart: application.OAuthStart{States: oauthStates, Creds: oauthCreds, Now: now},
+		OAuthCallback: application.OAuthCallback{
+			Users: users, Identities: identities, Sessions: sessions, States: oauthStates,
+			Creds: oauthCreds, Tokens: tokens, Now: now, TTL: cfg.SessionTTL,
+		},
 		InternalToken: cfg.InternalToken,
 		Resolver:      resolver,
 		Ready:         pool,

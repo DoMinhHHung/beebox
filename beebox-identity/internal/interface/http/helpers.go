@@ -125,10 +125,11 @@ func readCredentials(r *http.Request) (string, string, error) {
 }
 
 type userDTO struct {
-	ID        string `json:"id"`
-	Email     string `json:"email"`
-	ProjectID string `json:"project_id"`
-	Env       string `json:"env"`
+	ID         string `json:"id"`
+	Email      string `json:"email"`
+	ProjectID  string `json:"project_id"`
+	Env        string `json:"env"`
+	NeedsEmail bool   `json:"needs_email"`
 }
 
 type sessionDTO struct {
@@ -143,10 +144,11 @@ type authDTO struct {
 
 func toUserDTO(user domain.User) userDTO {
 	return userDTO{
-		ID:        user.ID.String(),
-		Email:     user.Email,
-		ProjectID: user.ProjectID.String(),
-		Env:       user.Env,
+		ID:         user.ID.String(),
+		Email:      user.Email,
+		ProjectID:  user.ProjectID.String(),
+		Env:        user.Env,
+		NeedsEmail: user.NeedsEmail,
 	}
 }
 

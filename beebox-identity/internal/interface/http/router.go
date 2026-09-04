@@ -31,6 +31,8 @@ type Deps struct {
 	SignIn        application.SignIn
 	SignOut       application.SignOut
 	Me            application.Me
+	OAuthStart    application.OAuthStart
+	OAuthCallback application.OAuthCallback
 	InternalToken string
 	Resolver      ProjectResolver
 	Ready         ReadyPinger
@@ -47,6 +49,9 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /v1/auth/sign-in", s.withInternal(http.HandlerFunc(s.postSignIn)))
 	mux.Handle("POST /v1/auth/sign-out", s.withInternal(http.HandlerFunc(s.postSignOut)))
 	mux.Handle("GET /v1/auth/me", s.withInternal(http.HandlerFunc(s.getMe)))
+	mux.Handle("GET /v1/auth/oauth/{slug}/start", s.withInternal(http.HandlerFunc(s.getOAuthStart)))
+	mux.Handle("GET /v1/auth/oauth/{slug}/callback", s.withInternal(http.HandlerFunc(s.oauthCallback)))
+	mux.Handle("POST /v1/auth/oauth/{slug}/callback", s.withInternal(http.HandlerFunc(s.oauthCallback)))
 	mux.HandleFunc("/", s.notFound)
 	return recoverMW(mux)
 }

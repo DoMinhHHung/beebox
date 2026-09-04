@@ -39,6 +39,9 @@ type Deps struct {
 	OwnerSignIn      application.OwnerSignIn
 	OwnerSignOut     application.OwnerSignOut
 	OwnerMe          application.OwnerMe
+	GetOAuth         application.GetOAuthProvider
+	PutOAuth         application.PutOAuthProvider
+	InternalOAuth    application.InternalOAuthProvider
 	AllowOwnerHeader bool
 	InternalToken    string
 	Ready            ReadyPinger
@@ -71,7 +74,10 @@ func New(d Deps) http.Handler {
 	mux.Handle("PUT /v1/projects/{id}/modules", s.withOwner(http.HandlerFunc(s.putModules)))
 	mux.Handle("GET /v1/projects/{id}/fields", s.withOwner(http.HandlerFunc(s.getFields)))
 	mux.Handle("PUT /v1/projects/{id}/fields", s.withOwner(http.HandlerFunc(s.putFields)))
+	mux.Handle("GET /v1/projects/{id}/oauth/{slug}", s.withOwner(http.HandlerFunc(s.getProjectOAuth)))
+	mux.Handle("PUT /v1/projects/{id}/oauth/{slug}", s.withOwner(http.HandlerFunc(s.putProjectOAuth)))
 	mux.Handle("GET /internal/resolve", s.withInternal(http.HandlerFunc(s.resolve)))
+	mux.Handle("GET /internal/oauth/{projectId}/{slug}", s.withInternal(http.HandlerFunc(s.internalOAuth)))
 	mux.HandleFunc("/", s.notFound)
 	return recoverMW(mux)
 }

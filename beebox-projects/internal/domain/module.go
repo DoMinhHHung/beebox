@@ -9,7 +9,17 @@ import (
 const (
 	ModuleAuthPassword       = "auth.password"
 	ModuleAuthOTP            = "auth.otp"
+	ModuleAuthOAuthApple     = "auth.oauth.apple"
+	ModuleAuthOAuthGitLab    = "auth.oauth.gitlab"
+	ModuleAuthOAuthLinkedIn  = "auth.oauth.linkedin"
+	ModuleAuthOAuthSlack     = "auth.oauth.slack"
+	ModuleAuthOAuthTwitch    = "auth.oauth.twitch"
+	ModuleAuthOAuthFacebook  = "auth.oauth.facebook"
 	ModuleAuthOAuthGoogle    = "auth.oauth.google"
+	ModuleAuthOAuthMicrosoft = "auth.oauth.microsoft"
+	ModuleAuthOAuthGitHub    = "auth.oauth.github"
+	ModuleAuthOAuthX         = "auth.oauth.x"
+	ModuleAuthOAuthOIDC      = "auth.oauth.oidc"
 	ModuleUsersProfile       = "users.profile"
 	ModuleDataCollections    = "data.collections"
 	ModuleFileStorage        = "file.storage"
@@ -19,7 +29,17 @@ const (
 var KnownModules = []string{
 	ModuleAuthPassword,
 	ModuleAuthOTP,
+	ModuleAuthOAuthApple,
+	ModuleAuthOAuthGitLab,
+	ModuleAuthOAuthLinkedIn,
+	ModuleAuthOAuthSlack,
+	ModuleAuthOAuthTwitch,
+	ModuleAuthOAuthFacebook,
 	ModuleAuthOAuthGoogle,
+	ModuleAuthOAuthMicrosoft,
+	ModuleAuthOAuthGitHub,
+	ModuleAuthOAuthX,
+	ModuleAuthOAuthOIDC,
 	ModuleUsersProfile,
 	ModuleDataCollections,
 	ModuleFileStorage,

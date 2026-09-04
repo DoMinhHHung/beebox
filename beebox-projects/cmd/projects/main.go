@@ -43,7 +43,14 @@ func main() {
 	origins := postgres.NewOriginRepository(pool)
 	modules := postgres.NewModuleRepository(pool)
 	fields := postgres.NewFieldRepository(pool)
+	oauthProviders := postgres.NewOAuthProviderRepository(pool)
 	catalog := httpclient.NewPlanCatalog(cfg.PlansBaseURL, nil)
+	var box application.SecretBox
+	if cfg.OAuthKEK != "" {
+		if loaded, err := crypto.NewSecretBox(cfg.OAuthKEK); err == nil {
+			box = loaded
+		}
+	}
 
 	handler := httpapi.New(httpapi.Deps{
 		CreateAccount: application.CreateAccount{Accounts: accounts, Hasher: hasher},
@@ -79,6 +86,9 @@ func main() {
 		OwnerMe: application.OwnerMe{
 			Accounts: accounts, Sessions: ownerSessions, Tokens: tokens,
 		},
+		GetOAuth:         application.GetOAuthProvider{Projects: projects, OAuth: oauthProviders},
+		PutOAuth:         application.PutOAuthProvider{Projects: projects, OAuth: oauthProviders, Catalog: catalog, Box: box},
+		InternalOAuth:    application.InternalOAuthProvider{OAuth: oauthProviders, Box: box},
 		AllowOwnerHeader: cfg.AllowOwnerHeader,
 		InternalToken:    cfg.InternalToken,
 		Ready:            pool,
