@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -46,6 +47,9 @@ func Load() (Config, error) {
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("%s is required", envDatabaseURL)
+	}
+	if strings.TrimSpace(cfg.InternalToken) == "" {
+		return Config{}, fmt.Errorf("%s is required", envInternalToken)
 	}
 	if v := os.Getenv(envPlansBaseURL); v != "" {
 		cfg.PlansBaseURL = v

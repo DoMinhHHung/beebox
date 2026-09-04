@@ -53,6 +53,9 @@ func (u ResolveProject) ByPublishableKey(ctx context.Context, raw string) (Resol
 	if key.Kind != domain.KeyKindPublishable {
 		return ResolveResult{}, domain.ErrUnauthorized
 	}
+	if project.Status != domain.StatusActive {
+		return ResolveResult{}, domain.ErrUnauthorized
+	}
 	origins, modules, err := u.loadIAM(ctx, project.ID)
 	if err != nil {
 		return ResolveResult{}, err
@@ -76,6 +79,9 @@ func (u ResolveProject) BySlug(ctx context.Context, slug string) (ResolveResult,
 	project, err := u.Projects.FindBySlug(ctx, slug)
 	if err != nil {
 		return ResolveResult{}, err
+	}
+	if project.Status != domain.StatusActive {
+		return ResolveResult{}, domain.ErrUnauthorized
 	}
 	origins, modules, err := u.loadIAM(ctx, project.ID)
 	if err != nil {

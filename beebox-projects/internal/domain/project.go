@@ -26,9 +26,18 @@ type Project struct {
 	UpdatedAt time.Time
 }
 
+type PlanLimits struct {
+	UserFields  int  `json:"user_fields"`
+	Collections int  `json:"collections"`
+	OAuth       bool `json:"oauth"`
+	OTP         bool `json:"otp"`
+	Realtime    bool `json:"realtime"`
+}
+
 type CatalogPlan struct {
-	ID   uuid.UUID
-	Slug string
+	ID     uuid.UUID
+	Slug   string
+	Limits PlanLimits
 }
 
 type ProjectRepository interface {

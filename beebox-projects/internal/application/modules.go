@@ -26,6 +26,7 @@ func (u ListModules) Execute(ctx context.Context, ownerID, projectID uuid.UUID) 
 type PutModules struct {
 	Projects domain.ProjectRepository
 	Modules  domain.ModuleRepository
+	Catalog  domain.PlanCatalog
 }
 
 func (u PutModules) Execute(ctx context.Context, ownerID, projectID uuid.UUID, names []string) ([]string, error) {
@@ -33,6 +34,10 @@ func (u PutModules) Execute(ctx context.Context, ownerID, projectID uuid.UUID, n
 		return nil, domain.ErrInvalidInput
 	}
 	project, err := u.Projects.FindByID(ctx, ownerID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := u.Catalog.FindBySlug(ctx, project.PlanSlug)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +51,7 @@ func (u PutModules) Execute(ctx context.Context, ownerID, projectID uuid.UUID, n
 		if !knownModule(name) {
 			return nil, domain.ErrInvalidInput
 		}
-		if !moduleAllowed(project.PlanSlug, name) {
+		if !moduleAllowed(plan, name) {
 			return nil, domain.ErrPlanLimit
 		}
 		if _, ok := seen[name]; ok {
