@@ -125,3 +125,37 @@ CREATE POLICY modules_by_owner ON project.modules
         AND p.owner_id = NULLIF(current_setting('app.current_account', true), '')::uuid
     )
   );
+
+CREATE TABLE IF NOT EXISTS project.fields (
+  id UUID PRIMARY KEY,
+  project_id UUID NOT NULL REFERENCES project.projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('string', 'number', 'boolean', 'date')),
+  required BOOLEAN NOT NULL DEFAULT false,
+  unique_per_project BOOLEAN NOT NULL DEFAULT false,
+  sort_order INT NOT NULL DEFAULT 0,
+  UNIQUE (project_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS fields_project_id_idx ON project.fields (project_id);
+
+ALTER TABLE project.fields ENABLE ROW LEVEL SECURITY;
+ALTER TABLE project.fields FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS fields_by_owner ON project.fields;
+CREATE POLICY fields_by_owner ON project.fields
+  USING (
+    current_setting('app.internal', true) = 'on'
+    OR EXISTS (
+      SELECT 1 FROM project.projects p
+      WHERE p.id = fields.project_id
+        AND p.owner_id = NULLIF(current_setting('app.current_account', true), '')::uuid
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM project.projects p
+      WHERE p.id = fields.project_id
+        AND p.owner_id = NULLIF(current_setting('app.current_account', true), '')::uuid
+    )
+  );
