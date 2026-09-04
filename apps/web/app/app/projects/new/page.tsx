@@ -16,7 +16,11 @@ export default function NewProjectPage() {
     setBusy(true); setError("");
     try {
       const created = await dashboardClient().projects.create({ name, slug, plan_slug: plan });
-      rememberProjectKeys(created.id, created.keys ?? []);
+      try {
+        rememberProjectKeys(created.id, created.keys ?? []);
+      } catch (storageErr) {
+        console.warn("Failed to store project keys:", storageErr);
+      }
       router.replace(`/app/projects/${created.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "create failed");
@@ -26,11 +30,11 @@ export default function NewProjectPage() {
     <div className="max-w-lg">
       <h1 className="text-3xl font-semibold">New project</h1>
       <form className="card mt-6 space-y-4 p-6" onSubmit={onSubmit}>
-        <div><label className="label">Name</label><input className="input" value={name} onChange={(e) => setName(e.target.value)} required /></div>
-        <div><label className="label">Slug</label><input className="input" value={slug} onChange={(e) => setSlug(e.target.value)} required /></div>
+        <div><label className="label" htmlFor="project-name">Name</label><input id="project-name" className="input" value={name} onChange={(e) => setName(e.target.value)} required /></div>
+        <div><label className="label" htmlFor="project-slug">Slug</label><input id="project-slug" className="input" value={slug} onChange={(e) => setSlug(e.target.value)} required /></div>
         <div>
-          <label className="label">Plan</label>
-          <select className="input" value={plan} onChange={(e) => setPlan(e.target.value)}>
+          <label className="label" htmlFor="project-plan">Plan</label>
+          <select id="project-plan" className="input" value={plan} onChange={(e) => setPlan(e.target.value)}>
             <option value="free">free</option>
             <option value="pro">pro</option>
           </select>

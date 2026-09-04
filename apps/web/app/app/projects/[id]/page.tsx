@@ -2,7 +2,7 @@
 import { useParams, useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { ErrorText, JsonBlock, ProjectNav } from "@/components/ui";
-import { dashboardClient, readShownSecrets } from "@/lib/clients";
+import { dashboardClient } from "@/lib/clients";
 
 type Project = { id: string; name: string; slug: string; plan_slug: string; env: string };
 type KeyRow = { id: string; kind: string; env: string; prefix: string };
@@ -15,7 +15,6 @@ export default function ProjectOverviewPage() {
   const [keys, setKeys] = useState<KeyRow[]>([]);
   const [origins, setOrigins] = useState<OriginRow[]>([]);
   const [modules, setModules] = useState<string[]>([]);
-  const [secrets, setSecrets] = useState<Array<{ kind?: string; secret: string }>>([]);
   const [origin, setOrigin] = useState("http://localhost:3000");
   const [confirmation, setConfirmation] = useState("");
   const [error, setError] = useState("");
@@ -25,20 +24,30 @@ export default function ProjectOverviewPage() {
     const [p, k, o, m] = await Promise.all([
       client.projects.get(id), client.projects.keys(id), client.projects.origins.list(id), client.projects.modules.list(id),
     ]);
-    setProject(p); setKeys(k.keys ?? []); setOrigins(o.origins ?? []); setModules(m.modules ?? []); setSecrets(readShownSecrets(id));
+    setProject(p); setKeys(k.keys ?? []); setOrigins(o.origins ?? []); setModules(m.modules ?? []);
   }
   useEffect(() => { reload().catch((err: Error) => setError(err.message)); }, [id]);
 
   async function addOrigin(event: FormEvent) {
     event.preventDefault(); setError("");
-    try { await dashboardClient().projects.origins.add(id, origin); await reload(); }
-    catch (err) { setError(err instanceof Error ? err.message : "origin failed"); }
+    try {
+      await dashboardClient().projects.origins.add(id, origin);
+      await reload();
+    } catch (err) { setError(err instanceof Error ? err.message : "origin failed"); }
+  }
+  async function handleRemoveOrigin(originId: string) {
+    setError("");
+    try {
+      await dashboardClient().projects.origins.remove(id, originId);
+      await reload();
+    } catch (err) { setError(err instanceof Error ? err.message : "remove origin failed"); }
   }
   async function onDelete(event: FormEvent) {
     event.preventDefault(); setError("");
     try { await dashboardClient().projects.delete(id, confirmation); router.replace("/app"); }
     catch (err) { setError(err instanceof Error ? err.message : "delete failed"); }
   }
+  if (error) return <div><ProjectNav id={id} /><ErrorText message={error} /></div>;
   if (!project) return <p className="text-sm text-stone-500">Loading project…</p>;
   return (
     <div>
@@ -53,7 +62,6 @@ export default function ProjectOverviewPage() {
           <h2 className="mb-3 font-medium">Keys</h2>
           <p className="mb-3 text-sm text-stone-500">Secret values are shown once after create.</p>
           <ul className="space-y-2 text-sm">{keys.map((key) => <li key={key.id} className="rounded-xl bg-stone-50 px-3 py-2">{key.kind} · {key.env} · {key.prefix}</li>)}</ul>
-          {secrets.map((key) => <code key={key.secret} className="mt-3 block overflow-auto rounded-xl bg-ink px-3 py-2 text-xs text-amber-100">{key.kind}: {key.secret}</code>)}
         </section>
         <section className="card p-5">
           <h2 className="mb-3 font-medium">Allowed origins</h2>
@@ -65,7 +73,7 @@ export default function ProjectOverviewPage() {
             {origins.map((item) => (
               <li key={item.id} className="flex items-center justify-between rounded-xl bg-stone-50 px-3 py-2">
                 <span>{item.origin}</span>
-                <button className="text-red-600" type="button" onClick={() => dashboardClient().projects.origins.remove(id, item.id).then(reload)}>Remove</button>
+                <button className="text-red-600" type="button" onClick={() => handleRemoveOrigin(item.id)}>Remove</button>
               </li>
             ))}
           </ul>

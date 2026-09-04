@@ -39,7 +39,10 @@ export default function PlaygroundPage() {
     const data: Record<string, string | number | boolean> = {};
     for (const field of fields) {
       const raw = dataValues[field.name] ?? "";
-      if (raw === "" && !field.required) continue;
+      if (field.required && raw === "") {
+        throw new Error(`Field ${field.name} is required`);
+      }
+      if (raw === "") continue;
       data[field.name] = field.type === "number" ? Number(raw) : field.type === "boolean" ? raw === "true" || raw === "1" : raw;
     }
     return data;
@@ -48,8 +51,14 @@ export default function PlaygroundPage() {
     event.preventDefault();
     writePublishableKey(id, pk);
     if (!client) { setError("publishable key required"); return; }
+    const requestedId = id;
+    const requestedPk = pk;
     await run("GET /v1/client/config", null, () => client.config());
-    try { setConfig(await client.config()); } catch { /* shown */ }
+    try {
+      const cfg = await client.config();
+      if (requestedId !== id || requestedPk !== pk) return;
+      setConfig(cfg);
+    } catch { /* shown */ }
   }
   return (
     <div>
@@ -74,7 +83,15 @@ export default function PlaygroundPage() {
             </div>
           ))}
           <div className="flex flex-wrap gap-2">
-            <button className="btn" type="button" onClick={() => client && run("POST /v1/auth/sign-up", { email, password, data: dataPayload() }, () => client.auth.signUp({ email, password, data: dataPayload() }))}>Sign up</button>
+            <button className="btn" type="button" onClick={() => {
+              if (!client) return;
+              try {
+                const payload = dataPayload();
+                run("POST /v1/auth/sign-up", { email, password, data: payload }, () => client.auth.signUp({ email, password, data: payload }));
+              } catch (err) {
+                setError(err instanceof Error ? err.message : "validation failed");
+              }
+            }}>Sign up</button>
             <button className="btn-secondary" type="button" onClick={() => client && run("POST /v1/auth/sign-in", { email, password }, () => client.auth.signIn({ email, password }))}>Sign in</button>
             <button className="btn-secondary" type="button" onClick={() => client && run("GET /v1/auth/me", null, () => client.auth.me())}>Me</button>
             <button className="btn-secondary" type="button" onClick={() => client && run("POST /v1/auth/sign-out", null, () => client.auth.signOut())}>Sign out</button>

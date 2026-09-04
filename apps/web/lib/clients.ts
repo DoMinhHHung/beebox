@@ -12,14 +12,11 @@ export function runtimeClient(publishableKey: string) {
 }
 
 const PK_PREFIX = "beebox.project.pk.";
-const SECRET_PREFIX = "beebox.project.secrets.";
 
 export function rememberProjectKeys(projectId: string, keys: Array<{ kind?: string; secret?: string }>) {
   if (typeof window === "undefined") return;
-  const secrets = keys.filter((key) => key.secret).map((key) => ({ kind: key.kind, secret: key.secret as string }));
-  if (secrets.length) sessionStorage.setItem(SECRET_PREFIX + projectId, JSON.stringify(secrets));
-  const pk = secrets.find((key) => key.kind === "publishable" || key.secret.startsWith("pk_"));
-  if (pk) sessionStorage.setItem(PK_PREFIX + projectId, pk.secret);
+  const pk = keys.find((key) => (key.kind === "publishable" || key.secret?.startsWith("pk_")) && key.secret);
+  if (pk?.secret) sessionStorage.setItem(PK_PREFIX + projectId, pk.secret);
 }
 
 export function readShownSecrets(projectId: string): Array<{ kind?: string; secret: string }> {

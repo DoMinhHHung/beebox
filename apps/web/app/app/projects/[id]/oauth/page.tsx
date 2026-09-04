@@ -12,17 +12,31 @@ export default function OAuthPage() {
   const { id } = useParams<{ id: string }>();
   const [slug, setSlug] = useState("google");
   const [form, setForm] = useState<OAuthState>(blank());
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [ok, setOk] = useState("");
   const extras = useMemo(() => extraFields(slug), [slug]);
   useEffect(() => {
-    setError(""); setOk("");
+    setForm(blank());
+    setError("");
+    setOk("");
+    setLoading(true);
+    const requestedId = id;
+    const requestedSlug = slug;
     dashboardClient().projects.oauth.get(id, slug).then((res: OAuthState) => {
+      if (requestedId !== id || requestedSlug !== slug) return;
       setForm({ client_id: res.client_id ?? "", client_secret: "", redirect_uri: res.redirect_uri ?? "", enabled: Boolean(res.enabled), extra: res.extra ?? {}, configured: res.configured });
-    }).catch(() => setForm(blank()));
+      setLoading(false);
+    }).catch(() => {
+      if (requestedId !== id || requestedSlug !== slug) return;
+      setForm(blank());
+      setLoading(false);
+    });
   }, [id, slug]);
   async function onSubmit(event: FormEvent) {
-    event.preventDefault(); setError(""); setOk("");
+    event.preventDefault();
+    if (loading) return;
+    setError(""); setOk("");
     try {
       const res = await dashboardClient().projects.oauth.put(id, slug, form);
       setForm({ ...form, client_secret: "", configured: res.configured, extra: res.extra ?? form.extra });
@@ -42,22 +56,22 @@ export default function OAuthPage() {
       <ErrorText message={error} />
       {ok ? <p className="mb-3 text-sm text-emerald-700">{ok}</p> : null}
       <form className="card max-w-xl space-y-4 p-6" onSubmit={onSubmit}>
-        <p className="text-sm text-stone-500">{form.configured ? "Secret configured." : "No secret stored yet."}</p>
-        <div><label className="label">Client ID</label><input className="input" value={form.client_id} onChange={(e) => setForm({ ...form, client_id: e.target.value })} /></div>
-        <div><label className="label">Client secret</label><input className="input" type="password" value={form.client_secret} onChange={(e) => setForm({ ...form, client_secret: e.target.value })} placeholder="leave blank to keep current" /></div>
-        <div><label className="label">Redirect URI</label><input className="input" value={form.redirect_uri} onChange={(e) => setForm({ ...form, redirect_uri: e.target.value })} /></div>
+        <p className="text-sm text-stone-500">{loading ? "Loading..." : form.configured ? "Secret configured." : "No secret stored yet."}</p>
+        <div><label className="label">Client ID</label><input className="input" value={form.client_id} onChange={(e) => setForm({ ...form, client_id: e.target.value })} disabled={loading} /></div>
+        <div><label className="label">Client secret</label><input className="input" type="password" value={form.client_secret} onChange={(e) => setForm({ ...form, client_secret: e.target.value })} placeholder="leave blank to keep current" disabled={loading} /></div>
+        <div><label className="label">Redirect URI</label><input className="input" value={form.redirect_uri} onChange={(e) => setForm({ ...form, redirect_uri: e.target.value })} disabled={loading} /></div>
         {extras.map((field) => (
           <div key={field.key}>
             <label className="label">{field.label}</label>
             {field.textarea ? (
-              <textarea className="input min-h-32 font-mono" value={form.extra[field.key] ?? ""} onChange={(e) => setForm({ ...form, extra: { ...form.extra, [field.key]: e.target.value } })} />
+              <textarea className="input min-h-32 font-mono" value={form.extra[field.key] ?? ""} onChange={(e) => setForm({ ...form, extra: { ...form.extra, [field.key]: e.target.value } })} disabled={loading} />
             ) : (
-              <input className="input" value={form.extra[field.key] ?? ""} onChange={(e) => setForm({ ...form, extra: { ...form.extra, [field.key]: e.target.value } })} />
+              <input className="input" value={form.extra[field.key] ?? ""} onChange={(e) => setForm({ ...form, extra: { ...form.extra, [field.key]: e.target.value } })} disabled={loading} />
             )}
           </div>
         ))}
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />Enabled</label>
-        <button className="btn" type="submit">Save {slug}</button>
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} disabled={loading} />Enabled</label>
+        <button className="btn" type="submit" disabled={loading}>Save {slug}</button>
       </form>
     </div>
   );

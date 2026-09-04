@@ -16,6 +16,7 @@ export default function DataPage() {
   const [slug, setSlug] = useState("");
   const [json, setJson] = useState('{"title":"hello"}');
   const [error, setError] = useState("");
+  const [editingDocs, setEditingDocs] = useState<Record<string, string>>({});
 
   async function loadCollections() {
     const res = await dashboardClient().projects.collections.list(id);
@@ -26,7 +27,27 @@ export default function DataPage() {
   async function loadDocuments(collectionId: string) {
     if (!collectionId) { setDocuments([]); return; }
     const res = await dashboardClient().projects.documents.list(id, collectionId);
-    setDocuments(res.documents ?? []);
+    const docs = res.documents ?? [];
+    setDocuments(docs);
+    const editing: Record<string, string> = {};
+    docs.forEach((doc) => { editing[doc.id] = JSON.stringify(doc.data, null, 2); });
+    setEditingDocs(editing);
+  }
+  async function handleSaveDocument(docId: string) {
+    setError("");
+    try {
+      const draftJson = editingDocs[docId] ?? "{}";
+      const parsed = JSON.parse(draftJson);
+      await dashboardClient().projects.documents.update(id, selected, docId, parsed);
+      await loadDocuments(selected);
+    } catch (err) { setError(err instanceof Error ? err.message : "save document failed"); }
+  }
+  async function handleDeleteDocument(docId: string) {
+    setError("");
+    try {
+      await dashboardClient().projects.documents.delete(id, selected, docId);
+      await loadDocuments(selected);
+    } catch (err) { setError(err instanceof Error ? err.message : "delete document failed"); }
   }
   useEffect(() => { loadCollections().catch((err: Error) => setError(err.message)); }, [id]);
   useEffect(() => { if (selected) loadDocuments(selected).catch((err: Error) => setError(err.message)); }, [id, selected]);
@@ -80,11 +101,11 @@ export default function DataPage() {
               <div className="flex items-center justify-between gap-3">
                 <code className="text-xs text-stone-500">{doc.id}</code>
                 <div className="flex gap-2">
-                  <button className="btn-secondary" type="button" onClick={() => dashboardClient().projects.documents.update(id, selected, doc.id, doc.data).then(() => loadDocuments(selected))}>Save</button>
-                  <button className="btn-secondary text-red-600" type="button" onClick={() => dashboardClient().projects.documents.delete(id, selected, doc.id).then(() => loadDocuments(selected))}>Delete</button>
+                  <button className="btn-secondary" type="button" onClick={() => handleSaveDocument(doc.id)}>Save</button>
+                  <button className="btn-secondary text-red-600" type="button" onClick={() => handleDeleteDocument(doc.id)}>Delete</button>
                 </div>
               </div>
-              <JsonBlock value={doc.data} />
+              <textarea className="input min-h-32 font-mono text-sm" value={editingDocs[doc.id] ?? ""} onChange={(e) => setEditingDocs((prev) => ({ ...prev, [doc.id]: e.target.value }))} />
             </article>
           ))}
         </section>
