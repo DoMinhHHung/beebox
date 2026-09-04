@@ -33,8 +33,10 @@ Không phải clone Clerk. Auth chỉ là cửa. Sản phẩm là: schema projec
 7. Frontend:
 
    ```js
-   createBeeBox({
-     url: "https://quan-tra-dao.api.beebox.dev",
+   import { createClient } from "@beebox/js"
+
+   const client = createClient({
+     baseUrl: "http://127.0.0.1:8080",
      publishableKey: "pk_test_xxx",
    })
    ```
@@ -43,6 +45,39 @@ Không phải clone Clerk. Auth chỉ là cửa. Sản phẩm là: schema projec
 9. User cuối đăng ký / đăng nhập / gọi data trên đúng project đó.
 
 Chi tiết từng bước: [docs/PRODUCT.md](docs/PRODUCT.md).
+
+## Local stack
+
+Một Postgres `beebox` + plans `:8081` + projects `:8082` + identity `:8083` + gateway `:8080`.
+
+```bash
+docker compose up --build
+```
+
+Env dùng chung: `BEEBOX_DATABASE_URL`, `BEEBOX_PLANS_BASE_URL`, `BEEBOX_PROJECTS_BASE_URL`, `BEEBOX_IDENTITY_BASE_URL`, `BEEBOX_INTERNAL_TOKEN=dev-internal`.
+
+Healthcheck: Postgres `pg_isready`, gateway `GET /health/live`.
+
+## SDK JS
+
+Package `@beebox/js` (đường dẫn `sdk/js`). Chỉ dùng `fetch`, không React.
+
+```js
+import { createClient } from "@beebox/js"
+
+const client = createClient({
+  publishableKey: "pk_test_xxx",
+  baseUrl: "http://127.0.0.1:8080",
+})
+
+await client.config()
+await client.auth.signUp({ email: "a@b.c", password: "password", data: { fullName: "A" } })
+await client.auth.signIn({ email: "a@b.c", password: "password" })
+await client.auth.me()
+await client.auth.signOut()
+```
+
+Request public gửi `X-BeeBox-Publishable-Key` (hoặc `Authorization: Bearer pk_...`). `me()` / `signOut()` gửi `Authorization: Bearer sess_...`. Session giữ memory + `localStorage` key `beebox.session`. Lỗi: `{ "error": { "code", "message" } }`.
 
 ## Quyết định đã chốt
 
@@ -90,39 +125,23 @@ Cắt service sau, khi có lý do: `control` / `runtime` / `worker` / `realtime`
 
 ```text
 beebox/
-  cmd/                 control, runtime, worker
-  internal/
-    project/
-    billing/           plans, quota
-    iam/               keys, origin
-    schema/            field registry
-    module/            auth, data, file, realtime
-    gateway/           resolve project, rate limit
+  beebox-gateway/
+  beebox-plans/
+  beebox-projects/
+  beebox-identity/
+  libs/shared/
+  sdk/js/
+  docker-compose.yml
   docs/
   AGENTS.md
   README.md
 ```
 
-Lúc mới: một Go module, một hoặc hai process. Chưa cần nhiều repo.
-
 ## Trạng thái
 
-Đang ở bước định hướng sản phẩm. Chưa có runtime production.
-
-Thứ tự implement:
-
-1. Project + plan + module flag
-2. User field registry theo trần plan
-3. Auth theo field đã chọn
-4. URL + `pk_` / `sk_`
-5. `/v1/client/config` + playground
-6. SDK JS mỏng
-7. Collection CRUD
-8. File / realtime
+Local stack + password auth + field registry + SDK JS tối thiểu.
 
 ## Gateway
-
-HTTP edge tối thiểu. Chưa auth, chưa resolve project.
 
 ```bash
 cd beebox-gateway && go test -race ./...
