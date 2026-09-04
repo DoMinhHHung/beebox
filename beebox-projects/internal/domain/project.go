@@ -2,6 +2,7 @@ package domain
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -14,14 +15,15 @@ const (
 )
 
 type Project struct {
-	ID       uuid.UUID
-	OwnerID  uuid.UUID
-	PlanID   uuid.UUID
-	PlanSlug string
-	Name     string
-	Slug     string
-	Env      string
-	Status   string
+	ID        uuid.UUID
+	OwnerID   uuid.UUID
+	PlanID    uuid.UUID
+	PlanSlug  string
+	Name      string
+	Slug      string
+	Env       string
+	Status    string
+	UpdatedAt time.Time
 }
 
 type CatalogPlan struct {

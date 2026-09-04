@@ -32,7 +32,7 @@ func (r *ProjectRepository) List(ctx context.Context, ownerID uuid.UUID) ([]doma
 	var out []domain.Project
 	err := withOwner(ctx, r.pool, ownerID, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
-			SELECT id, owner_id, plan_id, plan_slug, name, slug, env, status
+			SELECT id, owner_id, plan_id, plan_slug, name, slug, env, status, updated_at
 			FROM project.projects
 			ORDER BY slug
 		`)
@@ -59,7 +59,7 @@ func (r *ProjectRepository) FindByID(ctx context.Context, ownerID, id uuid.UUID)
 	var project domain.Project
 	err := withOwner(ctx, r.pool, ownerID, func(tx pgx.Tx) error {
 		row := tx.QueryRow(ctx, `
-			SELECT id, owner_id, plan_id, plan_slug, name, slug, env, status
+			SELECT id, owner_id, plan_id, plan_slug, name, slug, env, status, updated_at
 			FROM project.projects
 			WHERE id = $1
 		`, id)
@@ -83,13 +83,13 @@ func (r *ProjectRepository) Update(ctx context.Context, ownerID uuid.UUID, proje
 			    slug = $5,
 			    status = $6,
 			    updated_at = now()
-			WHERE id = $1
-		`, project.ID, project.PlanID, project.PlanSlug, project.Name, project.Slug, project.Status)
+			WHERE id = $1 AND updated_at = $7
+		`, project.ID, project.PlanID, project.PlanSlug, project.Name, project.Slug, project.Status, project.UpdatedAt)
 		if err != nil {
 			return mapWriteErr(err)
 		}
 		if tag.RowsAffected() == 0 {
-			return domain.ErrNotFound
+			return domain.ErrConflict
 		}
 		return nil
 	})
@@ -114,6 +114,6 @@ type scanner interface {
 
 func scanProject(s scanner) (domain.Project, error) {
 	var p domain.Project
-	err := s.Scan(&p.ID, &p.OwnerID, &p.PlanID, &p.PlanSlug, &p.Name, &p.Slug, &p.Env, &p.Status)
+	err := s.Scan(&p.ID, &p.OwnerID, &p.PlanID, &p.PlanSlug, &p.Name, &p.Slug, &p.Env, &p.Status, &p.UpdatedAt)
 	return p, err
 }

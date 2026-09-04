@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/DoMinhHHung/beebox/beebox-projects/internal/domain"
 	"github.com/google/uuid"
@@ -19,7 +20,11 @@ type PlanCatalog struct {
 
 func NewPlanCatalog(baseURL string, client *http.Client) *PlanCatalog {
 	if client == nil {
-		client = http.DefaultClient
+		client = &http.Client{Timeout: 5 * time.Second}
+	} else if client.Timeout == 0 {
+		clone := *client
+		clone.Timeout = 5 * time.Second
+		client = &clone
 	}
 	return &PlanCatalog{base: strings.TrimRight(baseURL, "/"), client: client}
 }
