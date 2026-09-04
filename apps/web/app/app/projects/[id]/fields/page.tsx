@@ -13,18 +13,19 @@ export default function FieldsPage() {
   const [error, setError] = useState("");
   const [ok, setOk] = useState("");
   useEffect(() => {
+    let ignore = false;
     setFields([emptyField()]);
     setError("");
     setOk("");
-    const requestedId = id;
     dashboardClient().projects.fields.list(id).then((res: { fields?: FieldRow[] }) => {
-      if (requestedId !== id) return;
+      if (ignore) return;
       const next = res.fields ?? [];
       setFields(next.length ? next : [emptyField()]);
     }).catch((err: Error) => {
-      if (requestedId !== id) return;
+      if (ignore) return;
       setError(err.message);
     });
+    return () => { ignore = true; };
   }, [id]);
   async function onSubmit(event: FormEvent) {
     event.preventDefault(); setError(""); setOk("");

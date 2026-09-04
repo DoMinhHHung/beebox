@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/DoMinhHHung/beebox/beebox-projects/internal/domain"
@@ -10,6 +11,27 @@ import (
 )
 
 type fakeCollections struct{ items []domain.Collection }
+
+type concurrentCollections struct {
+	*fakeCollections
+	mu sync.Mutex
+}
+
+func (f *concurrentCollections) CreateIfBelowLimit(_ context.Context, _ uuid.UUID, projectID uuid.UUID, collection domain.Collection, limit int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	count := 0
+	for _, item := range f.items {
+		if item.ProjectID == projectID {
+			count++
+		}
+	}
+	if count >= limit {
+		return domain.ErrPlanLimit
+	}
+	f.items = append(f.items, collection)
+	return nil
+}
 
 func (f *fakeCollections) Create(_ context.Context, _ uuid.UUID, collection domain.Collection) error {
 	for _, item := range f.items {
@@ -36,6 +58,24 @@ func (f *fakeCollections) Find(_ context.Context, _, projectID, collectionID uui
 		}
 	}
 	return domain.Collection{}, domain.ErrNotFound
+}
+func (f *fakeCollections) Update(_ context.Context, _ uuid.UUID, collection domain.Collection) error {
+	for i, item := range f.items {
+		if item.ID == collection.ID && item.ProjectID == collection.ProjectID {
+			f.items[i] = collection
+			return nil
+		}
+	}
+	return domain.ErrNotFound
+}
+func (f *fakeCollections) Delete(_ context.Context, _, projectID, collectionID uuid.UUID) error {
+	for i, item := range f.items {
+		if item.ID == collectionID && item.ProjectID == projectID {
+			f.items = append(f.items[:i], f.items[i+1:]...)
+			return nil
+		}
+	}
+	return domain.ErrNotFound
 }
 func (f *fakeCollections) CountByProject(_ context.Context, _, projectID uuid.UUID) (int, error) {
 	n := 0
@@ -132,5 +172,41 @@ func TestCreateDocumentStoresPayload(t *testing.T) {
 	}
 	if got.Data["title"] != "hi" {
 		t.Fatalf("data=%v", got.Data)
+	}
+}
+
+func TestCreateCollectionConcurrentQuota(t *testing.T) {
+	owner := uuid.MustParse("01800000-0000-7000-8000-000000000001")
+	projectID := uuid.MustParse("01800000-0000-7000-8000-000000000002")
+	projects := &fakeProjects{items: map[uuid.UUID]domain.Project{projectID: {
+		ID: projectID, OwnerID: owner, Name: "Shop", Slug: "shop", PlanSlug: "free", Env: domain.EnvTest, Status: domain.StatusActive,
+	}}}
+	collections := &concurrentCollections{fakeCollections: &fakeCollections{items: []domain.Collection{{ProjectID: projectID, Slug: "existing"}}}}
+	uc := CreateCollection{Projects: projects, Collections: collections}
+	const attempts = 8
+	results := make(chan error, attempts)
+	var wg sync.WaitGroup
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, err := uc.Execute(context.Background(), owner, projectID, "New", "new_"+string(rune('a'+i)))
+			results <- err
+		}(i)
+	}
+	wg.Wait()
+	close(results)
+	var succeeded, limited int
+	for err := range results {
+		if err == nil {
+			succeeded++
+		} else if errors.Is(err, domain.ErrPlanLimit) {
+			limited++
+		} else {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	if succeeded != 1 || limited != attempts-1 {
+		t.Fatalf("succeeded=%d limited=%d", succeeded, limited)
 	}
 }

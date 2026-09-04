@@ -27,7 +27,7 @@ export default function DataPage() {
   async function loadDocuments(collectionId: string) {
     if (!collectionId) { setDocuments([]); return; }
     const res = await dashboardClient().projects.documents.list(id, collectionId);
-    const docs = res.documents ?? [];
+    const docs = (res.documents ?? []) as Document[];
     setDocuments(docs);
     const editing: Record<string, string> = {};
     docs.forEach((doc) => { editing[doc.id] = JSON.stringify(doc.data, null, 2); });

@@ -50,6 +50,41 @@ func (s *Server) postCollection(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, toCollectionDTO(item))
 }
 
+func (s *Server) patchCollection(w http.ResponseWriter, r *http.Request) {
+	ownerID, projectID, collectionID, err := ownerCollection(r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+		Slug string `json:"slug"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, domain.ErrInvalidInput)
+		return
+	}
+	item, err := s.UpdateCollection.Execute(r.Context(), ownerID, projectID, collectionID, body.Name, body.Slug)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toCollectionDTO(item))
+}
+
+func (s *Server) deleteCollection(w http.ResponseWriter, r *http.Request) {
+	ownerID, projectID, collectionID, err := ownerCollection(r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if err := s.DeleteCollection.Execute(r.Context(), ownerID, projectID, collectionID); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) getDocuments(w http.ResponseWriter, r *http.Request) {
 	ownerID, projectID, collectionID, err := ownerCollection(r)
 	if err != nil {

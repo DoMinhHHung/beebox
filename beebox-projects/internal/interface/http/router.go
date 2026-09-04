@@ -44,6 +44,8 @@ type Deps struct {
 	InternalOAuth    application.InternalOAuthProvider
 	ListCollections  application.ListCollections
 	CreateCollection application.CreateCollection
+	UpdateCollection application.UpdateCollection
+	DeleteCollection application.DeleteCollection
 	ListDocuments    application.ListDocuments
 	GetDocument      application.GetDocument
 	CreateDocument   application.CreateDocument
@@ -85,6 +87,8 @@ func New(d Deps) http.Handler {
 	mux.Handle("PUT /v1/projects/{id}/oauth/{slug}", s.withOwner(http.HandlerFunc(s.putProjectOAuth)))
 	mux.Handle("GET /v1/projects/{id}/collections", s.withOwner(http.HandlerFunc(s.getCollections)))
 	mux.Handle("POST /v1/projects/{id}/collections", s.withOwner(http.HandlerFunc(s.postCollection)))
+	mux.Handle("PATCH /v1/projects/{id}/collections/{collectionId}", s.withOwner(http.HandlerFunc(s.patchCollection)))
+	mux.Handle("DELETE /v1/projects/{id}/collections/{collectionId}", s.withOwner(http.HandlerFunc(s.deleteCollection)))
 	mux.Handle("GET /v1/projects/{id}/collections/{collectionId}/documents", s.withOwner(http.HandlerFunc(s.getDocuments)))
 	mux.Handle("POST /v1/projects/{id}/collections/{collectionId}/documents", s.withOwner(http.HandlerFunc(s.postDocument)))
 	mux.Handle("GET /v1/projects/{id}/collections/{collectionId}/documents/{documentId}", s.withOwner(http.HandlerFunc(s.getDocument)))

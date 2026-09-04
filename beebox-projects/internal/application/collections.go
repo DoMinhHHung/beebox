@@ -34,6 +34,10 @@ type CreateCollection struct {
 	Collections domain.CollectionRepository
 }
 
+type atomicCollectionCreator interface {
+	CreateIfBelowLimit(ctx context.Context, ownerID, projectID uuid.UUID, collection domain.Collection, limit int) error
+}
+
 func (u CreateCollection) Execute(ctx context.Context, ownerID, projectID uuid.UUID, name, slug string) (domain.Collection, error) {
 	if ownerID == uuid.Nil || projectID == uuid.Nil {
 		return domain.Collection{}, domain.ErrInvalidInput
@@ -51,22 +55,63 @@ func (u CreateCollection) Execute(ctx context.Context, ownerID, projectID uuid.U
 		return domain.Collection{}, domain.ErrInvalidInput
 	}
 	maxColl, _ := domain.CollectionQuota(project.PlanSlug)
-	count, err := u.Collections.CountByProject(ctx, ownerID, projectID)
-	if err != nil {
-		return domain.Collection{}, err
-	}
-	if count >= maxColl {
-		return domain.Collection{}, domain.ErrPlanLimit
-	}
 	newID, err := id.New()
 	if err != nil {
 		return domain.Collection{}, err
 	}
 	item := domain.Collection{ID: newID, ProjectID: projectID, Name: name, Slug: slug, CreatedAt: time.Now().UTC()}
-	if err := u.Collections.Create(ctx, ownerID, item); err != nil {
+	if atomic, ok := u.Collections.(atomicCollectionCreator); ok {
+		err = atomic.CreateIfBelowLimit(ctx, ownerID, projectID, item, maxColl)
+	} else {
+		count, countErr := u.Collections.CountByProject(ctx, ownerID, projectID)
+		if countErr != nil {
+			return domain.Collection{}, countErr
+		}
+		if count >= maxColl {
+			return domain.Collection{}, domain.ErrPlanLimit
+		}
+		err = u.Collections.Create(ctx, ownerID, item)
+	}
+	if err != nil {
 		return domain.Collection{}, err
 	}
 	return item, nil
+}
+
+type UpdateCollection struct {
+	Collections domain.CollectionRepository
+}
+
+func (u UpdateCollection) Execute(ctx context.Context, ownerID, projectID, collectionID uuid.UUID, name, slug string) (domain.Collection, error) {
+	if ownerID == uuid.Nil || projectID == uuid.Nil || collectionID == uuid.Nil {
+		return domain.Collection{}, domain.ErrInvalidInput
+	}
+	item, err := u.Collections.Find(ctx, ownerID, projectID, collectionID)
+	if err != nil {
+		return domain.Collection{}, err
+	}
+	name = strings.TrimSpace(name)
+	slug = strings.TrimSpace(slug)
+	if name == "" || !collectionSlugRE.MatchString(slug) {
+		return domain.Collection{}, domain.ErrInvalidInput
+	}
+	item.Name, item.Slug = name, slug
+	if err := u.Collections.Update(ctx, ownerID, item); err != nil {
+		return domain.Collection{}, err
+	}
+	return item, nil
+}
+
+type DeleteCollection struct {
+	Collections domain.CollectionRepository
+}
+
+func (u DeleteCollection) Execute(ctx context.Context, ownerID, projectID, collectionID uuid.UUID) error {
+	if ownerID == uuid.Nil || projectID == uuid.Nil || collectionID == uuid.Nil {
+		return domain.ErrInvalidInput
+	}
+	// The collection foreign key uses ON DELETE CASCADE, so its documents are removed atomically.
+	return u.Collections.Delete(ctx, ownerID, projectID, collectionID)
 }
 
 type ListDocuments struct {
@@ -98,6 +143,10 @@ type CreateDocument struct {
 	Documents   domain.DocumentRepository
 }
 
+type atomicDocumentCreator interface {
+	CreateIfBelowLimit(ctx context.Context, ownerID, projectID uuid.UUID, doc domain.Document, limit int) error
+}
+
 func (u CreateDocument) Execute(ctx context.Context, ownerID, projectID, collectionID uuid.UUID, data map[string]any) (domain.Document, error) {
 	project, err := u.Projects.FindByID(ctx, ownerID, projectID)
 	if err != nil {
@@ -111,20 +160,25 @@ func (u CreateDocument) Execute(ctx context.Context, ownerID, projectID, collect
 		return domain.Document{}, err
 	}
 	_, maxDocs := domain.CollectionQuota(project.PlanSlug)
-	count, err := u.Documents.CountByProject(ctx, ownerID, projectID)
-	if err != nil {
-		return domain.Document{}, err
-	}
-	if count >= maxDocs {
-		return domain.Document{}, domain.ErrPlanLimit
-	}
 	newID, err := id.New()
 	if err != nil {
 		return domain.Document{}, err
 	}
 	now := time.Now().UTC()
 	doc := domain.Document{ID: newID, ProjectID: projectID, CollectionID: collectionID, Data: payload, CreatedAt: now, UpdatedAt: now}
-	if err := u.Documents.Create(ctx, ownerID, doc); err != nil {
+	if atomic, ok := u.Documents.(atomicDocumentCreator); ok {
+		err = atomic.CreateIfBelowLimit(ctx, ownerID, projectID, doc, maxDocs)
+	} else {
+		count, countErr := u.Documents.CountByProject(ctx, ownerID, projectID)
+		if countErr != nil {
+			return domain.Document{}, countErr
+		}
+		if count >= maxDocs {
+			return domain.Document{}, domain.ErrPlanLimit
+		}
+		err = u.Documents.Create(ctx, ownerID, doc)
+	}
+	if err != nil {
 		return domain.Document{}, err
 	}
 	return doc, nil

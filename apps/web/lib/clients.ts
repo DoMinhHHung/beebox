@@ -19,18 +19,6 @@ export function rememberProjectKeys(projectId: string, keys: Array<{ kind?: stri
   if (pk?.secret) sessionStorage.setItem(PK_PREFIX + projectId, pk.secret);
 }
 
-export function readShownSecrets(projectId: string): Array<{ kind?: string; secret: string }> {
-  if (typeof window === "undefined") return [];
-  const raw = sessionStorage.getItem(SECRET_PREFIX + projectId);
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
 export function readPublishableKey(projectId: string): string {
   if (typeof window === "undefined") return "";
   return sessionStorage.getItem(PK_PREFIX + projectId) ?? "";

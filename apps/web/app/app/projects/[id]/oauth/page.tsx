@@ -17,21 +17,21 @@ export default function OAuthPage() {
   const [ok, setOk] = useState("");
   const extras = useMemo(() => extraFields(slug), [slug]);
   useEffect(() => {
+    let ignore = false;
     setForm(blank());
     setError("");
     setOk("");
     setLoading(true);
-    const requestedId = id;
-    const requestedSlug = slug;
     dashboardClient().projects.oauth.get(id, slug).then((res: OAuthState) => {
-      if (requestedId !== id || requestedSlug !== slug) return;
+      if (ignore) return;
       setForm({ client_id: res.client_id ?? "", client_secret: "", redirect_uri: res.redirect_uri ?? "", enabled: Boolean(res.enabled), extra: res.extra ?? {}, configured: res.configured });
       setLoading(false);
     }).catch(() => {
-      if (requestedId !== id || requestedSlug !== slug) return;
+      if (ignore) return;
       setForm(blank());
       setLoading(false);
     });
+    return () => { ignore = true; };
   }, [id, slug]);
   async function onSubmit(event: FormEvent) {
     event.preventDefault();

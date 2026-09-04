@@ -49,3 +49,24 @@ func TestPreflightAllowsIdentityHeaders(t *testing.T) {
 		}
 	}
 }
+
+func TestPreflightWithoutIdentityStillAllowsOrigin(t *testing.T) {
+	h := ResolveAndCORS(stubResolver{}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	for _, path := range []string{"/v1/client/config", "/v1/auth/sign-in"} {
+		t.Run(path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodOptions, path, nil)
+			req.Header.Set("Origin", "http://localhost:3000")
+			req.Header.Set("Access-Control-Request-Method", "GET")
+			h.ServeHTTP(rec, req)
+			if rec.Code != http.StatusNoContent {
+				t.Fatalf("status=%d", rec.Code)
+			}
+			if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:3000" {
+				t.Fatalf("acao=%q", got)
+			}
+		})
+	}
+}

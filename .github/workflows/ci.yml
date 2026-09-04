@@ -118,6 +118,8 @@ jobs:
 
   web:
     runs-on: ubuntu-24.04
+    env:
+      NEXT_PUBLIC_BEEBOX_URL: http://127.0.0.1:8080
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4

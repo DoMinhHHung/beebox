@@ -27,6 +27,26 @@ VALUES ($1, $2, $3, $4, $5)
 	})
 }
 
+func (r *CollectionRepository) CreateIfBelowLimit(ctx context.Context, ownerID, projectID uuid.UUID, collection domain.Collection, limit int) error {
+	return withOwner(ctx, r.pool, ownerID, func(tx pgx.Tx) error {
+		var locked uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT id FROM project.projects WHERE id = $1 AND owner_id = $2 FOR UPDATE`, projectID, ownerID).Scan(&locked); errors.Is(err, pgx.ErrNoRows) {
+			return domain.ErrNotFound
+		} else if err != nil {
+			return err
+		}
+		var count int
+		if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM project.collections WHERE project_id = $1`, projectID).Scan(&count); err != nil {
+			return err
+		}
+		if count >= limit {
+			return domain.ErrPlanLimit
+		}
+		_, err := tx.Exec(ctx, `INSERT INTO project.collections (id, project_id, name, slug, created_at) VALUES ($1, $2, $3, $4, $5)`, collection.ID, collection.ProjectID, collection.Name, collection.Slug, collection.CreatedAt)
+		return mapWriteErr(err)
+	})
+}
+
 func (r *CollectionRepository) ListByProject(ctx context.Context, ownerID, projectID uuid.UUID) ([]domain.Collection, error) {
 	var out []domain.Collection
 	err := withOwner(ctx, r.pool, ownerID, func(tx pgx.Tx) error {
@@ -66,6 +86,32 @@ FROM project.collections WHERE project_id = $1 AND id = $2
 		return err
 	})
 	return item, err
+}
+
+func (r *CollectionRepository) Update(ctx context.Context, ownerID uuid.UUID, collection domain.Collection) error {
+	return withOwner(ctx, r.pool, ownerID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `UPDATE project.collections SET name = $1, slug = $2 WHERE project_id = $3 AND id = $4`, collection.Name, collection.Slug, collection.ProjectID, collection.ID)
+		if err != nil {
+			return mapWriteErr(err)
+		}
+		if tag.RowsAffected() == 0 {
+			return domain.ErrNotFound
+		}
+		return nil
+	})
+}
+
+func (r *CollectionRepository) Delete(ctx context.Context, ownerID, projectID, collectionID uuid.UUID) error {
+	return withOwner(ctx, r.pool, ownerID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `DELETE FROM project.collections WHERE project_id = $1 AND id = $2`, projectID, collectionID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return domain.ErrNotFound
+		}
+		return nil
+	})
 }
 
 func (r *CollectionRepository) CountByProject(ctx context.Context, ownerID, projectID uuid.UUID) (int, error) {
@@ -113,6 +159,30 @@ func (r *DocumentRepository) Create(ctx context.Context, ownerID uuid.UUID, doc 
 INSERT INTO project.documents (id, project_id, collection_id, data, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6)
 `, doc.ID, doc.ProjectID, doc.CollectionID, raw, doc.CreatedAt, doc.UpdatedAt)
+		return mapWriteErr(err)
+	})
+}
+
+func (r *DocumentRepository) CreateIfBelowLimit(ctx context.Context, ownerID, projectID uuid.UUID, doc domain.Document, limit int) error {
+	raw, err := json.Marshal(doc.Data)
+	if err != nil {
+		return domain.ErrInvalidInput
+	}
+	return withOwner(ctx, r.pool, ownerID, func(tx pgx.Tx) error {
+		var locked uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT id FROM project.projects WHERE id = $1 AND owner_id = $2 FOR UPDATE`, projectID, ownerID).Scan(&locked); errors.Is(err, pgx.ErrNoRows) {
+			return domain.ErrNotFound
+		} else if err != nil {
+			return err
+		}
+		var count int
+		if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM project.documents WHERE project_id = $1`, projectID).Scan(&count); err != nil {
+			return err
+		}
+		if count >= limit {
+			return domain.ErrPlanLimit
+		}
+		_, err := tx.Exec(ctx, `INSERT INTO project.documents (id, project_id, collection_id, data, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)`, doc.ID, doc.ProjectID, doc.CollectionID, raw, doc.CreatedAt, doc.UpdatedAt)
 		return mapWriteErr(err)
 	})
 }
