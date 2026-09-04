@@ -57,6 +57,12 @@ func NewWithResolver(cfg config.Config, resolver middleware.Resolver) http.Handl
 	mux.HandleFunc("/v1/accounts/", func(w http.ResponseWriter, r *http.Request) {
 		projectsProxy.ServeHTTP(w, r)
 	})
+	mux.HandleFunc("/v1/owner", func(w http.ResponseWriter, r *http.Request) {
+		projectsProxy.ServeHTTP(w, r)
+	})
+	mux.HandleFunc("/v1/owner/", func(w http.ResponseWriter, r *http.Request) {
+		projectsProxy.ServeHTTP(w, r)
+	})
 	mux.Handle("/v1/auth", attachIdentityHeaders(cfg.InternalToken, identityProxy))
 	mux.Handle("/v1/auth/", attachIdentityHeaders(cfg.InternalToken, identityProxy))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
