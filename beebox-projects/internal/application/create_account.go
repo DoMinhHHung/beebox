@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	beeboxid "github.com/DoMinhHHung/beebox/beebox-id"
+	"github.com/DoMinhHHung/beebox/libs/shared/id"
 	"github.com/DoMinhHHung/beebox/beebox-projects/internal/domain"
 )
 
@@ -17,11 +17,11 @@ func (u CreateAccount) Execute(ctx context.Context, email string) (domain.Accoun
 	if !validEmail(email) {
 		return domain.Account{}, domain.ErrInvalidInput
 	}
-	id, err := beeboxid.New()
+	newID, err := id.New()
 	if err != nil {
 		return domain.Account{}, err
 	}
-	account := domain.Account{ID: id, Email: email}
+	account := domain.Account{ID: newID, Email: email}
 	if err := u.Accounts.Create(ctx, account); err != nil {
 		return domain.Account{}, err
 	}

@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	beeboxid "github.com/DoMinhHHung/beebox/beebox-id"
+	"github.com/DoMinhHHung/beebox/libs/shared/id"
 	"github.com/DoMinhHHung/beebox/beebox-plans/internal/domain"
 )
 
@@ -38,11 +38,11 @@ func Seed(ctx context.Context, plans domain.PlanRepository) error {
 		if !errors.Is(err, domain.ErrNotFound) {
 			return err
 		}
-		id, err := beeboxid.New()
+		newID, err := id.New()
 		if err != nil {
 			return err
 		}
-		plan.ID = id
+		plan.ID = newID
 		if err := plans.Create(ctx, plan); err != nil {
 			if errors.Is(err, domain.ErrConflict) {
 				continue

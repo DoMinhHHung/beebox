@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	beeboxid "github.com/DoMinhHHung/beebox/beebox-id"
+	"github.com/DoMinhHHung/beebox/libs/shared/id"
 	"github.com/DoMinhHHung/beebox/beebox-projects/internal/domain"
 	"github.com/google/uuid"
 )
@@ -40,12 +40,12 @@ func (u CreateProject) Execute(ctx context.Context, in CreateProjectInput) (Crea
 	if err != nil {
 		return CreateProjectResult{}, err
 	}
-	id, err := beeboxid.New()
+	newID, err := id.New()
 	if err != nil {
 		return CreateProjectResult{}, err
 	}
 	project := domain.Project{
-		ID:       id,
+		ID:       newID,
 		OwnerID:  in.OwnerID,
 		PlanID:   plan.ID,
 		PlanSlug: plan.Slug,
@@ -54,11 +54,11 @@ func (u CreateProject) Execute(ctx context.Context, in CreateProjectInput) (Crea
 		Env:      domain.EnvTest,
 		Status:   domain.StatusActive,
 	}
-	pk, err := issueKey(id, domain.KeyKindPublishable, domain.EnvTest)
+	pk, err := issueKey(newID, domain.KeyKindPublishable, domain.EnvTest)
 	if err != nil {
 		return CreateProjectResult{}, err
 	}
-	sk, err := issueKey(id, domain.KeyKindSecret, domain.EnvTest)
+	sk, err := issueKey(newID, domain.KeyKindSecret, domain.EnvTest)
 	if err != nil {
 		return CreateProjectResult{}, err
 	}

@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 
-	beeboxid "github.com/DoMinhHHung/beebox/beebox-id"
+	"github.com/DoMinhHHung/beebox/libs/shared/id"
 	"github.com/DoMinhHHung/beebox/beebox-projects/internal/domain"
 	"github.com/google/uuid"
 )
@@ -41,7 +41,7 @@ func issueKey(projectID uuid.UUID, kind, env string) (domain.IssuedKey, error) {
 	}
 	secretPart := hex.EncodeToString(rnd[:])
 	raw := head + secretPart
-	id, err := beeboxid.New()
+	newID, err := id.New()
 	if err != nil {
 		return domain.IssuedKey{}, err
 	}
@@ -51,7 +51,7 @@ func issueKey(projectID uuid.UUID, kind, env string) (domain.IssuedKey, error) {
 	}
 	return domain.IssuedKey{
 		Key: domain.APIKey{
-			ID:         id,
+			ID:         newID,
 			ProjectID:  projectID,
 			Prefix:     display,
 			SecretHash: hashSecret(raw),
