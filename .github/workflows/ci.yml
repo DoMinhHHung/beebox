@@ -19,3 +19,32 @@ jobs:
           test -f README.md
           test -f AGENTS.md
           test -f docs/PRODUCT.md
+
+  test:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - beebox-apperror
+          - beebox-gateway
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.8"
+          cache-dependency-path: |
+            */go.mod
+            */go.sum
+      - name: gofmt
+        working-directory: ${{ matrix.module }}
+        run: test -z "$(gofmt -l .)"
+      - name: go mod verify
+        working-directory: ${{ matrix.module }}
+        run: go mod verify
+      - name: go vet
+        working-directory: ${{ matrix.module }}
+        run: go vet ./...
+      - name: go test
+        working-directory: ${{ matrix.module }}
+        run: go test -race -count=1 ./...
