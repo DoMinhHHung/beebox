@@ -28,6 +28,8 @@ type CollectionRepository interface {
 	Create(ctx context.Context, ownerID uuid.UUID, collection Collection) error
 	ListByProject(ctx context.Context, ownerID, projectID uuid.UUID) ([]Collection, error)
 	Find(ctx context.Context, ownerID, projectID, collectionID uuid.UUID) (Collection, error)
+	Update(ctx context.Context, ownerID uuid.UUID, collection Collection) error
+	Delete(ctx context.Context, ownerID, projectID, collectionID uuid.UUID) error
 	CountByProject(ctx context.Context, ownerID, projectID uuid.UUID) (int, error)
 }
 

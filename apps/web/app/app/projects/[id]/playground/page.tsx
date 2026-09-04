@@ -1,6 +1,6 @@
 "use client";
 import { useParams } from "next/navigation";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { ErrorText, JsonBlock, ProjectNav } from "@/components/ui";
 import { dashboardClient, readPublishableKey, runtimeClient, writePublishableKey } from "@/lib/clients";
 import { BEEBOX_URL } from "@/lib/env";
@@ -18,6 +18,7 @@ export default function PlaygroundPage() {
   const [lastRequest, setLastRequest] = useState<unknown>(null);
   const [lastResponse, setLastResponse] = useState<unknown>(null);
   const [error, setError] = useState("");
+  const configRequest = useRef(0);
   const fields = config?.fields ?? [];
   const oauth = config?.auth?.oauth ?? [];
   useEffect(() => {
@@ -51,14 +52,20 @@ export default function PlaygroundPage() {
     event.preventDefault();
     writePublishableKey(id, pk);
     if (!client) { setError("publishable key required"); return; }
-    const requestedId = id;
-    const requestedPk = pk;
-    await run("GET /v1/client/config", null, () => client.config());
+    const requestNumber = ++configRequest.current;
+    setError("");
+    setLastRequest({ label: "GET /v1/client/config", body: null });
     try {
       const cfg = await client.config();
-      if (requestedId !== id || requestedPk !== pk) return;
+      if (requestNumber !== configRequest.current) return;
+      setLastResponse(cfg ?? { ok: true });
       setConfig(cfg);
-    } catch { /* shown */ }
+    } catch (err) {
+      if (requestNumber !== configRequest.current) return;
+      const message = err instanceof Error ? err.message : "request failed";
+      setError(message);
+      setLastResponse({ error: { message } });
+    }
   }
   return (
     <div>
