@@ -2,17 +2,10 @@ package httpapi
 
 import (
 	"context"
-	"crypto/subtle"
-	"encoding/json"
-	"errors"
-	"io"
 	"net/http"
-	"strings"
 
 	"github.com/DoMinhHHung/beebox/beebox-projects/internal/application"
 	"github.com/DoMinhHHung/beebox/beebox-projects/internal/domain"
-	"github.com/DoMinhHHung/beebox/libs/shared/apperror"
-	"github.com/google/uuid"
 )
 
 const (
