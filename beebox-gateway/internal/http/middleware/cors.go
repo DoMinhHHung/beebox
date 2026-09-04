@@ -67,7 +67,7 @@ func ResolveAndCORS(resolver Resolver, next http.Handler) http.Handler {
 			apperror.WriteJSON(w, apperror.New(apperror.CodeForbidden, "origin is not allowed"))
 			return
 		}
-		if resolved && origin != "" {
+		if origin != "" && (resolved || !requiresProject(r.URL.Path)) {
 			writeCORS(w, origin)
 		}
 		if r.Method == http.MethodOptions {
