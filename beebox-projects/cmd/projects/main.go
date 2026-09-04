@@ -35,17 +35,35 @@ func main() {
 
 	accounts := postgres.NewAccountRepository(pool)
 	projects := postgres.NewProjectRepository(pool)
+	keys := postgres.NewAPIKeyRepository(pool)
+	origins := postgres.NewOriginRepository(pool)
+	modules := postgres.NewModuleRepository(pool)
 	catalog := httpclient.NewPlanCatalog(cfg.PlansBaseURL, nil)
 
-	handler := httpapi.New(
-		application.CreateAccount{Accounts: accounts},
-		application.CreateProject{Projects: projects, Catalog: catalog},
-		application.ListProjects{Projects: projects},
-		application.GetProject{Projects: projects},
-		application.UpdateProject{Projects: projects, Catalog: catalog},
-		application.DeleteProject{Projects: projects},
-		pool,
-	)
+	handler := httpapi.New(httpapi.Deps{
+		CreateAccount: application.CreateAccount{Accounts: accounts},
+		CreateProject: application.CreateProject{Projects: projects, Catalog: catalog},
+		ListProjects:  application.ListProjects{Projects: projects},
+		GetProject:    application.GetProject{Projects: projects},
+		UpdateProject: application.UpdateProject{Projects: projects, Catalog: catalog},
+		DeleteProject: application.DeleteProject{Projects: projects},
+		ListKeys:      application.ListKeys{Projects: projects, Keys: keys},
+		CreateKey:     application.CreateKey{Projects: projects, Keys: keys},
+		RevokeKey:     application.RevokeKey{Projects: projects, Keys: keys},
+		ListOrigins:   application.ListOrigins{Projects: projects, Origins: origins},
+		AddOrigin:     application.AddOrigin{Projects: projects, Origins: origins},
+		DeleteOrigin:  application.DeleteOrigin{Projects: projects, Origins: origins},
+		ListModules:   application.ListModules{Projects: projects, Modules: modules},
+		PutModules:    application.PutModules{Projects: projects, Modules: modules, Catalog: catalog},
+		Resolve: application.ResolveProject{
+			Projects: projects,
+			Keys:     keys,
+			Origins:  origins,
+			Modules:  modules,
+		},
+		InternalToken: cfg.InternalToken,
+		Ready:         pool,
+	})
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,

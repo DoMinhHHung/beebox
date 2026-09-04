@@ -6,9 +6,9 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/DoMinhHHung/beebox/beebox-apperror"
 	"github.com/DoMinhHHung/beebox/beebox-plans/internal/application"
 	"github.com/DoMinhHHung/beebox/beebox-plans/internal/domain"
+	"github.com/DoMinhHHung/beebox/libs/shared/apperror"
 )
 
 type ReadyPinger interface {

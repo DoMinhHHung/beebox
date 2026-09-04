@@ -1,4 +1,4 @@
-package beeboxid
+package id
 
 import (
 	"testing"

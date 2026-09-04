@@ -8,8 +8,8 @@ import (
 	"os"
 	"testing"
 
-	beeboxid "github.com/DoMinhHHung/beebox/beebox-id"
 	"github.com/DoMinhHHung/beebox/beebox-projects/internal/domain"
+	beeboxid "github.com/DoMinhHHung/beebox/libs/shared/id"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )

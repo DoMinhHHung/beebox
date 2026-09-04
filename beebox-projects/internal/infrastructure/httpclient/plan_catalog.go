@@ -30,8 +30,9 @@ func NewPlanCatalog(baseURL string, client *http.Client) *PlanCatalog {
 }
 
 type planBody struct {
-	ID   string `json:"id"`
-	Slug string `json:"slug"`
+	ID     string            `json:"id"`
+	Slug   string            `json:"slug"`
+	Limits domain.PlanLimits `json:"limits"`
 }
 
 func (c *PlanCatalog) FindBySlug(ctx context.Context, slug string) (domain.CatalogPlan, error) {
@@ -62,5 +63,5 @@ func (c *PlanCatalog) FindBySlug(ctx context.Context, slug string) (domain.Catal
 	if body.Slug == "" {
 		return domain.CatalogPlan{}, domain.ErrNotFound
 	}
-	return domain.CatalogPlan{ID: id, Slug: body.Slug}, nil
+	return domain.CatalogPlan{ID: id, Slug: body.Slug, Limits: body.Limits}, nil
 }
