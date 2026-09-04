@@ -83,7 +83,7 @@ func ResolveAndCORS(resolver Resolver, next http.Handler) http.Handler {
 }
 
 func requiresProject(path string) bool {
-	return strings.HasPrefix(path, "/v1/client/config")
+	return strings.HasPrefix(path, "/v1/client/config") || strings.HasPrefix(path, "/v1/auth")
 }
 
 func writeCORS(w http.ResponseWriter, origin string) {
