@@ -38,6 +38,7 @@ func main() {
 	keys := postgres.NewAPIKeyRepository(pool)
 	origins := postgres.NewOriginRepository(pool)
 	modules := postgres.NewModuleRepository(pool)
+	fields := postgres.NewFieldRepository(pool)
 	catalog := httpclient.NewPlanCatalog(cfg.PlansBaseURL, nil)
 
 	handler := httpapi.New(httpapi.Deps{
@@ -55,11 +56,14 @@ func main() {
 		DeleteOrigin:  application.DeleteOrigin{Projects: projects, Origins: origins},
 		ListModules:   application.ListModules{Projects: projects, Modules: modules},
 		PutModules:    application.PutModules{Projects: projects, Modules: modules, Catalog: catalog},
+		ListFields:    application.ListFields{Projects: projects, Fields: fields},
+		PutFields:     application.PutFields{Projects: projects, Fields: fields, Catalog: catalog},
 		Resolve: application.ResolveProject{
 			Projects: projects,
 			Keys:     keys,
 			Origins:  origins,
 			Modules:  modules,
+			Fields:   fields,
 		},
 		InternalToken: cfg.InternalToken,
 		Ready:         pool,
