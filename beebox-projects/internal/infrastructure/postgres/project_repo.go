@@ -19,12 +19,24 @@ func NewProjectRepository(pool *pgxpool.Pool) *ProjectRepository {
 }
 
 func (r *ProjectRepository) Create(ctx context.Context, ownerID uuid.UUID, project domain.Project) error {
+	return r.CreateWithIAM(ctx, ownerID, project, nil, nil)
+}
+
+func (r *ProjectRepository) CreateWithIAM(ctx context.Context, ownerID uuid.UUID, project domain.Project, keys []domain.APIKey, modules []string) error {
 	return withOwner(ctx, r.pool, ownerID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `
 			INSERT INTO project.projects (id, owner_id, plan_id, plan_slug, name, slug, env, status)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		`, project.ID, project.OwnerID, project.PlanID, project.PlanSlug, project.Name, project.Slug, project.Env, project.Status)
-		return mapWriteErr(err)
+		if err != nil {
+			return mapWriteErr(err)
+		}
+		for _, key := range keys {
+			if err := insertAPIKey(ctx, tx, key); err != nil {
+				return err
+			}
+		}
+		return insertModules(ctx, tx, project.ID, modules)
 	})
 }
 
@@ -64,6 +76,24 @@ func (r *ProjectRepository) FindByID(ctx context.Context, ownerID, id uuid.UUID)
 			FROM project.projects
 			WHERE id = $1 AND owner_id = $2
 		`, id, ownerID)
+		p, err := scanProject(row)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.ErrNotFound
+		}
+		project = p
+		return err
+	})
+	return project, err
+}
+
+func (r *ProjectRepository) FindBySlug(ctx context.Context, slug string) (domain.Project, error) {
+	var project domain.Project
+	err := withInternal(ctx, r.pool, func(tx pgx.Tx) error {
+		row := tx.QueryRow(ctx, `
+			SELECT id, owner_id, plan_id, plan_slug, name, slug, env, status, updated_at
+			FROM project.projects
+			WHERE slug = $1
+		`, slug)
 		p, err := scanProject(row)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.ErrNotFound
