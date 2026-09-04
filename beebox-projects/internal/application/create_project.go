@@ -21,23 +21,28 @@ type CreateProjectInput struct {
 	PlanSlug string
 }
 
-func (u CreateProject) Execute(ctx context.Context, in CreateProjectInput) (domain.Project, error) {
+type CreateProjectResult struct {
+	Project domain.Project
+	Keys    []domain.IssuedKey
+}
+
+func (u CreateProject) Execute(ctx context.Context, in CreateProjectInput) (CreateProjectResult, error) {
 	if in.OwnerID == uuid.Nil {
-		return domain.Project{}, domain.ErrInvalidInput
+		return CreateProjectResult{}, domain.ErrInvalidInput
 	}
 	in.Name = strings.TrimSpace(in.Name)
 	in.Slug = strings.TrimSpace(in.Slug)
 	in.PlanSlug = strings.TrimSpace(in.PlanSlug)
 	if in.Name == "" || !validSlug(in.Slug) || in.PlanSlug == "" {
-		return domain.Project{}, domain.ErrInvalidInput
+		return CreateProjectResult{}, domain.ErrInvalidInput
 	}
 	plan, err := u.Catalog.FindBySlug(ctx, in.PlanSlug)
 	if err != nil {
-		return domain.Project{}, err
+		return CreateProjectResult{}, err
 	}
 	id, err := beeboxid.New()
 	if err != nil {
-		return domain.Project{}, err
+		return CreateProjectResult{}, err
 	}
 	project := domain.Project{
 		ID:       id,
@@ -49,8 +54,18 @@ func (u CreateProject) Execute(ctx context.Context, in CreateProjectInput) (doma
 		Env:      domain.EnvTest,
 		Status:   domain.StatusActive,
 	}
-	if err := u.Projects.Create(ctx, in.OwnerID, project); err != nil {
-		return domain.Project{}, err
+	pk, err := issueKey(id, domain.KeyKindPublishable, domain.EnvTest)
+	if err != nil {
+		return CreateProjectResult{}, err
 	}
-	return project, nil
+	sk, err := issueKey(id, domain.KeyKindSecret, domain.EnvTest)
+	if err != nil {
+		return CreateProjectResult{}, err
+	}
+	keys := []domain.IssuedKey{pk, sk}
+	stored := []domain.APIKey{pk.Key, sk.Key}
+	if err := u.Projects.CreateWithIAM(ctx, in.OwnerID, project, stored, domain.DefaultModules); err != nil {
+		return CreateProjectResult{}, err
+	}
+	return CreateProjectResult{Project: project, Keys: keys}, nil
 }
