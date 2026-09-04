@@ -165,10 +165,36 @@ func TestPutModulesFreeRejectsOAuth(t *testing.T) {
 	id := uuid.MustParse("01800000-0000-7000-8000-0000000000cc")
 	projects := &fakeProjects{items: map[uuid.UUID]domain.Project{id: {ID: id, OwnerID: owner, PlanSlug: "free"}}}
 	mods := &fakeModules{byID: map[uuid.UUID][]string{}}
-	_, err := (PutModules{Projects: projects, Modules: mods}).Execute(context.Background(), owner, id, []string{
+	_, err := (PutModules{
+		Projects: projects,
+		Modules:  mods,
+		Catalog:  fakeCatalog{plans: map[string]domain.CatalogPlan{"free": {Slug: "free"}}},
+	}).Execute(context.Background(), owner, id, []string{
 		domain.ModuleAuthPassword, domain.ModuleUsersProfile, domain.ModuleAuthOAuthGoogle,
 	})
 	if !errors.Is(err, domain.ErrPlanLimit) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestNormalizeOriginLowercasesHost(t *testing.T) {
+	got, err := normalizeOrigin("https://LocalHost:3000")
+	if err != nil || got != "https://localhost:3000" {
+		t.Fatalf("got=%q err=%v", got, err)
+	}
+}
+
+func TestResolveBySlugRejectsDisabled(t *testing.T) {
+	id := uuid.MustParse("01800000-0000-7000-8000-0000000000cc")
+	u := ResolveProject{
+		Projects: &fakeProjects{items: map[uuid.UUID]domain.Project{
+			id: {ID: id, Slug: "shop", Status: domain.StatusDisabled},
+		}},
+		Origins: fakeOriginList{},
+		Modules: &fakeModules{byID: map[uuid.UUID][]string{}},
+	}
+	_, err := u.BySlug(context.Background(), "shop")
+	if !errors.Is(err, domain.ErrUnauthorized) {
 		t.Fatalf("err=%v", err)
 	}
 }
@@ -192,6 +218,21 @@ func TestFakeUpdateRejectsStaleUpdatedAt(t *testing.T) {
 	if repo.items[id].Name != "New" {
 		t.Fatalf("name=%q", repo.items[id].Name)
 	}
+}
+
+type fakeOriginList struct{}
+
+func (fakeOriginList) Create(context.Context, uuid.UUID, domain.Origin) error {
+	return nil
+}
+func (fakeOriginList) ListByProject(context.Context, uuid.UUID, uuid.UUID) ([]domain.Origin, error) {
+	return nil, nil
+}
+func (fakeOriginList) Delete(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {
+	return nil
+}
+func (fakeOriginList) ListByProjectID(context.Context, uuid.UUID) ([]string, error) {
+	return nil, nil
 }
 
 type fakeModules struct {
