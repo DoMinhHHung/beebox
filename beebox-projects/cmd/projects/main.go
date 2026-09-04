@@ -44,6 +44,8 @@ func main() {
 	modules := postgres.NewModuleRepository(pool)
 	fields := postgres.NewFieldRepository(pool)
 	oauthProviders := postgres.NewOAuthProviderRepository(pool)
+	collections := postgres.NewCollectionRepository(pool)
+	documents := postgres.NewDocumentRepository(pool)
 	catalog := httpclient.NewPlanCatalog(cfg.PlansBaseURL, nil)
 	var box application.SecretBox
 	if cfg.OAuthKEK != "" {
@@ -89,6 +91,13 @@ func main() {
 		GetOAuth:         application.GetOAuthProvider{Projects: projects, OAuth: oauthProviders},
 		PutOAuth:         application.PutOAuthProvider{Projects: projects, OAuth: oauthProviders, Catalog: catalog, Box: box},
 		InternalOAuth:    application.InternalOAuthProvider{OAuth: oauthProviders, Box: box},
+		ListCollections:  application.ListCollections{Projects: projects, Collections: collections},
+		CreateCollection: application.CreateCollection{Projects: projects, Collections: collections},
+		ListDocuments:    application.ListDocuments{Collections: collections, Documents: documents},
+		GetDocument:      application.GetDocument{Documents: documents},
+		CreateDocument:   application.CreateDocument{Projects: projects, Collections: collections, Documents: documents},
+		UpdateDocument:   application.UpdateDocument{Documents: documents},
+		DeleteDocument:   application.DeleteDocument{Documents: documents},
 		AllowOwnerHeader: cfg.AllowOwnerHeader,
 		InternalToken:    cfg.InternalToken,
 		Ready:            pool,
