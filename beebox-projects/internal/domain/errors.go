@@ -2,6 +2,8 @@ package domain
 
 import "errors"
 
+const MinPasswordLength = 8
+
 var (
 	ErrNotFound     = errors.New("not found")
 	ErrConflict     = errors.New("conflict")
