@@ -42,6 +42,13 @@ type Deps struct {
 	GetOAuth         application.GetOAuthProvider
 	PutOAuth         application.PutOAuthProvider
 	InternalOAuth    application.InternalOAuthProvider
+	ListCollections  application.ListCollections
+	CreateCollection application.CreateCollection
+	ListDocuments    application.ListDocuments
+	GetDocument      application.GetDocument
+	CreateDocument   application.CreateDocument
+	UpdateDocument   application.UpdateDocument
+	DeleteDocument   application.DeleteDocument
 	AllowOwnerHeader bool
 	InternalToken    string
 	Ready            ReadyPinger
@@ -76,6 +83,13 @@ func New(d Deps) http.Handler {
 	mux.Handle("PUT /v1/projects/{id}/fields", s.withOwner(http.HandlerFunc(s.putFields)))
 	mux.Handle("GET /v1/projects/{id}/oauth/{slug}", s.withOwner(http.HandlerFunc(s.getProjectOAuth)))
 	mux.Handle("PUT /v1/projects/{id}/oauth/{slug}", s.withOwner(http.HandlerFunc(s.putProjectOAuth)))
+	mux.Handle("GET /v1/projects/{id}/collections", s.withOwner(http.HandlerFunc(s.getCollections)))
+	mux.Handle("POST /v1/projects/{id}/collections", s.withOwner(http.HandlerFunc(s.postCollection)))
+	mux.Handle("GET /v1/projects/{id}/collections/{collectionId}/documents", s.withOwner(http.HandlerFunc(s.getDocuments)))
+	mux.Handle("POST /v1/projects/{id}/collections/{collectionId}/documents", s.withOwner(http.HandlerFunc(s.postDocument)))
+	mux.Handle("GET /v1/projects/{id}/collections/{collectionId}/documents/{documentId}", s.withOwner(http.HandlerFunc(s.getDocument)))
+	mux.Handle("PATCH /v1/projects/{id}/collections/{collectionId}/documents/{documentId}", s.withOwner(http.HandlerFunc(s.patchDocument)))
+	mux.Handle("DELETE /v1/projects/{id}/collections/{collectionId}/documents/{documentId}", s.withOwner(http.HandlerFunc(s.deleteDocument)))
 	mux.Handle("GET /internal/resolve", s.withInternal(http.HandlerFunc(s.resolve)))
 	mux.Handle("GET /internal/oauth/{projectId}/{slug}", s.withInternal(http.HandlerFunc(s.internalOAuth)))
 	mux.HandleFunc("/", s.notFound)
