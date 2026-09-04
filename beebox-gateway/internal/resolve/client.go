@@ -120,6 +120,9 @@ func IdentityFrom(r *http.Request) (pk, slug string) {
 	if slug = strings.TrimSpace(r.Header.Get(HeaderProjectSlug)); slug != "" {
 		return "", slug
 	}
+	if pk = strings.TrimSpace(r.URL.Query().Get("pk")); strings.HasPrefix(pk, "pk_") {
+		return pk, ""
+	}
 	return "", SlugFromHost(r.Host)
 }
 
