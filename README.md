@@ -120,6 +120,19 @@ Thứ tự implement:
 7. Collection CRUD
 8. File / realtime
 
+## Chạy gateway local
+
+```bash
+cd beebox-gateway && go run ./cmd/gateway
+```
+
+Listen mặc định `:8080`. Đổi addr / timeout qua `BEEBOX_HTTP_ADDR`, `BEEBOX_SHUTDOWN_TIMEOUT`, `BEEBOX_REQUEST_TIMEOUT` (mặc định timeout `10s`). Health: `GET /health/live`, `GET /health/ready`.
+
+```bash
+cd beebox-apperror && go test ./...
+cd beebox-gateway && go test ./...
+```
+
 ## Tài liệu
 
 - [docs/PRODUCT.md](docs/PRODUCT.md) — flow người dùng
