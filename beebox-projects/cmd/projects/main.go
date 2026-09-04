@@ -54,7 +54,7 @@ func main() {
 		AddOrigin:     application.AddOrigin{Projects: projects, Origins: origins},
 		DeleteOrigin:  application.DeleteOrigin{Projects: projects, Origins: origins},
 		ListModules:   application.ListModules{Projects: projects, Modules: modules},
-		PutModules:    application.PutModules{Projects: projects, Modules: modules},
+		PutModules:    application.PutModules{Projects: projects, Modules: modules, Catalog: catalog},
 		Resolve: application.ResolveProject{
 			Projects: projects,
 			Keys:     keys,
