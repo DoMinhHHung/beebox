@@ -76,7 +76,7 @@ func (u OwnerSignIn) Execute(ctx context.Context, email, password string) (Owner
 	}
 	account, err := u.Accounts.FindByEmail(ctx, email)
 	if err != nil {
-	if errors.Is(err, domain.ErrNotFound) {
+		if errors.Is(err, domain.ErrNotFound) {
 			u.Hasher.Verify(password, dummyOwnerHash)
 			return OwnerAuthResult{}, domain.ErrUnauthorized
 		}

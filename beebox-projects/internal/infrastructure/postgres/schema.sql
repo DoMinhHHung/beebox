@@ -1,10 +1,24 @@
 CREATE SCHEMA IF NOT EXISTS project;
 
 CREATE TABLE IF NOT EXISTS project.accounts (
+  id             UUID PRIMARY KEY,
+  email          TEXT NOT NULL UNIQUE,
+  password_hash  TEXT NOT NULL DEFAULT '',
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE project.accounts
+  ADD COLUMN IF NOT EXISTS password_hash TEXT NOT NULL DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS project.owner_sessions (
   id          UUID PRIMARY KEY,
-  email       TEXT NOT NULL UNIQUE,
+  account_id  UUID NOT NULL REFERENCES project.accounts (id) ON DELETE CASCADE,
+  token_hash  TEXT NOT NULL UNIQUE,
+  expires_at  TIMESTAMPTZ NOT NULL,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE INDEX IF NOT EXISTS owner_sessions_account_id_idx ON project.owner_sessions (account_id);
 
 CREATE TABLE IF NOT EXISTS project.projects (
   id          UUID PRIMARY KEY,

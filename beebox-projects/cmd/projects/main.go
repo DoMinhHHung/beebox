@@ -46,7 +46,7 @@ func main() {
 	catalog := httpclient.NewPlanCatalog(cfg.PlansBaseURL, nil)
 
 	handler := httpapi.New(httpapi.Deps{
-		CreateAccount: application.CreateAccount{Accounts: accounts},
+		CreateAccount: application.CreateAccount{Accounts: accounts, Hasher: hasher},
 		CreateProject: application.CreateProject{Projects: projects, Catalog: catalog},
 		ListProjects:  application.ListProjects{Projects: projects},
 		GetProject:    application.GetProject{Projects: projects},
