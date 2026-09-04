@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/DoMinhHHung/beebox/beebox-gateway/internal/http/middleware"
 	"github.com/DoMinhHHung/beebox/libs/shared/apperror"
@@ -19,10 +20,16 @@ func ClientConfig(w http.ResponseWriter, r *http.Request) {
 		modules = []string{}
 	}
 	password := false
+	oauth := make([]string, 0)
 	for _, name := range modules {
 		if name == "auth.password" {
 			password = true
-			break
+		}
+		if strings.HasPrefix(name, "auth.oauth.") {
+			slug := strings.TrimPrefix(name, "auth.oauth.")
+			if slug != "" {
+				oauth = append(oauth, slug)
+			}
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -32,7 +39,7 @@ func ClientConfig(w http.ResponseWriter, r *http.Request) {
 		"plan_slug": project.PlanSlug,
 		"modules":   modules,
 		"fields":    []any{},
-		"auth":      map[string]bool{"password": password},
+		"auth":      map[string]any{"password": password, "oauth": oauth},
 	})
 }
 

@@ -83,6 +83,9 @@ func ResolveAndCORS(resolver Resolver, next http.Handler) http.Handler {
 }
 
 func requiresProject(path string) bool {
+	if strings.Contains(path, "/oauth/") && strings.HasSuffix(path, "/callback") {
+		return false
+	}
 	return strings.HasPrefix(path, "/v1/client/config") || strings.HasPrefix(path, "/v1/auth")
 }
 
