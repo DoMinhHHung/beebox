@@ -173,3 +173,38 @@ CREATE POLICY fields_by_owner ON project.fields
         AND p.owner_id = NULLIF(current_setting('app.current_account', true), '')::uuid
     )
   );
+
+CREATE TABLE IF NOT EXISTS project.oauth_providers (
+  id UUID PRIMARY KEY,
+  project_id UUID NOT NULL REFERENCES project.projects (id) ON DELETE CASCADE,
+  slug TEXT NOT NULL,
+  client_id TEXT NOT NULL DEFAULT '',
+  client_secret_enc TEXT NOT NULL DEFAULT '',
+  extra JSONB NOT NULL DEFAULT '{}'::jsonb,
+  redirect_uri TEXT NOT NULL DEFAULT '',
+  enabled BOOLEAN NOT NULL DEFAULT false,
+  UNIQUE (project_id, slug)
+);
+
+CREATE INDEX IF NOT EXISTS oauth_providers_project_id_idx ON project.oauth_providers (project_id);
+
+ALTER TABLE project.oauth_providers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE project.oauth_providers FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS oauth_providers_by_owner ON project.oauth_providers;
+CREATE POLICY oauth_providers_by_owner ON project.oauth_providers
+  USING (
+    current_setting('app.internal', true) = 'on'
+    OR EXISTS (
+      SELECT 1 FROM project.projects p
+      WHERE p.id = oauth_providers.project_id
+        AND p.owner_id = NULLIF(current_setting('app.current_account', true), '')::uuid
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM project.projects p
+      WHERE p.id = oauth_providers.project_id
+        AND p.owner_id = NULLIF(current_setting('app.current_account', true), '')::uuid
+    )
+  );
