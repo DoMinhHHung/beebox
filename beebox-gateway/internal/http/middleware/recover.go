@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"net/http"
 
-	"github.com/DoMinhHHung/beebox/beebox-apperror"
+	"github.com/DoMinhHHung/beebox/libs/shared/apperror"
 )
 
 type bufferWriter struct {

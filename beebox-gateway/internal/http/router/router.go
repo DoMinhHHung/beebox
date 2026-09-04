@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/DoMinhHHung/beebox/beebox-apperror"
+	"github.com/DoMinhHHung/beebox/libs/shared/apperror"
 	"github.com/DoMinhHHung/beebox/beebox-gateway/internal/config"
 	"github.com/DoMinhHHung/beebox/beebox-gateway/internal/http/handler"
 	"github.com/DoMinhHHung/beebox/beebox-gateway/internal/http/middleware"
