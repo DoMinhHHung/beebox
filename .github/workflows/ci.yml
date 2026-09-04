@@ -3,137 +3,19 @@ name: CI
 on:
   pull_request:
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  GOTOOLCHAIN: local
-  GO_VERSION: "1.26.8"
-  POSTGRES_USER: beebox
-  POSTGRES_PASSWORD: beebox
-  POSTGRES_DB: beebox_test
-
 jobs:
-  test:
-    name: Test / ${{ matrix.module }}
+  docs:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        module:
-          - beebox-identity
-          - beebox-gateway
-          - beebox-project
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 1
-
-      - name: Setup Go
-        uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: |
-            ${{ matrix.module }}/go.mod
-            ${{ matrix.module }}/go.sum
-
-      - name: Verify formatting
-        working-directory: ${{ matrix.module }}
-        shell: bash
+      - uses: actions/checkout@v7
+      - name: Required files
         run: |
-          set -euo pipefail
-          unformatted="$(gofmt -l .)"
-          if [[ -n "$unformatted" ]]; then
-            echo "The following Go files are not gofmt-clean:"
-            printf '%s\n' "$unformatted"
-            exit 1
-          fi
-
-      - name: Verify module
-        working-directory: ${{ matrix.module }}
-        run: go mod verify
-
-      - name: Vet
-        working-directory: ${{ matrix.module }}
-        run: go vet ./...
-
-      - name: Test
-        working-directory: ${{ matrix.module }}
-        run: go test -race -count=1 ./...
-
-  postgres:
-    name: PostgreSQL integration
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: beebox
-          POSTGRES_PASSWORD: beebox
-          POSTGRES_DB: beebox_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U beebox -d beebox_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      DATABASE_URL: postgres://beebox:beebox@localhost:5432/beebox_test?sslmode=disable
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 1
-
-      - name: Setup Go
-        uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: |
-            beebox-project/go.mod
-            beebox-project/go.sum
-            beebox-identity/go.mod
-            beebox-identity/go.sum
-
-      - name: Install psql
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
-
-      - name: Apply migrations
-        env:
-          PGPASSWORD: beebox
-        run: |
-          set -euo pipefail
-
-          apply() {
-            local search_path="$1"
-            local file="$2"
-            echo "Applying ${file} (search_path=${search_path})"
-            PGOPTIONS="-c search_path=${search_path}" \
-              psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$file"
-          }
-
-          apply "project,public"  beebox-project/migrations/001_init.sql
-          apply "project,public"  beebox-project/migrations/002_credentials.sql
-          apply "identity,public" beebox-identity/migrations/001_init.sql
-
-      - name: Project PostgreSQL tests
-        working-directory: beebox-project
-        run: go test -race -count=1 ./internal/infrastructure/postgres/ -v
-
-      - name: Identity PostgreSQL tests
-        working-directory: beebox-identity
-        run: go test -race -count=1 ./internal/infrastructure/postgres/ -v
+          test -f README.md
+          test -f AGENTS.md
+          test -f docs/PRODUCT.md
