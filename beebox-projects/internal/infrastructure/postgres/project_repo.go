@@ -34,8 +34,9 @@ func (r *ProjectRepository) List(ctx context.Context, ownerID uuid.UUID) ([]doma
 		rows, err := tx.Query(ctx, `
 			SELECT id, owner_id, plan_id, plan_slug, name, slug, env, status, updated_at
 			FROM project.projects
+			WHERE owner_id = $1
 			ORDER BY slug
-		`)
+		`, ownerID)
 		if err != nil {
 			return err
 		}
@@ -61,8 +62,8 @@ func (r *ProjectRepository) FindByID(ctx context.Context, ownerID, id uuid.UUID)
 		row := tx.QueryRow(ctx, `
 			SELECT id, owner_id, plan_id, plan_slug, name, slug, env, status, updated_at
 			FROM project.projects
-			WHERE id = $1
-		`, id)
+			WHERE id = $1 AND owner_id = $2
+		`, id, ownerID)
 		p, err := scanProject(row)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.ErrNotFound
@@ -83,8 +84,8 @@ func (r *ProjectRepository) Update(ctx context.Context, ownerID uuid.UUID, proje
 			    slug = $5,
 			    status = $6,
 			    updated_at = now()
-			WHERE id = $1 AND updated_at = $7
-		`, project.ID, project.PlanID, project.PlanSlug, project.Name, project.Slug, project.Status, project.UpdatedAt)
+			WHERE id = $1 AND owner_id = $8 AND updated_at = $7
+		`, project.ID, project.PlanID, project.PlanSlug, project.Name, project.Slug, project.Status, project.UpdatedAt, ownerID)
 		if err != nil {
 			return mapWriteErr(err)
 		}
@@ -97,7 +98,7 @@ func (r *ProjectRepository) Update(ctx context.Context, ownerID uuid.UUID, proje
 
 func (r *ProjectRepository) Delete(ctx context.Context, ownerID, id uuid.UUID) error {
 	return withOwner(ctx, r.pool, ownerID, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, `DELETE FROM project.projects WHERE id = $1`, id)
+		tag, err := tx.Exec(ctx, `DELETE FROM project.projects WHERE id = $1 AND owner_id = $2`, id, ownerID)
 		if err != nil {
 			return err
 		}
