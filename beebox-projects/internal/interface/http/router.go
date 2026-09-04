@@ -82,3 +82,34 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("/", s.notFound)
 	return recoverMW(mux)
 }
+
+func (s *Server) live(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) readyHandler(w http.ResponseWriter, r *http.Request) {
+	if s.Ready != nil {
+		if err := s.Ready.Ping(r.Context()); err != nil {
+			http.Error(w, `{"status":"unavailable"}`, http.StatusServiceUnavailable)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) postAccount(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, domain.ErrInvalidInput)
+		return
+	}
+	account, err := s.CreateAccount.Execute(r.Context(), body.Email, body.Password)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, accountDTO{ID: account.ID.String(), Email: account.Email})
+}
