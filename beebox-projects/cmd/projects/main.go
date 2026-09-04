@@ -50,7 +50,8 @@ func main() {
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           handler,
-		ReadHeaderTimeout: cfg.ShutdownTimeout,
+		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
+		ReadTimeout:       cfg.ReadTimeout,
 	}
 
 	errCh := make(chan error, 1)
