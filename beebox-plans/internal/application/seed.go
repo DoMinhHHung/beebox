@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/DoMinhHHung/beebox/libs/shared/id"
 	"github.com/DoMinhHHung/beebox/beebox-plans/internal/domain"
+	"github.com/DoMinhHHung/beebox/libs/shared/id"
 )
 
 func Seed(ctx context.Context, plans domain.PlanRepository) error {

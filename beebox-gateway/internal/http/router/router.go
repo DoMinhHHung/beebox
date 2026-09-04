@@ -4,12 +4,12 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/DoMinhHHung/beebox/libs/shared/apperror"
 	"github.com/DoMinhHHung/beebox/beebox-gateway/internal/config"
 	"github.com/DoMinhHHung/beebox/beebox-gateway/internal/http/handler"
 	"github.com/DoMinhHHung/beebox/beebox-gateway/internal/http/middleware"
 	"github.com/DoMinhHHung/beebox/beebox-gateway/internal/http/proxy"
 	"github.com/DoMinhHHung/beebox/beebox-gateway/internal/resolve"
+	"github.com/DoMinhHHung/beebox/libs/shared/apperror"
 )
 
 func New(cfg config.Config) http.Handler {

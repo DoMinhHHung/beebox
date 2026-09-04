@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/DoMinhHHung/beebox/libs/shared/apperror"
 	"github.com/DoMinhHHung/beebox/beebox-gateway/internal/http/middleware"
+	"github.com/DoMinhHHung/beebox/libs/shared/apperror"
 )
 
 func ClientConfig(w http.ResponseWriter, r *http.Request) {

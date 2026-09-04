@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/DoMinhHHung/beebox/libs/shared/apperror"
 	"github.com/DoMinhHHung/beebox/beebox-gateway/internal/resolve"
+	"github.com/DoMinhHHung/beebox/libs/shared/apperror"
 )
 
 type ctxKey int
