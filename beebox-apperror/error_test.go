@@ -3,14 +3,13 @@ package apperror
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
 
-func TestStatusForCode(t *testing.T) {
-	cases := map[Code]int{
+func TestHTTPStatus(t *testing.T) {
+	cases := map[string]int{
 		CodeInternal:        http.StatusInternalServerError,
 		CodeInvalidInput:    http.StatusBadRequest,
 		CodeUnauthorized:    http.StatusUnauthorized,
@@ -23,15 +22,15 @@ func TestStatusForCode(t *testing.T) {
 		CodePlanLimitFields: http.StatusForbidden,
 	}
 	for code, want := range cases {
-		if got := Status(code); got != want {
-			t.Fatalf("Status(%q)=%d want %d", code, got, want)
+		if got := HTTPStatus(code); got != want {
+			t.Fatalf("HTTPStatus(%q)=%d want %d", code, got, want)
 		}
 		got := New(code, "m")
 		if got.HTTPStatus != want {
 			t.Fatalf("New(%q).HTTPStatus=%d want %d", code, got.HTTPStatus, want)
 		}
 	}
-	if Status(Code("unknown")) != http.StatusInternalServerError {
+	if HTTPStatus("unknown") != http.StatusInternalServerError {
 		t.Fatalf("unknown code should map to 500")
 	}
 }
@@ -66,7 +65,7 @@ func TestWriteJSONShape(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("json: %v", err)
 	}
-	if body.Error.Code != string(CodeNotFound) || body.Error.Message != "nope" {
+	if body.Error.Code != CodeNotFound || body.Error.Message != "nope" {
 		t.Fatalf("body=%+v", body)
 	}
 }
@@ -77,15 +76,14 @@ func TestWriteJSONPlainError(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status=%d", rec.Code)
 	}
-	raw, _ := io.ReadAll(rec.Body)
 	var body jsonBody
-	if err := json.Unmarshal(raw, &body); err != nil {
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("json: %v", err)
 	}
-	if body.Error.Code != string(CodeInternal) {
+	if body.Error.Code != CodeInternal {
 		t.Fatalf("code=%q", body.Error.Code)
 	}
-	if body.Error.Message == "secret-db-dsn" {
-		t.Fatalf("must not leak wrapped string")
+	if body.Error.Message != "internal error" {
+		t.Fatalf("message=%q", body.Error.Message)
 	}
 }

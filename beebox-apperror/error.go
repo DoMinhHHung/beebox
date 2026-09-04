@@ -2,22 +2,20 @@ package apperror
 
 import "net/http"
 
-type Code string
-
 const (
-	CodeInternal        Code = "internal"
-	CodeInvalidInput    Code = "invalid_input"
-	CodeUnauthorized    Code = "unauthorized"
-	CodeForbidden       Code = "forbidden"
-	CodeNotFound        Code = "not_found"
-	CodeConflict        Code = "conflict"
-	CodeTooManyRequests Code = "too_many_requests"
-	CodeNotImplemented  Code = "not_implemented"
-	CodeModuleDisabled  Code = "module_disabled"
-	CodePlanLimitFields Code = "plan_limit_fields"
+	CodeInternal        = "internal"
+	CodeInvalidInput    = "invalid_input"
+	CodeUnauthorized    = "unauthorized"
+	CodeForbidden       = "forbidden"
+	CodeNotFound        = "not_found"
+	CodeConflict        = "conflict"
+	CodeTooManyRequests = "too_many_requests"
+	CodeNotImplemented  = "not_implemented"
+	CodeModuleDisabled  = "module_disabled"
+	CodePlanLimitFields = "plan_limit_fields"
 )
 
-var statusByCode = map[Code]int{
+var statusByCode = map[string]int{
 	CodeInternal:        http.StatusInternalServerError,
 	CodeInvalidInput:    http.StatusBadRequest,
 	CodeUnauthorized:    http.StatusUnauthorized,
@@ -31,7 +29,7 @@ var statusByCode = map[Code]int{
 }
 
 type Error struct {
-	Code       Code
+	Code       string
 	Message    string
 	HTTPStatus int
 	err        error
@@ -51,26 +49,26 @@ func (e *Error) Unwrap() error {
 	return e.err
 }
 
-func Status(code Code) int {
+func HTTPStatus(code string) int {
 	if s, ok := statusByCode[code]; ok {
 		return s
 	}
 	return http.StatusInternalServerError
 }
 
-func New(code Code, message string) *Error {
+func New(code, message string) *Error {
 	return &Error{
 		Code:       code,
 		Message:    message,
-		HTTPStatus: Status(code),
+		HTTPStatus: HTTPStatus(code),
 	}
 }
 
-func Wrap(err error, code Code, message string) *Error {
+func Wrap(err error, code, message string) *Error {
 	return &Error{
 		Code:       code,
 		Message:    message,
-		HTTPStatus: Status(code),
+		HTTPStatus: HTTPStatus(code),
 		err:        err,
 	}
 }

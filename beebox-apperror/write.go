@@ -27,14 +27,14 @@ func WriteJSON(w http.ResponseWriter, err error) {
 
 	status := ae.HTTPStatus
 	if status == 0 {
-		status = Status(ae.Code)
+		status = HTTPStatus(ae.Code)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(jsonBody{
 		Error: jsonError{
-			Code:    string(ae.Code),
+			Code:    ae.Code,
 			Message: ae.Message,
 		},
 	})

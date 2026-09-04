@@ -1,10 +1,16 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/DoMinhHHung/beebox/beebox-gateway/internal/config"
-	httpx "github.com/DoMinhHHung/beebox/beebox-gateway/internal/http"
+	"github.com/DoMinhHHung/beebox/beebox-gateway/internal/http/router"
 )
 
 func main() {
@@ -12,7 +18,30 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := httpx.Run(cfg); err != nil {
-		log.Fatal(err)
+
+	srv := &http.Server{
+		Addr:    cfg.HTTPAddr,
+		Handler: router.New(cfg),
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.ListenAndServe()
+	}()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
+		}
+	case <-sigCh:
+		ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Fatal(err)
+		}
 	}
 }
