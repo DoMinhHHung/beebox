@@ -21,9 +21,9 @@ func NewUserRepository(pool *pgxpool.Pool) *UserRepository {
 
 func (r *UserRepository) Create(ctx context.Context, user domain.User) error {
 	_, err := r.pool.Exec(ctx, `
-INSERT INTO identity.users (id, project_id, env, email, password_hash, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-`, user.ID, user.ProjectID, user.Env, user.Email, user.PasswordHash, user.CreatedAt, user.UpdatedAt)
+INSERT INTO identity.users (id, project_id, env, email, password_hash, needs_email, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+`, user.ID, user.ProjectID, user.Env, user.Email, user.PasswordHash, user.NeedsEmail, user.CreatedAt, user.UpdatedAt)
 	if isUniqueViolation(err) {
 		return domain.ErrConflict
 	}
@@ -32,7 +32,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7)
 
 func (r *UserRepository) FindByEmail(ctx context.Context, projectID uuid.UUID, env, email string) (domain.User, error) {
 	row := r.pool.QueryRow(ctx, `
-SELECT id, project_id, env, email, password_hash, created_at, updated_at
+SELECT id, project_id, env, email, password_hash, needs_email, created_at, updated_at
 FROM identity.users
 WHERE project_id = $1 AND env = $2 AND email = $3
 `, projectID, env, email)
@@ -41,7 +41,7 @@ WHERE project_id = $1 AND env = $2 AND email = $3
 
 func (r *UserRepository) FindByID(ctx context.Context, id uuid.UUID) (domain.User, error) {
 	row := r.pool.QueryRow(ctx, `
-SELECT id, project_id, env, email, password_hash, created_at, updated_at
+SELECT id, project_id, env, email, password_hash, needs_email, created_at, updated_at
 FROM identity.users
 WHERE id = $1
 `, id)
@@ -50,7 +50,7 @@ WHERE id = $1
 
 func scanUser(row pgx.Row) (domain.User, error) {
 	var user domain.User
-	err := row.Scan(&user.ID, &user.ProjectID, &user.Env, &user.Email, &user.PasswordHash, &user.CreatedAt, &user.UpdatedAt)
+	err := row.Scan(&user.ID, &user.ProjectID, &user.Env, &user.Email, &user.PasswordHash, &user.NeedsEmail, &user.CreatedAt, &user.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.User{}, domain.ErrNotFound
 	}
