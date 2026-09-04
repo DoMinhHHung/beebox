@@ -15,6 +15,7 @@ const (
 	envReadHeaderTimeout   = "BEEBOX_READ_HEADER_TIMEOUT"
 	envPlansBaseURL        = "BEEBOX_PLANS_BASE_URL"
 	envProjectsBaseURL     = "BEEBOX_PROJECTS_BASE_URL"
+	envIdentityBaseURL     = "BEEBOX_IDENTITY_BASE_URL"
 	envInternalToken       = "BEEBOX_INTERNAL_TOKEN"
 	envRateLimitRPS        = "BEEBOX_RATE_LIMIT_RPS"
 	envRateLimitBurst      = "BEEBOX_RATE_LIMIT_BURST"
@@ -25,6 +26,7 @@ const (
 	defaultReadHeader      = 5 * time.Second
 	defaultPlansBaseURL    = "http://127.0.0.1:8081"
 	defaultProjectsBaseURL = "http://127.0.0.1:8082"
+	defaultIdentityBaseURL = "http://127.0.0.1:8083"
 	defaultRateLimitRPS    = 20.0
 	defaultRateLimitBurst  = 40
 )
@@ -37,6 +39,7 @@ type Config struct {
 	ReadHeaderTimeout time.Duration
 	PlansBaseURL      string
 	ProjectsBaseURL   string
+	IdentityBaseURL   string
 	InternalToken     string
 	RateLimitRPS      float64
 	RateLimitBurst    int
@@ -51,6 +54,7 @@ func Load() (Config, error) {
 		ReadHeaderTimeout: defaultReadHeader,
 		PlansBaseURL:      defaultPlansBaseURL,
 		ProjectsBaseURL:   defaultProjectsBaseURL,
+		IdentityBaseURL:   defaultIdentityBaseURL,
 		RateLimitRPS:      defaultRateLimitRPS,
 		RateLimitBurst:    defaultRateLimitBurst,
 	}
@@ -63,6 +67,9 @@ func Load() (Config, error) {
 	}
 	if v := os.Getenv(envProjectsBaseURL); v != "" {
 		cfg.ProjectsBaseURL = v
+	}
+	if v := os.Getenv(envIdentityBaseURL); v != "" {
+		cfg.IdentityBaseURL = v
 	}
 	if v := os.Getenv(envInternalToken); v != "" {
 		cfg.InternalToken = v

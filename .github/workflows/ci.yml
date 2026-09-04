@@ -37,6 +37,7 @@ jobs:
           - beebox-gateway
           - beebox-plans
           - beebox-projects
+          - beebox-identity
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
@@ -99,4 +100,9 @@ jobs:
         run: go test -tags=integration -race -count=1 ./...
       - name: integration projects
         working-directory: beebox-projects
+        run: go test -tags=integration -race -count=1 ./...
+      - name: migrate identity
+        run: psql "$BEEBOX_DATABASE_URL" -f beebox-identity/internal/infrastructure/postgres/schema.sql
+      - name: integration identity
+        working-directory: beebox-identity
         run: go test -tags=integration -race -count=1 ./...

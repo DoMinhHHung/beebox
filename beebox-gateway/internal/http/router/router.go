@@ -30,6 +30,10 @@ func NewWithResolver(cfg config.Config, resolver middleware.Resolver) http.Handl
 	if err != nil {
 		projectsProxy, _ = proxy.New("http://127.0.0.1:8082")
 	}
+	identityProxy, err := proxy.New(cfg.IdentityBaseURL)
+	if err != nil {
+		identityProxy, _ = proxy.New("http://127.0.0.1:8083")
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", handler.Live)
@@ -53,6 +57,8 @@ func NewWithResolver(cfg config.Config, resolver middleware.Resolver) http.Handl
 	mux.HandleFunc("/v1/accounts/", func(w http.ResponseWriter, r *http.Request) {
 		projectsProxy.ServeHTTP(w, r)
 	})
+	mux.Handle("/v1/auth", attachIdentityHeaders(cfg.InternalToken, identityProxy))
+	mux.Handle("/v1/auth/", attachIdentityHeaders(cfg.InternalToken, identityProxy))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/internal/") {
 			apperror.WriteJSON(w, apperror.New(apperror.CodeNotFound, "not found"))
@@ -67,4 +73,19 @@ func NewWithResolver(cfg config.Config, resolver middleware.Resolver) http.Handl
 	h = middleware.Recover(h)
 	h = middleware.RequestID(h)
 	return h
+}
+
+func attachIdentityHeaders(token string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r = r.Clone(r.Context())
+		if token != "" {
+			r.Header.Set("X-BeeBox-Internal-Token", token)
+		}
+		if project, ok := middleware.ProjectFrom(r); ok {
+			r.Header.Set("X-BeeBox-Project-Id", project.ProjectID)
+			r.Header.Set("X-BeeBox-Env", project.Env)
+			r.Header.Set("X-BeeBox-Modules", strings.Join(project.Modules, ","))
+		}
+		next.ServeHTTP(w, r)
+	})
 }
