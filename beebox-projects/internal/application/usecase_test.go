@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/DoMinhHHung/beebox/beebox-projects/internal/domain"
 	"github.com/google/uuid"
@@ -83,6 +84,9 @@ func (f *fakeProjects) Update(_ context.Context, ownerID uuid.UUID, project doma
 	cur, ok := f.items[project.ID]
 	if !ok || cur.OwnerID != ownerID {
 		return domain.ErrNotFound
+	}
+	if !cur.UpdatedAt.Equal(project.UpdatedAt) {
+		return domain.ErrConflict
 	}
 	f.items[project.ID] = project
 	return nil
@@ -166,6 +170,27 @@ func TestPutModulesFreeRejectsOAuth(t *testing.T) {
 	})
 	if !errors.Is(err, domain.ErrPlanLimit) {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestFakeUpdateRejectsStaleUpdatedAt(t *testing.T) {
+	owner := uuid.MustParse("01800000-0000-7000-8000-0000000000bb")
+	id := uuid.MustParse("01800000-0000-7000-8000-0000000000cc")
+	cur := domain.Project{ID: id, OwnerID: owner, Name: "Shop", UpdatedAt: time.Unix(2, 0).UTC()}
+	repo := &fakeProjects{items: map[uuid.UUID]domain.Project{id: cur}}
+	stale := cur
+	stale.Name = "Old"
+	stale.UpdatedAt = time.Unix(1, 0).UTC()
+	if err := repo.Update(context.Background(), owner, stale); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("err=%v", err)
+	}
+	fresh := cur
+	fresh.Name = "New"
+	if err := repo.Update(context.Background(), owner, fresh); err != nil {
+		t.Fatalf("fresh: %v", err)
+	}
+	if repo.items[id].Name != "New" {
+		t.Fatalf("name=%q", repo.items[id].Name)
 	}
 }
 
