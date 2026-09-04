@@ -71,6 +71,9 @@ func (f *fakeProjects) Update(_ context.Context, ownerID uuid.UUID, project doma
 	if !ok || cur.OwnerID != ownerID {
 		return domain.ErrNotFound
 	}
+	if !project.UpdatedAt.IsZero() && !cur.UpdatedAt.IsZero() && !project.UpdatedAt.Equal(cur.UpdatedAt) {
+		return domain.ErrConflict
+	}
 	f.items[project.ID] = project
 	return nil
 }
@@ -117,14 +120,14 @@ func TestDeleteProjectWrongConfirmationDoesNotDelete(t *testing.T) {
 	owner := uuid.MustParse("01800000-0000-7000-8000-0000000000bb")
 	id := uuid.MustParse("01800000-0000-7000-8000-0000000000cc")
 	repo := &fakeProjects{items: map[uuid.UUID]domain.Project{id: {ID: id, OwnerID: owner, Name: "Shop"}}}
-	err := DeleteProject{Projects: repo}.Execute(context.Background(), owner, id, "delete project wrong")
+	err := (DeleteProject{Projects: repo}).Execute(context.Background(), owner, id, "delete project wrong")
 	if !errors.Is(err, domain.ErrInvalidInput) {
 		t.Fatalf("err=%v", err)
 	}
 	if repo.deleted != 0 {
 		t.Fatalf("Delete should not be called")
 	}
-	if err := DeleteProject{Projects: repo}.Execute(context.Background(), owner, id, "delete project Shop"); err != nil {
+	if err := (DeleteProject{Projects: repo}).Execute(context.Background(), owner, id, "delete project Shop"); err != nil {
 		t.Fatalf("confirm: %v", err)
 	}
 	if repo.deleted != 1 {
