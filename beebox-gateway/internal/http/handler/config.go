@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/DoMinhHHung/beebox/beebox-apperror"
+	"github.com/DoMinhHHung/beebox/libs/shared/apperror"
 	"github.com/DoMinhHHung/beebox/beebox-gateway/internal/http/middleware"
 )
 

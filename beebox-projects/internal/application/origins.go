@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"strings"
 
-	beeboxid "github.com/DoMinhHHung/beebox/beebox-id"
+	"github.com/DoMinhHHung/beebox/libs/shared/id"
 	"github.com/DoMinhHHung/beebox/beebox-projects/internal/domain"
 	"github.com/google/uuid"
 )
@@ -41,11 +41,11 @@ func (u AddOrigin) Execute(ctx context.Context, ownerID, projectID uuid.UUID, ra
 	if _, err := u.Projects.FindByID(ctx, ownerID, projectID); err != nil {
 		return domain.Origin{}, err
 	}
-	id, err := beeboxid.New()
+	newID, err := id.New()
 	if err != nil {
 		return domain.Origin{}, err
 	}
-	item := domain.Origin{ID: id, ProjectID: projectID, Origin: originVal}
+	item := domain.Origin{ID: newID, ProjectID: projectID, Origin: originVal}
 	if err := u.Origins.Create(ctx, ownerID, item); err != nil {
 		return domain.Origin{}, err
 	}
