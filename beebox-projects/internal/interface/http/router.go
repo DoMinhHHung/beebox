@@ -8,9 +8,9 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/DoMinhHHung/beebox/beebox-apperror"
 	"github.com/DoMinhHHung/beebox/beebox-projects/internal/application"
 	"github.com/DoMinhHHung/beebox/beebox-projects/internal/domain"
+	"github.com/DoMinhHHung/beebox/libs/shared/apperror"
 	"github.com/google/uuid"
 )
 
