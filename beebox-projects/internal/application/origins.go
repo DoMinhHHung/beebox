@@ -82,5 +82,5 @@ func normalizeOrigin(raw string) (string, error) {
 	if u.Path != "" && u.Path != "/" {
 		return "", domain.ErrInvalidInput
 	}
-	return u.Scheme + "://" + u.Host, nil
+	return u.Scheme + "://" + strings.ToLower(u.Host), nil
 }

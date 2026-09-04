@@ -91,6 +91,22 @@ func (c *Client) Resolve(ctx context.Context, pk, slug string) (Project, error) 
 	return project, nil
 }
 
+func bearerPublishableKey(auth string) string {
+	auth = strings.TrimSpace(auth)
+	const scheme = "bearer "
+	if len(auth) < len(scheme) {
+		return ""
+	}
+	if !strings.EqualFold(auth[:len(scheme)], scheme) {
+		return ""
+	}
+	tok := strings.TrimSpace(auth[len(scheme):])
+	if strings.HasPrefix(tok, "pk_") {
+		return tok
+	}
+	return ""
+}
+
 func IdentityFrom(r *http.Request) (pk, slug string) {
 	if r == nil {
 		return "", ""
@@ -98,12 +114,8 @@ func IdentityFrom(r *http.Request) (pk, slug string) {
 	if pk = strings.TrimSpace(r.Header.Get(HeaderPublishableKey)); pk != "" {
 		return pk, ""
 	}
-	auth := strings.TrimSpace(r.Header.Get("Authorization"))
-	if strings.HasPrefix(auth, "Bearer ") {
-		tok := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
-		if strings.HasPrefix(tok, "pk_") {
-			return tok, ""
-		}
+	if pk = bearerPublishableKey(r.Header.Get("Authorization")); pk != "" {
+		return pk, ""
 	}
 	if slug = strings.TrimSpace(r.Header.Get(HeaderProjectSlug)); slug != "" {
 		return "", slug
@@ -130,14 +142,26 @@ func SlugFromHost(host string) string {
 }
 
 func OriginAllowed(origin string, origins []string) bool {
-	origin = strings.TrimSpace(origin)
+	origin = canonicalizeOrigin(origin)
 	if origin == "" {
 		return true
 	}
 	for _, item := range origins {
-		if strings.TrimSpace(item) == origin {
+		if canonicalizeOrigin(item) == origin {
 			return true
 		}
 	}
 	return false
+}
+
+func canonicalizeOrigin(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return raw
+	}
+	return u.Scheme + "://" + strings.ToLower(u.Host)
 }

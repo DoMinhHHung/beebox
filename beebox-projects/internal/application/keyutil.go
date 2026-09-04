@@ -71,12 +71,24 @@ func knownModule(name string) bool {
 	return false
 }
 
-func moduleAllowed(planSlug, name string) bool {
+func moduleAllowed(plan domain.CatalogPlan, name string) bool {
 	if !knownModule(name) {
 		return false
 	}
-	if planSlug == "pro" {
+	switch name {
+	case domain.ModuleAuthPassword, domain.ModuleUsersProfile:
 		return true
+	case domain.ModuleAuthOTP:
+		return plan.Limits.OTP
+	case domain.ModuleAuthOAuthGoogle:
+		return plan.Limits.OAuth
+	case domain.ModuleRealtimeCollection:
+		return plan.Limits.Realtime
+	case domain.ModuleDataCollections:
+		return plan.Limits.Collections > 0
+	case domain.ModuleFileStorage:
+		return plan.Limits.Realtime
+	default:
+		return false
 	}
-	return name == domain.ModuleAuthPassword || name == domain.ModuleUsersProfile
 }
