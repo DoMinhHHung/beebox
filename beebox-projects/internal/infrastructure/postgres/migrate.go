@@ -10,8 +10,14 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
+//go:embed collections.sql
+var collectionsSQL string
+
 func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
-	_, err := pool.Exec(ctx, schemaSQL)
+	if _, err := pool.Exec(ctx, schemaSQL); err != nil {
+		return err
+	}
+	_, err := pool.Exec(ctx, collectionsSQL)
 	return err
 }
 
