@@ -15,6 +15,8 @@ type tokenBucket struct {
 	last   time.Time
 }
 
+const maxBuckets = 8192
+
 type RateLimiter struct {
 	rps    float64
 	burst  float64
@@ -47,6 +49,7 @@ func (l *RateLimiter) Allow(key string) bool {
 	now := l.now()
 	b, ok := l.bucket[key]
 	if !ok {
+		l.evictLocked(now)
 		l.bucket[key] = &tokenBucket{tokens: l.burst - 1, last: now}
 		return true
 	}
@@ -83,16 +86,36 @@ func isHealth(path string) bool {
 	return strings.HasPrefix(path, "/health/")
 }
 
+func (l *RateLimiter) evictLocked(now time.Time) {
+	for k, b := range l.bucket {
+		if now.Sub(b.last) > 2*time.Minute {
+			delete(l.bucket, k)
+		}
+	}
+	for len(l.bucket) >= maxBuckets {
+		var victim string
+		var oldest time.Time
+		first := true
+		for k, b := range l.bucket {
+			if first || b.last.Before(oldest) {
+				victim = k
+				oldest = b.last
+				first = false
+			}
+		}
+		if victim == "" {
+			return
+		}
+		delete(l.bucket, victim)
+	}
+}
+
 func limitKey(r *http.Request) string {
-	ip := clientIP(r)
-	project := strings.TrimSpace(r.Header.Get("X-BeeBox-Publishable-Key"))
-	if project == "" {
-		project = strings.TrimSpace(r.Header.Get("X-BeeBox-Project-Slug"))
+	project := ""
+	if p, ok := ProjectFrom(r); ok {
+		project = p.ProjectID
 	}
-	if project == "" {
-		project = r.Host
-	}
-	return ip + "|" + project + "|" + pathGroup(r.URL.Path)
+	return clientIP(r) + "|" + project + "|" + pathGroup(r.URL.Path)
 }
 
 func pathGroup(path string) string {
@@ -109,12 +132,6 @@ func pathGroup(path string) string {
 }
 
 func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		parts := strings.Split(xff, ",")
-		if p := strings.TrimSpace(parts[0]); p != "" {
-			return p
-		}
-	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr

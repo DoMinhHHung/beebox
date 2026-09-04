@@ -51,7 +51,7 @@ func ResolveAndCORS(resolver Resolver, next http.Handler) http.Handler {
 		if pk != "" || slug != "" {
 			p, err := resolver.Resolve(r)
 			if err != nil {
-				if requiresProject(r.URL.Path) {
+				if requiresProject(r.URL.Path) && r.Method != http.MethodOptions {
 					apperror.WriteJSON(w, err)
 					return
 				}
@@ -60,11 +60,6 @@ func ResolveAndCORS(resolver Resolver, next http.Handler) http.Handler {
 				resolved = true
 				r = r.WithContext(context.WithValue(r.Context(), projectCtxKey, project))
 			}
-		}
-
-		if requiresProject(r.URL.Path) && !resolved {
-			apperror.WriteJSON(w, apperror.New(apperror.CodeUnauthorized, "project not resolved"))
-			return
 		}
 
 		origin := strings.TrimSpace(r.Header.Get("Origin"))
@@ -77,6 +72,10 @@ func ResolveAndCORS(resolver Resolver, next http.Handler) http.Handler {
 		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if requiresProject(r.URL.Path) && !resolved {
+			apperror.WriteJSON(w, apperror.New(apperror.CodeUnauthorized, "project not resolved"))
 			return
 		}
 		next.ServeHTTP(w, r)

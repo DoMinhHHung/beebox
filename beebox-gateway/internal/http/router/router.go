@@ -61,8 +61,8 @@ func NewWithResolver(cfg config.Config, resolver middleware.Resolver) http.Handl
 		handler.NotFound(w, r)
 	})
 
-	h := middleware.ResolveAndCORS(resolver, mux)
-	h = middleware.NewRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst).Middleware(h)
+	h := middleware.NewRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst).Middleware(mux)
+	h = middleware.ResolveAndCORS(resolver, h)
 	h = middleware.Timeout(cfg.RequestTimeout)(h)
 	h = middleware.Recover(h)
 	h = middleware.RequestID(h)
