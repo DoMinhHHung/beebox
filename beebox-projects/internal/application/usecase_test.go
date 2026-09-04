@@ -48,6 +48,10 @@ func (f *fakeProjects) Create(_ context.Context, _ uuid.UUID, project domain.Pro
 	return nil
 }
 
+func (f *fakeProjects) CreateWithIAM(ctx context.Context, ownerID uuid.UUID, project domain.Project, _ []domain.APIKey, _ []string) error {
+	return f.Create(ctx, ownerID, project)
+}
+
 func (f *fakeProjects) List(_ context.Context, ownerID uuid.UUID) ([]domain.Project, error) {
 	var out []domain.Project
 	for _, p := range f.items {
@@ -66,13 +70,19 @@ func (f *fakeProjects) FindByID(_ context.Context, ownerID, id uuid.UUID) (domai
 	return p, nil
 }
 
+func (f *fakeProjects) FindBySlug(_ context.Context, slug string) (domain.Project, error) {
+	for _, p := range f.items {
+		if p.Slug == slug {
+			return p, nil
+		}
+	}
+	return domain.Project{}, domain.ErrNotFound
+}
+
 func (f *fakeProjects) Update(_ context.Context, ownerID uuid.UUID, project domain.Project) error {
 	cur, ok := f.items[project.ID]
 	if !ok || cur.OwnerID != ownerID {
 		return domain.ErrNotFound
-	}
-	if !project.UpdatedAt.IsZero() && !cur.UpdatedAt.IsZero() && !project.UpdatedAt.Equal(cur.UpdatedAt) {
-		return domain.ErrConflict
 	}
 	f.items[project.ID] = project
 	return nil
@@ -111,8 +121,11 @@ func TestCreateProjectUsesCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if got.PlanID != planID || got.PlanSlug != "free" || got.Env != domain.EnvTest || got.ID.Version() != 7 {
-		t.Fatalf("got=%+v", got)
+	if got.Project.PlanID != planID || got.Project.PlanSlug != "free" || got.Project.Env != domain.EnvTest || got.Project.ID.Version() != 7 {
+		t.Fatalf("got=%+v", got.Project)
+	}
+	if len(got.Keys) != 2 {
+		t.Fatalf("keys=%d", len(got.Keys))
 	}
 }
 
@@ -141,4 +154,35 @@ func TestCreateAccount(t *testing.T) {
 	if err != nil || got.ID.Version() != 7 {
 		t.Fatalf("got=%+v err=%v", got, err)
 	}
+}
+
+func TestPutModulesFreeRejectsOAuth(t *testing.T) {
+	owner := uuid.MustParse("01800000-0000-7000-8000-0000000000bb")
+	id := uuid.MustParse("01800000-0000-7000-8000-0000000000cc")
+	projects := &fakeProjects{items: map[uuid.UUID]domain.Project{id: {ID: id, OwnerID: owner, PlanSlug: "free"}}}
+	mods := &fakeModules{byID: map[uuid.UUID][]string{}}
+	_, err := (PutModules{Projects: projects, Modules: mods}).Execute(context.Background(), owner, id, []string{
+		domain.ModuleAuthPassword, domain.ModuleUsersProfile, domain.ModuleAuthOAuthGoogle,
+	})
+	if !errors.Is(err, domain.ErrPlanLimit) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+type fakeModules struct {
+	byID map[uuid.UUID][]string
+}
+
+func (f *fakeModules) Replace(_ context.Context, _, projectID uuid.UUID, names []string) error {
+	if f.byID == nil {
+		f.byID = map[uuid.UUID][]string{}
+	}
+	f.byID[projectID] = append([]string(nil), names...)
+	return nil
+}
+func (f *fakeModules) ListByProject(_ context.Context, _, projectID uuid.UUID) ([]string, error) {
+	return append([]string(nil), f.byID[projectID]...), nil
+}
+func (f *fakeModules) ListByProjectID(_ context.Context, projectID uuid.UUID) ([]string, error) {
+	return append([]string(nil), f.byID[projectID]...), nil
 }
