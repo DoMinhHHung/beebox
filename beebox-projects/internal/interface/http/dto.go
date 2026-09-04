@@ -46,14 +46,31 @@ type resolveKeyDTO struct {
 	Env  string `json:"env"`
 }
 
+type fieldDTO struct {
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Type             string `json:"type"`
+	Required         bool   `json:"required"`
+	UniquePerProject bool   `json:"unique_per_project"`
+	SortOrder        int    `json:"sort_order"`
+}
+
+type resolveFieldDTO struct {
+	Name             string `json:"name"`
+	Type             string `json:"type"`
+	Required         bool   `json:"required"`
+	UniquePerProject bool   `json:"unique_per_project"`
+}
+
 type resolveDTO struct {
-	ProjectID string         `json:"project_id"`
-	Slug      string         `json:"slug"`
-	PlanSlug  string         `json:"plan_slug"`
-	Env       string         `json:"env"`
-	Origins   []string       `json:"origins"`
-	Modules   []string       `json:"modules"`
-	Key       *resolveKeyDTO `json:"key,omitempty"`
+	ProjectID string            `json:"project_id"`
+	Slug      string            `json:"slug"`
+	PlanSlug  string            `json:"plan_slug"`
+	Env       string            `json:"env"`
+	Origins   []string          `json:"origins"`
+	Modules   []string          `json:"modules"`
+	Fields    []resolveFieldDTO `json:"fields"`
+	Key       *resolveKeyDTO    `json:"key,omitempty"`
 }
 
 func toProjectDTO(p domain.Project) projectDTO {
@@ -94,8 +111,28 @@ func toResolveDTO(result application.ResolveResult) resolveDTO {
 	if out.Modules == nil {
 		out.Modules = []string{}
 	}
+	out.Fields = make([]resolveFieldDTO, 0, len(result.Fields))
+	for _, field := range result.Fields {
+		out.Fields = append(out.Fields, resolveFieldDTO{
+			Name:             field.Name,
+			Type:             field.Type,
+			Required:         field.Required,
+			UniquePerProject: field.UniquePerProject,
+		})
+	}
 	if result.Key != nil {
 		out.Key = &resolveKeyDTO{ID: result.Key.ID, Kind: result.Key.Kind, Env: result.Key.Env}
 	}
 	return out
+}
+
+func toFieldDTO(field domain.Field) fieldDTO {
+	return fieldDTO{
+		ID:               field.ID.String(),
+		Name:             field.Name,
+		Type:             field.Type,
+		Required:         field.Required,
+		UniquePerProject: field.UniquePerProject,
+		SortOrder:        field.SortOrder,
+	}
 }
