@@ -33,8 +33,10 @@ type CatalogPlan struct {
 
 type ProjectRepository interface {
 	Create(ctx context.Context, ownerID uuid.UUID, project Project) error
+	CreateWithIAM(ctx context.Context, ownerID uuid.UUID, project Project, keys []APIKey, modules []string) error
 	List(ctx context.Context, ownerID uuid.UUID) ([]Project, error)
 	FindByID(ctx context.Context, ownerID, id uuid.UUID) (Project, error)
+	FindBySlug(ctx context.Context, slug string) (Project, error)
 	Update(ctx context.Context, ownerID uuid.UUID, project Project) error
 	Delete(ctx context.Context, ownerID, id uuid.UUID) error
 }
