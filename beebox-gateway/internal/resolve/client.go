@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/DoMinhHHung/beebox/beebox-apperror"
+	"github.com/DoMinhHHung/beebox/libs/shared/apperror"
 )
 
 const (
