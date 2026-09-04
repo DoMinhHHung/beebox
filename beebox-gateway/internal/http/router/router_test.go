@@ -12,6 +12,7 @@ import (
 	"github.com/DoMinhHHung/beebox/beebox-gateway/internal/config"
 	"github.com/DoMinhHHung/beebox/beebox-gateway/internal/http/middleware"
 	"github.com/DoMinhHHung/beebox/beebox-gateway/internal/resolve"
+	"github.com/DoMinhHHung/beebox/libs/shared/apperror"
 )
 
 type errorBody struct {
@@ -279,4 +280,61 @@ func decodeError(t *testing.T, r io.Reader) errorBody {
 		t.Fatalf("json: %v", err)
 	}
 	return body
+}
+
+func TestClientConfigOAuthSlugs(t *testing.T) {
+	project := sampleProject()
+	project.PlanSlug = "pro"
+	project.Modules = []string{"auth.password", "auth.oauth.google", "auth.oauth.github", "users.profile"}
+	h := newGateway(t, testCfg("http://127.0.0.1:9", "http://127.0.0.1:9"), fakeResolver{project: project})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/client/config", nil)
+	req.Header.Set("X-BeeBox-Publishable-Key", "pk_test_ok")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Auth struct {
+			Password bool     `json:"password"`
+			OAuth    []string `json:"oauth"`
+		} `json:"auth"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.Auth.Password {
+		t.Fatal("password")
+	}
+	if len(body.Auth.OAuth) != 2 || body.Auth.OAuth[0] != "google" || body.Auth.OAuth[1] != "github" {
+		t.Fatalf("oauth=%v", body.Auth.OAuth)
+	}
+}
+
+func TestOAuthCallbackDoesNotRequireProject(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/auth/oauth/google/callback" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"code":"unauthorized","message":"unauthorized"}}`))
+	}))
+	t.Cleanup(upstream.Close)
+	cfg := testCfg("http://127.0.0.1:9", "http://127.0.0.1:9")
+	cfg.IdentityBaseURL = upstream.URL
+	h := newGateway(t, cfg, fakeResolver{err: apperror.New(apperror.CodeUnauthorized, "project not resolved")})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/auth/oauth/google/callback?code=x&state=y", nil)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var body errorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Code != "unauthorized" {
+		t.Fatalf("code=%q body=%s", body.Error.Code, rec.Body.String())
+	}
 }
