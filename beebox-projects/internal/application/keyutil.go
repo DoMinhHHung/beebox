@@ -80,7 +80,10 @@ func moduleAllowed(plan domain.CatalogPlan, name string) bool {
 		return true
 	case domain.ModuleAuthOTP:
 		return plan.Limits.OTP
-	case domain.ModuleAuthOAuthGoogle:
+	case domain.ModuleAuthOAuthApple, domain.ModuleAuthOAuthGitLab, domain.ModuleAuthOAuthLinkedIn,
+		domain.ModuleAuthOAuthSlack, domain.ModuleAuthOAuthTwitch, domain.ModuleAuthOAuthFacebook,
+		domain.ModuleAuthOAuthGoogle, domain.ModuleAuthOAuthMicrosoft, domain.ModuleAuthOAuthGitHub,
+		domain.ModuleAuthOAuthX, domain.ModuleAuthOAuthOIDC:
 		return plan.Limits.OAuth
 	case domain.ModuleRealtimeCollection:
 		return plan.Limits.Realtime
