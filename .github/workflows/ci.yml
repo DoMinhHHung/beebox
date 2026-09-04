@@ -27,6 +27,13 @@ jobs:
           test -f AGENTS.md
           test -f docs/PRODUCT.md
 
+  compose:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: docker compose config
+        run: docker compose config
+
   test:
     runs-on: ubuntu-24.04
     strategy:
