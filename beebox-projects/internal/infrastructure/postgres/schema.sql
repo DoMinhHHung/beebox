@@ -47,6 +47,27 @@ CREATE TABLE IF NOT EXISTS project.api_keys (
 CREATE INDEX IF NOT EXISTS api_keys_project_id_idx ON project.api_keys (project_id);
 CREATE INDEX IF NOT EXISTS api_keys_secret_hash_idx ON project.api_keys (secret_hash);
 
+ALTER TABLE project.api_keys ENABLE ROW LEVEL SECURITY;
+ALTER TABLE project.api_keys FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS api_keys_by_owner ON project.api_keys;
+CREATE POLICY api_keys_by_owner ON project.api_keys
+  USING (
+    current_setting('app.internal', true) = 'on'
+    OR EXISTS (
+      SELECT 1 FROM project.projects p
+      WHERE p.id = api_keys.project_id
+        AND p.owner_id = NULLIF(current_setting('app.current_account', true), '')::uuid
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM project.projects p
+      WHERE p.id = api_keys.project_id
+        AND p.owner_id = NULLIF(current_setting('app.current_account', true), '')::uuid
+    )
+  );
+
 CREATE TABLE IF NOT EXISTS project.origins (
   id          UUID PRIMARY KEY,
   project_id  UUID NOT NULL REFERENCES project.projects (id) ON DELETE CASCADE,
@@ -57,8 +78,50 @@ CREATE TABLE IF NOT EXISTS project.origins (
 
 CREATE INDEX IF NOT EXISTS origins_project_id_idx ON project.origins (project_id);
 
+ALTER TABLE project.origins ENABLE ROW LEVEL SECURITY;
+ALTER TABLE project.origins FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS origins_by_owner ON project.origins;
+CREATE POLICY origins_by_owner ON project.origins
+  USING (
+    current_setting('app.internal', true) = 'on'
+    OR EXISTS (
+      SELECT 1 FROM project.projects p
+      WHERE p.id = origins.project_id
+        AND p.owner_id = NULLIF(current_setting('app.current_account', true), '')::uuid
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM project.projects p
+      WHERE p.id = origins.project_id
+        AND p.owner_id = NULLIF(current_setting('app.current_account', true), '')::uuid
+    )
+  );
+
 CREATE TABLE IF NOT EXISTS project.modules (
   project_id  UUID NOT NULL REFERENCES project.projects (id) ON DELETE CASCADE,
   name        TEXT NOT NULL,
   PRIMARY KEY (project_id, name)
 );
+
+ALTER TABLE project.modules ENABLE ROW LEVEL SECURITY;
+ALTER TABLE project.modules FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS modules_by_owner ON project.modules;
+CREATE POLICY modules_by_owner ON project.modules
+  USING (
+    current_setting('app.internal', true) = 'on'
+    OR EXISTS (
+      SELECT 1 FROM project.projects p
+      WHERE p.id = modules.project_id
+        AND p.owner_id = NULLIF(current_setting('app.current_account', true), '')::uuid
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM project.projects p
+      WHERE p.id = modules.project_id
+        AND p.owner_id = NULLIF(current_setting('app.current_account', true), '')::uuid
+    )
+  );
