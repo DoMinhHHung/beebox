@@ -22,7 +22,8 @@ func main() {
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           router.New(cfg),
-		ReadHeaderTimeout: cfg.RequestTimeout,
+		ReadTimeout:       cfg.ReadTimeout,
+		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
 		IdleTimeout:       cfg.RequestTimeout,
 	}
 
