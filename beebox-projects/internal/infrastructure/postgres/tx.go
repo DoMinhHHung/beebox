@@ -26,6 +26,21 @@ func withOwner(ctx context.Context, pool *pgxpool.Pool, ownerID uuid.UUID, fn fu
 	return tx.Commit(ctx)
 }
 
+func withInternal(ctx context.Context, pool *pgxpool.Pool, fn func(pgx.Tx) error) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.internal', 'on', true)`); err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 func mapWriteErr(err error) error {
 	if err == nil {
 		return nil
