@@ -38,6 +38,8 @@ type Deps struct {
 	DeleteOrigin  application.DeleteOrigin
 	ListModules   application.ListModules
 	PutModules    application.PutModules
+	ListFields    application.ListFields
+	PutFields     application.PutFields
 	Resolve       application.ResolveProject
 	InternalToken string
 	Ready         ReadyPinger
@@ -64,6 +66,8 @@ func New(d Deps) http.Handler {
 	mux.Handle("DELETE /v1/projects/{id}/origins/{originId}", s.withOwner(http.HandlerFunc(s.deleteOrigin)))
 	mux.Handle("GET /v1/projects/{id}/modules", s.withOwner(http.HandlerFunc(s.getModules)))
 	mux.Handle("PUT /v1/projects/{id}/modules", s.withOwner(http.HandlerFunc(s.putModules)))
+	mux.Handle("GET /v1/projects/{id}/fields", s.withOwner(http.HandlerFunc(s.getFields)))
+	mux.Handle("PUT /v1/projects/{id}/fields", s.withOwner(http.HandlerFunc(s.putFields)))
 	mux.Handle("GET /internal/resolve", s.withInternal(http.HandlerFunc(s.resolve)))
 	mux.HandleFunc("/", s.notFound)
 	return recoverMW(mux)
