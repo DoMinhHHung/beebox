@@ -126,6 +126,35 @@ func toResolveDTO(result application.ResolveResult) resolveDTO {
 	return out
 }
 
+type ownerAccountDTO struct {
+	ID    string `json:"id"`
+	Email string `json:"email"`
+}
+
+type ownerSessionDTO struct {
+	Token     string `json:"token"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+type ownerAuthDTO struct {
+	Account ownerAccountDTO `json:"account"`
+	Session ownerSessionDTO `json:"session"`
+}
+
+func toOwnerAccountDTO(account domain.Account) ownerAccountDTO {
+	return ownerAccountDTO{ID: account.ID.String(), Email: account.Email}
+}
+
+func toOwnerAuthDTO(result application.OwnerAuthResult) ownerAuthDTO {
+	return ownerAuthDTO{
+		Account: toOwnerAccountDTO(result.Account),
+		Session: ownerSessionDTO{
+			Token:     result.Token,
+			ExpiresAt: result.ExpiresAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+		},
+	}
+}
+
 func toFieldDTO(field domain.Field) fieldDTO {
 	return fieldDTO{
 		ID:               field.ID.String(),
