@@ -1,0 +1,145 @@
+##############################################################################
+# BeeBox — Render Blueprint
+#
+# Provisions: Postgres + beebox-plans + beebox-projects + beebox-identity
+# (private, internal-only) + beebox-gateway (public) + web (Next.js dashboard,
+# public).
+#
+# IMPORTANT — read before first deploy:
+# The three *_BASE_URL vars below (BEEBOX_PLANS_BASE_URL, etc.) need a full
+# "http://<host>:<port>" URL, but Render only knows a private service's
+# internal hostname (e.g. "beebox-plans-a1b2:10000") *after* it's created —
+# and Blueprint files can't concatenate strings. So:
+#   1. Deploy this Blueprint once (services will start but fail to reach each
+#      other — that's expected).
+#   2. For each service below with a "# SET AFTER FIRST DEPLOY" comment, open
+#      it in the Render Dashboard -> Connect -> Internal tab of the service
+#      it depends on, copy the "<name>-<hash>:<port>" value, and set the env
+#      var to "http://<that value>".
+#   3. Render redeploys automatically when you save an env var.
+##############################################################################
+
+envVarGroups:
+  - name: beebox-internal
+    envVars:
+      - key: BEEBOX_INTERNAL_TOKEN
+        generateValue: true
+
+databases:
+  - name: beebox-db
+    databaseName: beebox
+    user: beebox
+    plan: free # Render's free Postgres is fine to start; it is not durable long-term — see note in the deploy guide.
+
+services:
+  # ---------------------------------------------------------------------
+  # beebox-plans — internal only, no other service depends on it existing
+  # first except that projects/gateway call it.
+  # ---------------------------------------------------------------------
+  - type: pserv
+    name: beebox-plans
+    runtime: docker
+    dockerfilePath: ./beebox-plans/Dockerfile
+    dockerContext: .
+    plan: 0.5c-512mb # pserv has no free tier
+    envVars:
+      - key: BEEBOX_HTTP_ADDR
+        value: ":10000"
+      - key: PORT
+        value: "10000"
+      - key: BEEBOX_DATABASE_URL
+        fromDatabase:
+          name: beebox-db
+          property: connectionString
+      - fromGroup: beebox-internal
+
+  # ---------------------------------------------------------------------
+  # beebox-projects — depends on beebox-plans
+  # ---------------------------------------------------------------------
+  - type: pserv
+    name: beebox-projects
+    runtime: docker
+    dockerfilePath: ./beebox-projects/Dockerfile
+    dockerContext: .
+    plan: 0.5c-512mb
+    envVars:
+      - key: BEEBOX_HTTP_ADDR
+        value: ":10000"
+      - key: PORT
+        value: "10000"
+      - key: BEEBOX_DATABASE_URL
+        fromDatabase:
+          name: beebox-db
+          property: connectionString
+      - key: BEEBOX_PLANS_BASE_URL
+        value: "http://REPLACE_ME:10000" # SET AFTER FIRST DEPLOY — beebox-plans internal hostport
+      - key: BEEBOX_OAUTH_KEK
+        sync: false # paste a 64-char hex string, e.g. output of: openssl rand -hex 32
+      - fromGroup: beebox-internal
+
+  # ---------------------------------------------------------------------
+  # beebox-identity — depends on beebox-projects
+  # ---------------------------------------------------------------------
+  - type: pserv
+    name: beebox-identity
+    runtime: docker
+    dockerfilePath: ./beebox-identity/Dockerfile
+    dockerContext: .
+    plan: 0.5c-512mb
+    envVars:
+      - key: BEEBOX_HTTP_ADDR
+        value: ":10000"
+      - key: PORT
+        value: "10000"
+      - key: BEEBOX_DATABASE_URL
+        fromDatabase:
+          name: beebox-db
+          property: connectionString
+      - key: BEEBOX_PROJECTS_BASE_URL
+        value: "http://REPLACE_ME:10000" # SET AFTER FIRST DEPLOY — beebox-projects internal hostport
+      - fromGroup: beebox-internal
+
+  # ---------------------------------------------------------------------
+  # beebox-gateway — the ONLY public backend entry point
+  # ---------------------------------------------------------------------
+  - type: web
+    name: beebox-gateway
+    runtime: docker
+    dockerfilePath: ./beebox-gateway/Dockerfile
+    dockerContext: .
+    plan: 0.5c-512mb
+    healthCheckPath: /health/live
+    envVars:
+      - key: BEEBOX_HTTP_ADDR
+        value: ":10000"
+      - key: PORT
+        value: "10000"
+      - key: BEEBOX_PLANS_BASE_URL
+        value: "http://REPLACE_ME:10000" # SET AFTER FIRST DEPLOY — beebox-plans internal hostport
+      - key: BEEBOX_PROJECTS_BASE_URL
+        value: "http://REPLACE_ME:10000" # SET AFTER FIRST DEPLOY — beebox-projects internal hostport
+      - key: BEEBOX_IDENTITY_BASE_URL
+        value: "http://REPLACE_ME:10000" # SET AFTER FIRST DEPLOY — beebox-identity internal hostport
+      - fromGroup: beebox-internal
+
+  # ---------------------------------------------------------------------
+  # web — Next.js dashboard (apps/web), public
+  # ---------------------------------------------------------------------
+  - type: web
+    name: beebox-web
+    runtime: node
+    plan: free
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter web build
+    startCommand: pnpm --filter web start -- -p $PORT
+    buildFilter:
+      paths:
+        - apps/web/**
+        - sdk/js/**
+        - pnpm-lock.yaml
+        - pnpm-workspace.yaml
+    envVars:
+      - key: NEXT_PUBLIC_BEEBOX_URL
+        fromService:
+          name: beebox-gateway
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
